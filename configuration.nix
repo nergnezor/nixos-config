@@ -9,8 +9,11 @@
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
-  # NixOS's OWN ESP (nvme0n1p6, created in PARTITION-RUNBOOK.md) — never
-  # touches Ubuntu's ESP or GRUB. Switch OS via the firmware boot menu (F9).
+  boot.loader.efi.efiSysMountPoint = "/boot"; # matches both the internal-disk
+    # ESP (nvme0n1p6, mounted at /boot per PARTITION-RUNBOOK.md step 8) and
+    # disko-usb.nix's ESP mountpoint.
+  # NixOS's OWN ESP — never touches Ubuntu's ESP or GRUB. Switch OS via the
+  # firmware boot menu (F9).
 
   networking.hostName = "nixos-eval";
   networking.networkmanager.enable = true;
