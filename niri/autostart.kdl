@@ -1,0 +1,16 @@
+// spawn-sh-at-startup "wl-paste --watch cliphist store &"
+
+spawn-sh-at-startup "~/.config/niri/scripts/vertical-monitor-stack.sh &"
+
+// spawn-at-startup "spotify"
+// spawn-at-startup "code"
+spawn-sh-at-startup "steam -silent"
+
+// Keyboard mouse control — started ONLY by the systemd user service (mouseless.service),
+// which runs the same script. Starting it here too made both copies race at login and the
+// loser logged "Another instance detected, exiting."
+//   handle: systemctl --user {start,stop,restart,status} mouseless
+// spawn-sh-at-startup "~/.config/niri/scripts/start-mouseless.sh"
+
+// For some reason Discord needs a delay or it won't start properly, weird but I won't question it
+// spawn-sh-at-startup "sleep 3 && discord --start-minimized"
