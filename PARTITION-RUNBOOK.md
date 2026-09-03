@@ -105,7 +105,21 @@ sudo mkfs.fat -F32 -n NIXBOOT /dev/nvme0n1p6
 sudo mkfs.ext4 -L nixos /dev/nvme0n1p7
 ```
 
-## 8. Mount for install
+## 8. Reboot back to Ubuntu — the risky part is done
+
+Steps 0-7 are the only ones that actually need live media (ext4 can't shrink
+while mounted as the running root). `p6`/`p7` now exist as real, formatted
+partitions on disk — they persist regardless of which OS boots next.
+`reboot`, remove the live-boot media, let it come up as Ubuntu normally.
+
+## 9. Install from the running Ubuntu session — no live boot needed for this part
+
+Learned the hard way on the USB-stick smoke test: Nix and `nixos-install`
+both run fine on a non-NixOS host (same premise `nixos-anywhere` is built
+on), so the actual install onto `p6`/`p7` happens right here, same as the
+USB target did — just onto reliable internal NVMe instead of a USB stick
+this time. Needs `nix` installed here already (it is, from the smoke test —
+`/nix/var/nix/profiles/default/bin/nix`).
 
 ```
 sudo mount /dev/nvme0n1p7 /mnt
@@ -113,23 +127,43 @@ sudo mkdir -p /mnt/boot
 sudo mount /dev/nvme0n1p6 /mnt/boot
 ```
 
-## 9. Continue with the NixOS install
-
-See `~/nixos-config/` (copy that whole directory onto the USB stick or fetch
-it via `git`/`scp` once the live environment has networking) — it has
-`flake.nix` / `configuration.nix` / `home.nix` already drafted for niri + the
-current app set. From here:
-
 ```
-sudo nixos-generate-config --root /mnt --show-hardware-config > hardware-configuration.nix
-# merge that into the flake's config (it's referenced by ./configuration.nix's
-# imports — copy the generated file into nixos-config/ as hardware-configuration.nix)
-cd /path/to/nixos-config
-sudo nixos-install --flake .#nixos-eval
+sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-command flakes" \
+  profile install github:NixOS/nixpkgs/nixos-25.05#nixos-install-tools
 ```
 
-Set a root/user password when prompted, then `reboot` — remove the USB stick,
-and use the firmware boot menu (F9) to pick NixOS instead of Ubuntu.
+**Use the explicit `github:NixOS/nixpkgs/nixos-25.05#...` URL, not bare
+`nixpkgs#nixos-install-tools`** — the bare form resolves through the global
+flake registry to whatever `nixpkgs` currently points at (hit a `26.11pre`
+unstable dev snapshot on the USB attempt, whose `nixos-install` had a broken
+chroot/bootloader step). Pinning to the same nixos-25.05 this config
+actually uses avoids that mismatch.
+
+```
+sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-command flakes" \
+  shell nixpkgs#nixos-install-tools --command nixos-generate-config --no-filesystems --root /mnt
+cp /mnt/etc/nixos/hardware-configuration.nix ~/nixos-config/hardware-configuration.nix
+```
+
+Prefer building locally first, then copying, rather than letting
+`nixos-install` build directly against `--store /mnt` — even onto the fast
+internal NVMe there's no reason to give that up, and it's what worked
+reliably on the USB target once we started doing it this way:
+
+```
+cd ~/nixos-config
+sudo env PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH" \
+  nix --extra-experimental-features "nix-command flakes" \
+  build .#nixosConfigurations.nixos-eval.config.system.build.toplevel \
+  --out-link /tmp/nixos-eval-system
+sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-command flakes" \
+  copy --to /mnt /tmp/nixos-eval-system
+sudo env PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH" \
+  nixos-install --root /mnt --system /tmp/nixos-eval-system
+```
+
+Set a root/user password when prompted, then `reboot` and use the firmware
+boot menu (F9) to pick NixOS instead of Ubuntu.
 
 ## After you're done evaluating (or if you abandon it)
 

@@ -7,9 +7,29 @@ runner (`hosts/nitro.nix`) for a hardware comparison (Intel Arc vs nvidia).
 
 ## Status (2026-09-03)
 
-- Currently mid-way through the USB smoke test (`nixos-eval-usb`, see
-  `USB-TEST-RUNBOOK.md`) — installing directly from this Ubuntu session
-  (Nix now installed here) rather than a live-ISO boot.
+- **USB smoke test abandoned — the config is proven, the stick isn't.** The
+  full 12GB closure built and copied successfully (steam, nvidia, noctalia,
+  everything), but `nix-store --verify --check-contents` then found
+  *thousands* of paths silently missing from the USB stick's copy despite
+  the DB believing them present, and the verify run itself crashed with a
+  SQLite foreign-key error partway through repairing it. Consistent with the
+  repeated "device offline"/disconnect events that stick had all session —
+  it's silently dropping written data, not a config problem. Moving straight
+  to the internal-disk install instead: the local build (against reliable
+  NVMe) already succeeded cleanly, which was the actual point of the smoke
+  test.
+- `actions-runner.service` confirmed still stopped (from the start of this
+  session) — no restart needed before the internal-disk work.
+- `PARTITION-RUNBOOK.md` updated: only the shrink/create-partitions steps
+  (0-7) need live boot media now. Once `p6`/`p7` exist, install onto them
+  happens from a normal running Ubuntu session — same
+  build-locally-then-copy technique that worked on the USB target, using
+  the internal NVMe (reliable) as the copy destination instead. Also fixed
+  there: pin `nixos-install-tools` to the explicit
+  `github:NixOS/nixpkgs/nixos-25.05#` URL — bare `nixpkgs#nixos-install-tools`
+  resolves through the global flake registry to whatever unstable currently
+  points at (hit a `26.11pre` dev snapshot with a broken chroot/bootloader
+  step on the USB attempt).
 - `niri/` is a verbatim copy of `~/.config/niri/` (config.kdl, autostart.kdl,
   noctalia/*.kdl, scripts/) from 2026-09-02 — but no longer wired into
   `home.nix` directly. `/home/erik` is bind-mounted from the real Ubuntu
@@ -48,6 +68,7 @@ runner (`hosts/nitro.nix`) for a hardware comparison (Intel Arc vs nvidia).
 
 ## Next steps
 
-See `USB-TEST-RUNBOOK.md` for exactly where the smoke test stands. Once it
-boots cleanly: `PARTITION-RUNBOOK.md` + `nixos-eval` (internal disk) is the
-real dual-boot install, same config either way.
+`PARTITION-RUNBOOK.md`, steps 0-7: boot a NixOS live USB/SD (the SD card is
+still flashed from the smoke test), shrink `nvme0n1p5`, create `p6`/`p7`.
+Steps 8-9 (the actual install) happen back in Ubuntu, no live boot needed
+for those.
