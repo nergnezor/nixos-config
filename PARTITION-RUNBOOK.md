@@ -1,130 +1,65 @@
-# Dual-boot partition runbook — reclaim 50GiB from `nvme0n1p5` for NixOS
+# Dual-boot partition runbook — `nvme0n1` internal disk
 
-Run this from a **NixOS minimal/graphical installer live USB** (boots to a root
-shell or a live desktop with a terminal). Do NOT run any of this from the
-running Ubuntu system — ext4 can't shrink while mounted as `/`.
+## Status: done (2026-09-03), actual layout differs from the original plan
 
-Exact numbers below were computed from this machine's actual partition table
-(`erik-HP-ENVY-TE01-1xxx`, `/dev/nvme0n1`, 1.8T, GPT/UEFI) on 2026-09-02:
+Shrink was done via **GParted in a live-nix USB**, not the manual
+resize2fs/parted steps below (kept for reference — still valid if you ever
+need to redo this by hand). Reclaimed **~250GiB**, not the originally
+planned 50GiB. The MSR partition (`p2`, 16MiB) got removed along the way —
+harmless, this machine has no Windows install to need it. `efibootmgr`'s
+stray "Windows Boot Manager" NVRAM entry and `/boot/efi/EFI/Microsoft/` were
+also cleaned up (dead references, no actual Windows install behind them).
 
-```
-p1  100MiB   EFI System        (Ubuntu's ESP — DO NOT TOUCH)
-p2   16MiB   Microsoft reserved(DO NOT TOUCH)
-p5  ~1.8TiB  ext4 / (Ubuntu)   (start=117MiB) — SHRINK this
-```
-
-Target layout after this runbook:
-
-```
-p1  100MiB   EFI System        (unchanged, Ubuntu's)
-p2   16MiB   MSR                (unchanged)
-p5  1812.90GiB ext4 /           (shrunk, end=1856529MiB)
-p6  512MiB   EFI System        (new — NixOS's own ESP)
-p7  ~49.5GiB (rest to 100%)     (new — NixOS root, format during nixos-install)
-```
-
-Two separate ESPs means NixOS's `systemd-boot` never touches Ubuntu's GRUB —
-switch OS at boot via the firmware boot menu (**F9** on this HP at the POST
-screen).
-
-## 0. Sanity check before touching anything
+**Because `p2` was removed, the new partitions did NOT land on `p6`/`p7`**
+as originally planned — `parted mkpart` fills the lowest free number.
+Actual layout:
 
 ```
-lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
+p1  100MiB    EFI System   (Ubuntu's ESP — unchanged)
+p5  ~1.6TiB   ext4 /       (Ubuntu, shrunk)
+p2  512MiB    vfat         (NixOS's ESP — new, label NIXBOOT)
+p3  249.1GiB  ext4         (NixOS's root — new, label nixos)
 ```
 
-Confirm you see `nvme0n1` with `p1` (100M, fat32), `p2` (16M), `p5` (~1.8T,
-ext4), and that `p5` is **not mounted** (live USB, so it shouldn't be). If the
-device name or sizes don't match the table above, STOP — the numbers below
-are only valid for this exact disk.
+Two separate ESPs (`p1` for Ubuntu, `p2` for NixOS) means NixOS's
+`systemd-boot` never touches Ubuntu's GRUB — switch OS at boot via the
+firmware boot menu (**F9** on this HP at the POST screen).
 
-## 1. Filesystem check (must pass clean before shrinking)
+**`hosts/hp-envy.nix` was not yet updated for this** — it doesn't reference
+partition numbers directly (that's `hardware-configuration.nix`, generated
+fresh below), so no changes needed there for the layout itself.
+
+## Reference: the original manual steps (not what was actually run this time)
+
+Only relevant if redoing this by hand instead of GParted. Requires live
+media — ext4 can't shrink while mounted as the running root; growing back
+is fine live (`resize2fs` online-grows).
 
 ```
 sudo e2fsck -f /dev/nvme0n1p5
+sudo resize2fs /dev/nvme0n1p5 <target-size>M   # a bit below final partition size
+sudo parted /dev/nvme0n1 unit MiB resizepart 5 <end>
+sudo resize2fs /dev/nvme0n1p5                   # no size arg -- fill the shrunk partition exactly
+sudo e2fsck -f /dev/nvme0n1p5                   # verify
+sudo parted /dev/nvme0n1 --script mkpart ESP fat32 <start> <end> set <N> esp on mkpart primary ext4 <start> 100%
+sudo mkfs.fat -F32 -n NIXBOOT /dev/nvme0n1p<N>
+sudo mkfs.ext4 -L nixos /dev/nvme0n1p<M>
 ```
 
-If this reports errors it can't fix automatically, stop and investigate —
-don't shrink an unhealthy filesystem.
+Watch for `parted`'s auto-assigned partition numbers not being what you
+expect if earlier partitions were deleted (exactly what happened here) —
+check with `lsblk` after `mkpart`, don't assume.
 
-## 2. Shrink the filesystem (a bit below the final partition size, safety margin)
+## Install from the running Ubuntu session — no live boot needed for this part
 
-```
-sudo resize2fs /dev/nvme0n1p5 1856400M
-```
-
-Takes a few minutes — 880G used but only the tail 50G region needs
-relocating, most of the filesystem is untouched.
-
-## 3. Shrink the partition to match
+Same technique that worked on the USB smoke test — Nix and `nixos-install`
+both run fine on a non-NixOS host, so the install onto `p2`/`p3` happens
+right here.
 
 ```
-sudo parted /dev/nvme0n1 unit MiB resizepart 5 1856529
-```
-
-`resizepart` asks to confirm — it may warn the new end is inside the
-filesystem's old bounds; that's expected since we shrunk the fs first.
-
-## 4. Grow the filesystem back to fill the new (smaller) partition exactly
-
-```
-sudo resize2fs /dev/nvme0n1p5
-```
-
-(No size argument — fills whatever the partition now is, closing the 129MiB
-safety margin from step 2.)
-
-## 5. Verify Ubuntu's partition is intact
-
-```
-sudo e2fsck -f /dev/nvme0n1p5
-sudo parted /dev/nvme0n1 unit MiB print
-```
-
-`p5` should now show size ≈ `1856412MiB` (1812.9GiB), end `1856529MiB`, and
-free space after it to the end of the disk. **Do not reboot into Ubuntu yet**
-to double check — finish creating p6/p7 first so you don't have to re-run a
-live USB session twice.
-
-## 6. Create the two new partitions for NixOS
-
-```
-sudo parted /dev/nvme0n1 --script \
-  mkpart ESP fat32 1856529MiB 1857041MiB \
-  set 6 esp on \
-  mkpart primary ext4 1857041MiB 100%
-```
-
-This creates `p6` (512MiB, ESP, boot flag set) and `p7` (rest, ~49.5GiB,
-unformatted).
-
-## 7. Format the new partitions
-
-```
-sudo mkfs.fat -F32 -n NIXBOOT /dev/nvme0n1p6
-sudo mkfs.ext4 -L nixos /dev/nvme0n1p7
-```
-
-## 8. Reboot back to Ubuntu — the risky part is done
-
-Steps 0-7 are the only ones that actually need live media (ext4 can't shrink
-while mounted as the running root). `p6`/`p7` now exist as real, formatted
-partitions on disk — they persist regardless of which OS boots next.
-`reboot`, remove the live-boot media, let it come up as Ubuntu normally.
-
-## 9. Install from the running Ubuntu session — no live boot needed for this part
-
-Learned the hard way on the USB-stick smoke test: Nix and `nixos-install`
-both run fine on a non-NixOS host (same premise `nixos-anywhere` is built
-on), so the actual install onto `p6`/`p7` happens right here, same as the
-USB target did — just onto reliable internal NVMe instead of a USB stick
-this time. Needs `nix` installed here already (it is, from the smoke test —
-`/nix/var/nix/profiles/default/bin/nix`).
-
-```
-sudo mount /dev/nvme0n1p7 /mnt
+sudo mount /dev/nvme0n1p3 /mnt
 sudo mkdir -p /mnt/boot
-sudo mount /dev/nvme0n1p6 /mnt/boot
+sudo mount /dev/nvme0n1p2 /mnt/boot
 ```
 
 ```
@@ -132,12 +67,12 @@ sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-co
   profile install github:NixOS/nixpkgs/nixos-25.05#nixos-install-tools
 ```
 
-**Use the explicit `github:NixOS/nixpkgs/nixos-25.05#...` URL, not bare
-`nixpkgs#nixos-install-tools`** — the bare form resolves through the global
-flake registry to whatever `nixpkgs` currently points at (hit a `26.11pre`
-unstable dev snapshot on the USB attempt, whose `nixos-install` had a broken
-chroot/bootloader step). Pinning to the same nixos-25.05 this config
-actually uses avoids that mismatch.
+(Skip if already installed from the USB smoke test — check with
+`nix profile list`. **Use the explicit `github:NixOS/nixpkgs/nixos-25.05#...`
+URL, not bare `nixpkgs#nixos-install-tools`** — the bare form resolves
+through the global flake registry to whatever `nixpkgs` currently points at,
+which hit a `26.11pre` unstable dev snapshot with a broken chroot/bootloader
+step on the USB attempt.)
 
 ```
 sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-command flakes" \
@@ -145,31 +80,37 @@ sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-co
 cp /mnt/etc/nixos/hardware-configuration.nix ~/nixos-config/hardware-configuration.nix
 ```
 
-Prefer building locally first, then copying, rather than letting
-`nixos-install` build directly against `--store /mnt` — even onto the fast
-internal NVMe there's no reason to give that up, and it's what worked
-reliably on the USB target once we started doing it this way:
+Build locally first, then copy, rather than letting `nixos-install` build
+directly against `--store /mnt` — worked reliably on the USB target once we
+started doing it this way. **Use `~/` for the out-link, not `/tmp`** —
+`/tmp` got swept by systemd-tmpfiles mid-session on the USB attempt and the
+symlink (and its GC-root protection) disappeared:
 
 ```
 cd ~/nixos-config
-sudo env PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH" \
-  nix --extra-experimental-features "nix-command flakes" \
+nix --extra-experimental-features "nix-command flakes" \
   build .#nixosConfigurations.nixos-eval.config.system.build.toplevel \
-  --out-link /tmp/nixos-eval-system
+  --out-link ~/nixos-eval-system
 sudo /nix/var/nix/profiles/default/bin/nix --extra-experimental-features "nix-command flakes" \
-  copy --to /mnt /tmp/nixos-eval-system
+  copy --to /mnt ~/nixos-eval-system --no-check-sigs
 sudo env PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH" \
-  nixos-install --root /mnt --system /tmp/nixos-eval-system
+  nixos-install --root /mnt --system ~/nixos-eval-system
 ```
+
+(`--no-check-sigs` on the copy: needed for locally-built, unsigned output —
+hit `error: ... lacks a signature by a trusted key` without it on the USB
+attempt.)
 
 Set a root/user password when prompted, then `reboot` and use the firmware
 boot menu (F9) to pick NixOS instead of Ubuntu.
 
-## After you're done evaluating (or if you abandon it)
+## If you want the 250GiB back later
 
-Nothing here is destructive to undo: boot Ubuntu, and if you want the 50GiB
-back, delete `p6`/`p7` and `resizepart 5 100%` (grow, not shrink — much
-safer, no live-USB needed... actually growing also needs the fs unmounted for
-ext4? No — **ext4 online grow is supported**, so growing p5 back can be done
-live from Ubuntu with `sudo parted /dev/nvme0n1 resizepart 5 100%` followed
-by `sudo resize2fs /dev/nvme0n1p5`, no reboot required).
+Delete `p2`/`p3`, then grow `p5` back — online, no live-USB needed (ext4
+online-grow is supported, unlike shrink):
+
+```
+sudo parted /dev/nvme0n1 rm 2 rm 3
+sudo parted /dev/nvme0n1 resizepart 5 100%
+sudo resize2fs /dev/nvme0n1p5
+```
