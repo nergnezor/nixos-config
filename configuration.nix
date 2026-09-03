@@ -25,14 +25,25 @@
   # paths are now the real, live Ubuntu files, and home-manager writing its
   # own version there would overwrite them (they're the same filesystem,
   # not a copy).
+  #
+  # PORTABILITY: this UUID is this specific machine's (erik-HP-ENVY-TE01)
+  # Ubuntu partition — booting this same config/USB stick on another
+  # machine (e.g. the Nitro box) won't find it. `nofail` on both entries
+  # means that's a graceful degrade, not a broken boot: if the UUID doesn't
+  # exist, /mnt/ubuntu simply doesn't mount, the /home/erik bind then has
+  # nothing to bind to and also doesn't mount, and home-manager activates
+  # into a normal empty local home directory instead — no shared files, but
+  # a working session. No Nitro-specific values are filled in here because
+  # this machine has no visibility into that machine's disk layout (or
+  # whether it dual-boots Ubuntu at all) to know what they'd even be.
   fileSystems."/mnt/ubuntu" = {
     device = "/dev/disk/by-uuid/ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e"; # nvme0n1p5, confirmed 2026-09-03
     fsType = "ext4";
-    options = [ "rw" "noauto" "x-systemd.automount" "x-systemd.idle-timeout=60" ];
+    options = [ "rw" "nofail" ];
   };
   fileSystems."/home/erik" = {
     device = "/mnt/ubuntu/home/erik";
-    options = [ "bind" ];
+    options = [ "bind" "nofail" ];
   };
 
   networking.hostName = "nixos-eval";
@@ -49,7 +60,13 @@
     shell = pkgs.bash;
   };
 
-  # RTX 3060 Ti (GA104) — proprietary driver, needed for a usable niri session.
+  # RTX 3060 Ti (GA104) — proprietary driver, needed for a usable niri session
+  # on THIS machine. PORTABILITY: on hardware without an nvidia GPU (e.g.
+  # Nitro's Intel graphics), the nvidia kernel module just has nothing to
+  # bind to and sits unused — Mesa/i915 still auto-detect and drive the
+  # actual GPU via hardware.graphics.enable below regardless of this list.
+  # Reasonably confident this is standard NixOS behavior, not verified on
+  # this specific nixpkgs revision/niri-flake combination.
   services.xserver.videoDrivers = [ "nvidia" ];
   hardware.graphics.enable = true;
   hardware.nvidia = {
