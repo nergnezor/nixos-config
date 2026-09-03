@@ -28,10 +28,12 @@
     bottom
 
     # Overlay applied in configuration.nix (nixpkgs.overlays needs to be a
-    # NixOS-level option, not set here). Attribute name unverified — check
-    # `nix flake show github:noctalia-dev/noctalia-shell` once online and
-    # fix if it's not `noctalia-shell` on the overlay's final package set.
-    noctalia-shell
+    # NixOS-level option, not set here). Confirmed via `nix flake show
+    # github:noctalia-dev/noctalia-shell`: the package is `noctalia`
+    # (currently 5.0.0), not `noctalia-shell` — that flake also ships a
+    # nixosModules.default and homeModules, not used here, just the
+    # overlay+package for now.
+    noctalia
 
     # For AngelBeach conversation/session continuity (~/.claude comes from
     # the bind-mounted real home — see configuration.nix). Attribute name
