@@ -4,7 +4,7 @@
   # the result here (see PARTITION-RUNBOOK.md step 9) before `nixos-install`.
   imports = [ ./hardware-configuration.nix ];
 
-  nixpkgs.config.allowUnfree = true; # vivaldi, discord, spotify, steam, vscode
+  nixpkgs.config.allowUnfree = true; # vivaldi, vscode, claude-code
   # NOT using noctalia-shell.overlays.default here: an overlay builds its
   # package against the CONSUMER's nixpkgs (this one, 25.05), not the
   # flake's own locked one — confirmed the hard way, its build failed
@@ -65,7 +65,7 @@
   services.pipewire = {
     enable = true;
     alsa.enable = true;
-    alsa.support32Bit = true; # steam
+    # alsa.support32Bit was steam-only, dropped along with programs.steam below
     pulse.enable = true;
   };
   services.pulseaudio.enable = false; # was hardware.pulseaudio, renamed on this nixpkgs revision
@@ -80,10 +80,8 @@
     extraPortals = [ pkgs.xdg-desktop-portal-gtk ]; # generic backend, not niri-specific — good enough for a smoke test
   };
 
-  programs.steam = {
-    enable = true;
-    gamescopeSession.enable = true; # niri config.kdl has a window-rule matching app-id="^gamescope"
-  };
+  # programs.steam dropped for the smoke test (~4GB for the 32-bit/FHS
+  # compat layer alone) -- add back for the real internal-disk install.
 
   # Mouseless virtual-mouse/device quirks, ported verbatim from this Ubuntu
   # install's /etc/udev/rules.d/61-mouseless-no-takeover.rules and
