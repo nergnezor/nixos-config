@@ -1,10 +1,10 @@
-{ pkgs, ... }:
+{ pkgs, noctalia-shell, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
   home.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
 
-  home.packages = with pkgs; [
+  home.packages = (with pkgs; [
     ghostty       # dropdown-term.sh spawns this specifically
     alacritty
     fuzzel
@@ -27,23 +27,18 @@
     wl-clipboard
     bottom
 
-    # Overlay applied in configuration.nix (nixpkgs.overlays needs to be a
-    # NixOS-level option, not set here). Confirmed via `nix flake show
-    # github:noctalia-dev/noctalia-shell`: the package is `noctalia`
-    # (currently 5.0.0), not `noctalia-shell` — that flake also ships a
-    # nixosModules.default and homeModules, not used here, just the
-    # overlay+package for now.
-    noctalia
-
-    # For AngelBeach conversation/session continuity (~/.claude comes from
-    # the bind-mounted real home — see configuration.nix). Attribute name
-    # unverified — nixpkgs may or may not
-    # carry `claude-code` on whatever nixos-unstable revision you land on;
-    # check `nix search nixpkgs claude-code` once online. If it's missing,
-    # fall back to the officially documented install instead:
-    #   home.packages: add `nodejs`
-    #   npm install -g @anthropic-ai/claude-code
+    # claude-code: confirmed via `nix eval` that it exists as a real
+    # package on nixos-25.05 (previously flagged unverified, now checked).
     claude-code
+  ]) ++ [
+    # Taken straight from noctalia-shell's OWN flake output (built against
+    # its own nixpkgs), NOT via nixpkgs.overlays.default applied to our
+    # pkgs — the overlay route builds noctalia against OUR nixpkgs (25.05)
+    # and its meson build failed wanting a wayland-protocols staging file
+    # (ext-background-effect-v1) that doesn't exist there. This way it
+    # builds/substitutes against whatever nixpkgs noctalia-shell actually
+    # locks, which has it.
+    noctalia-shell.packages.${pkgs.system}.default
   ];
 
   # No xdg.configFile."niri" and no programs.git here anymore: /home/erik is
