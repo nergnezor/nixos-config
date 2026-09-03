@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
   networking.hostName = "nixos-hp";
 
@@ -39,4 +39,11 @@
   # the fileSystems module, so this merges with the device/fsType that
   # hardware-configuration.nix generates for "/" rather than conflicting.
   fileSystems."/".options = [ "compress=zstd" ];
+
+  # nixos-generate-config writes fmask=0022/dmask=0022 for the ESP, which
+  # makes it world-readable — bootctl warns about it during install because
+  # systemd-boot's random seed lives there. mkForce (not a merge) so these
+  # replace the generated values instead of both sets ending up in the
+  # option list with order-dependent behaviour.
+  fileSystems."/boot".options = lib.mkForce [ "fmask=0077" "dmask=0077" ];
 }
