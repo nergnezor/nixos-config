@@ -63,7 +63,9 @@
   services.greetd = {
     enable = true;
     settings.default_session = {
-      command = "${pkgs.greetd.tuigreet}/bin/tuigreet --time --remember --cmd niri";
+      # pkgs.tuigreet, not pkgs.greetd.tuigreet -- it moved out of the greetd
+      # attribute set into a top-level package in newer nixpkgs.
+      command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --cmd niri";
       user = "greeter";
     };
   };

@@ -40,6 +40,21 @@
   # hardware-configuration.nix generates for "/" rather than conflicting.
   fileSystems."/".options = [ "compress=zstd" ];
 
+  # Keep the browser profile OUT of the shared home. It's the one piece of
+  # shared state where version skew can actually destroy data rather than
+  # just misbehave: Chromium-based profiles don't survive a downgrade, and
+  # no available build matches Ubuntu's vivaldi 7.9 exactly (25.05 had 7.6,
+  # unstable has 8.1) -- so whichever side runs "newer" migrates the 4.2GB
+  # profile and the other side then chokes on it. A per-system profile
+  # sidesteps that entirely; the cost is bookmarks/sessions not following
+  # you between the two OSes.
+  systemd.tmpfiles.rules = [ "d /var/lib/local-home/vivaldi 0700 erik erik - -" ];
+  fileSystems."/home/erik/.config/vivaldi" = {
+    device = "/var/lib/local-home/vivaldi";
+    fsType = "none";
+    options = [ "bind" "nofail" ];
+  };
+
   # nixos-generate-config writes fmask=0022/dmask=0022 for the ESP, which
   # makes it world-readable — bootctl warns about it during install because
   # systemd-boot's random seed lives there. mkForce (not a merge) so these

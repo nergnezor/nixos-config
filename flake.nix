@@ -2,30 +2,33 @@
   description = "erik's niri evaluation NixOS config (dual-boot alongside Ubuntu, own partition/ESP)";
 
   inputs = {
-    # Was nixos-unstable; switched after hitting a genuine transient breakage
-    # there (`libdisplay-info_0_2` removed from nixpkgs before every internal
-    # caller was updated to the rename — a rolling-branch-today problem, not
-    # anything in this repo). A numbered stable release only gets curated
-    # backports, not that kind of churn — a better fit for a machine meant
-    # to be evaluated, not lived on the bleeding edge of. Tradeoff: `claude-code`
-    # (home.nix) may not exist yet on this branch if it landed in nixpkgs
-    # after 25.05 branched — check `nix search nixpkgs claude-code` once
-    # online; the npm fallback noted in home.nix still works either way.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    # A PINNED unstable revision, not a release branch and not a floating
+    # branch either.
+    #
+    # Why unstable: this system shares one home directory with an Ubuntu
+    # 26.04 install, so anything that reads config or profile data from it
+    # has to understand what Ubuntu's (newer) build writes. niri made that
+    # concrete -- 25.05 ships niri 25.08, which can't parse the 26.04 config
+    # schema (recent-windows, gestures/hot-corners, config-notification,
+    # overview/workspace-shadow) and silently fell back to defaults: the
+    # "failed to read niri config" on first boot. ghostty had the same shape
+    # of gap (1.1.3 vs Ubuntu's 1.3.1). Version parity is a functional
+    # requirement here, not a preference.
+    #
+    # Why pinned: a floating nixos-unstable is what broke an earlier install
+    # attempt outright (`libdisplay-info_0_2` removed before every internal
+    # caller was updated). This exact revision is verified working -- it's
+    # the one that produced niri 26.04 as a cached binary. Bump it
+    # deliberately, with a rebuild to check, rather than drifting.
+    nixpkgs.url = "github:NixOS/nixpkgs/3ed67ec0a4d3c7ab4ae1f04f8ee8df07bfa506a2";
     home-manager = {
-      # master tracks nixpkgs-unstable; paired against our stable 25.05 pin
-      # it hit a hard eval error — home-manager's own modules/services-modular
-      # reached for a nixpkgs lib path (lib/services/lib.nix) that doesn't
-      # exist on that branch. release-25.05 is the branch actually meant to
-      # pair with nixpkgs 25.05.
-      url = "github:nix-community/home-manager/release-25.05";
+      # master is the branch meant to pair with unstable. Pairing it with a
+      # release branch is what produced the earlier hard eval error
+      # (home-manager's modules/services-modular reaching for a nixpkgs
+      # lib/services/lib.nix that only exists on the other side).
+      url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # niri itself is NOT niri-flake anymore — dropped it (see configuration.nix):
-    # forced a from-source build (Rust, cargo-vendor-dir fetching individual
-    # crates, one hit a crates.io 403 mid-install) where nixpkgs 25.05's own
-    # `niri` package is a substitutable binary. Just `pkgs.niri` now, no input
-    # needed for it.
     #
     # noctalia-shell is NOT following the top-level nixpkgs (tried it,
     # reverted): it locks against a specific nixpkgs revision it's actually
