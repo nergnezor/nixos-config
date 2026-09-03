@@ -5,7 +5,7 @@
   # nvme0n1 (that's the internal disk, untouched by this config).
   disko.devices = {
     disk.main = {
-      device = "/dev/sda";
+      device = "/dev/sdb"; # was /dev/sda -- re-enumerated after an unplug/replug earlier in the session, confirm via `lsblk` if this ever drifts again
       type = "disk";
       content = {
         type = "gpt";
