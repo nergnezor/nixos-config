@@ -47,25 +47,17 @@
   # merge. (The niri/ directory still sitting in this repo is now just a
   # point-in-time reference snapshot, not wired into home.nix.)
 
-  # Ported verbatim from ~/.config/systemd/user/mouseless.service on Ubuntu.
-  systemd.user.services.mouseless = {
-    Unit = {
-      Description = "Mouseless keyboard mouse control";
-      PartOf = [ "graphical-session.target" ];
-      After = [ "graphical-session.target" "niri.service" ];
-      Wants = [ "graphical-session.target" ];
-    };
-    Service = {
-      Type = "exec";
-      ExecStart = "%h/.config/niri/scripts/start-mouseless.sh";
-      ExecStop = ''/bin/bash -c 'flatpak kill net.sonuscape.mouseless; pkill -f "/app/share/mouseless/src/main.pyc" || true' '';
-      TimeoutStopSec = 15;
-      Restart = "on-failure";
-      RestartSec = 10;
-      Slice = "app.slice";
-    };
-    Install.WantedBy = [ "graphical-session.target" ];
-  };
+  # systemd.user.services.mouseless was here, ported from Ubuntu's unit --
+  # removed because it writes ~/.config/systemd/user/mouseless.service,
+  # the exact path Ubuntu's real unit file already occupies in the shared
+  # home. home-manager refuses to clobber it ("Existing file ... is in the
+  # way of ..."), which aborted the WHOLE activation on first boot -- so no
+  # packages landed in the profile either, which is why noctalia was
+  # missing. Same collision class as the niri config and .gitconfig above;
+  # this one just got missed. systemd --user picks up Ubuntu's own unit
+  # from the shared home regardless, so nothing is lost by dropping it.
+  # (It won't actually run on NixOS until the mouseless flatpak is
+  # installed there, same as Ubuntu's actions-runner unit doesn't.)
 
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
