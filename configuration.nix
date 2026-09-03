@@ -69,6 +69,7 @@
   #   flatpak remote-list          # check the Ubuntu install for which remote it came from
   #   flatpak install <remote> net.sonuscape.mouseless
   services.flatpak.enable = true;
+  xdg.portal.enable = true; # required assertion for flatpak; niri itself also needs a portal for screen-share/file-pickers
 
   programs.steam = {
     enable = true;
