@@ -11,18 +11,17 @@
     # modules. Confirm this is still the right choice once nixpkgs' own
     # niri module is reachable (`nix search nixpkgs niri`) — may be redundant
     # by install time.
-    niri = {
-      url = "github:sodiboo/niri-flake";
-      # Without this, niri-flake's own mesa/wayland-stack deps could resolve
-      # to a DIFFERENT nixpkgs revision than everything else here, and Nix
-      # would store two non-identical copies instead of deduplicating one —
-      # this is what actually makes packages NOT share a library in Nix.
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    noctalia-shell = {
-      url = "github:noctalia-dev/noctalia-shell";
-      inputs.nixpkgs.follows = "nixpkgs"; # same reasoning — shared Qt6/quickshell stack
-    };
+    #
+    # NOT following the top-level nixpkgs (tried it, reverted): niri-flake and
+    # noctalia-shell each lock against a specific nixpkgs revision they've
+    # actually been built/tested with. Forcing them onto our newer pin broke
+    # the first real install attempt — nixpkgs had removed
+    # `libdisplay-info_0_2` (an old versioned alias) in the window between
+    # their lock and ours. Sharing the mesa/Qt6 base across every input would
+    # save some store space, but a config that fails to evaluate saves none —
+    # each flake keeps its own known-working nixpkgs instead.
+    niri.url = "github:sodiboo/niri-flake";
+    noctalia-shell.url = "github:noctalia-dev/noctalia-shell";
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
