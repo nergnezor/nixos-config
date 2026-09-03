@@ -15,6 +15,19 @@
   # NixOS's OWN ESP — never touches Ubuntu's ESP or GRUB. Switch OS via the
   # firmware boot menu (F9).
 
+  # Shared access to the Ubuntu install (same disk, dual-boot — never
+  # mounted from both OSes at once). Mounted at a neutral path, NOT as
+  # NixOS's own /home/erik: home-manager already declares real files under
+  # ~/.config/niri etc, and those would collide with Ubuntu's actual files
+  # at the same paths if the whole home directory were merged. home.nix
+  # instead symlinks just the specific things worth sharing (~/.claude,
+  # ~/projects) into this mount.
+  fileSystems."/mnt/ubuntu" = {
+    device = "/dev/disk/by-uuid/ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e"; # nvme0n1p5, confirmed 2026-09-03
+    fsType = "ext4";
+    options = [ "rw" "noauto" "x-systemd.automount" "x-systemd.idle-timeout=60" ];
+  };
+
   networking.hostName = "nixos-eval";
   networking.networkmanager.enable = true;
 
@@ -23,6 +36,8 @@
 
   users.users.erik = {
     isNormalUser = true;
+    uid = 1000; # matches Ubuntu's erik (confirmed 2026-09-03) — same numeric
+      # owner on files under the shared /mnt/ubuntu mount either way
     extraGroups = [ "wheel" "networkmanager" "video" "input" ];
     shell = pkgs.bash;
   };

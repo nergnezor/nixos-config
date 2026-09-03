@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -39,6 +39,17 @@
     source = ./niri;
     recursive = true;
   };
+
+  # Share Claude Code's memory/session state and the actual project
+  # checkouts with the Ubuntu install (mounted at /mnt/ubuntu — see
+  # configuration.nix), instead of NixOS starting with none of it. An
+  # out-of-store symlink, NOT a copy: this points straight at the live
+  # Ubuntu files on the shared partition, so edits from either OS are the
+  # same real files. Deliberately narrow — do NOT symlink the whole home
+  # directory, it would collide with the niri config etc. home-manager
+  # already manages above.
+  home.file.".claude".source = config.lib.file.mkOutOfStoreSymlink "/mnt/ubuntu/home/erik/.claude";
+  home.file."projects".source = config.lib.file.mkOutOfStoreSymlink "/mnt/ubuntu/home/erik/projects";
 
   # Ported verbatim from ~/.config/systemd/user/mouseless.service on Ubuntu.
   systemd.user.services.mouseless = {
