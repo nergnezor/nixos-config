@@ -84,6 +84,5 @@
 
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
-  # Match whatever release the installer ISO actually is at install time.
-  system.stateVersion = "25.11";
+  system.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
 }

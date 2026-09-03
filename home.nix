@@ -2,7 +2,7 @@
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
-  home.stateVersion = "25.11";
+  home.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
 
   home.packages = with pkgs; [
     ghostty       # dropdown-term.sh spawns this specifically
