@@ -30,6 +30,15 @@
     # `nix flake show github:noctalia-dev/noctalia-shell` once online and
     # fix if it's not `noctalia-shell` on the overlay's final package set.
     noctalia-shell
+
+    # For AngelBeach conversation/session continuity (shared ~/.claude,
+    # symlinked above). Attribute name unverified — nixpkgs may or may not
+    # carry `claude-code` on whatever nixos-unstable revision you land on;
+    # check `nix search nixpkgs claude-code` once online. If it's missing,
+    # fall back to the officially documented install instead:
+    #   home.packages: add `nodejs`
+    #   npm install -g @anthropic-ai/claude-code
+    claude-code
   ];
 
   # Whole niri config directory copied verbatim from the working Ubuntu
