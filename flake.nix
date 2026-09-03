@@ -11,8 +11,18 @@
     # modules. Confirm this is still the right choice once nixpkgs' own
     # niri module is reachable (`nix search nixpkgs niri`) — may be redundant
     # by install time.
-    niri.url = "github:sodiboo/niri-flake";
-    noctalia-shell.url = "github:noctalia-dev/noctalia-shell";
+    niri = {
+      url = "github:sodiboo/niri-flake";
+      # Without this, niri-flake's own mesa/wayland-stack deps could resolve
+      # to a DIFFERENT nixpkgs revision than everything else here, and Nix
+      # would store two non-identical copies instead of deduplicating one —
+      # this is what actually makes packages NOT share a library in Nix.
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    noctalia-shell = {
+      url = "github:noctalia-dev/noctalia-shell";
+      inputs.nixpkgs.follows = "nixpkgs"; # same reasoning — shared Qt6/quickshell stack
+    };
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
