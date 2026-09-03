@@ -36,15 +36,21 @@
 
   hardware.graphics.enable = true; # GPU-specific extras (nvidia, intel-media-driver) are per-host
 
-  # From niri-flake's NixOS module. Confirm attribute surface with
-  # `nix flake show github:sodiboo/niri-flake` once online — unverified from
-  # this machine (no nix installed here).
-  programs.niri.enable = true;
+  # Was niri-flake's programs.niri.enable module: dropped after it forced a
+  # from-source build (niri is Rust, cargo-vendor-dir fetches its crates
+  # individually — one fetch got a 403 from crates.io mid-install). nixpkgs
+  # 25.05 carries the exact same niri version (25.08) as a substitutable
+  # binary from cache.nixos.org, no source build at all. Loses niri-flake's
+  # convenience wrapper (a niri-session script for login-manager
+  # integration) — greetd execs the plain `niri` binary directly instead,
+  # fine for a smoke test, worth revisiting if session/portal integration
+  # turns out to matter.
+  environment.systemPackages = [ pkgs.niri ];
 
   services.greetd = {
     enable = true;
     settings.default_session = {
-      command = "${pkgs.greetd.tuigreet}/bin/tuigreet --time --remember --cmd niri-session";
+      command = "${pkgs.greetd.tuigreet}/bin/tuigreet --time --remember --cmd niri";
       user = "greeter";
     };
   };
@@ -56,7 +62,7 @@
     alsa.support32Bit = true; # steam
     pulse.enable = true;
   };
-  hardware.pulseaudio.enable = false;
+  services.pulseaudio.enable = false; # was hardware.pulseaudio, renamed on this nixpkgs revision
 
   # mouseless (net.sonuscape.mouseless) is flatpak-installed on the Ubuntu
   # side. Enable flatpak here, then after first boot:

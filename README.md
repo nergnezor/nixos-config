@@ -1,22 +1,32 @@
 # niri on NixOS — parallel eval install
 
-Dual-boot NixOS on this machine (`erik-HP-ENVY-TE01-1xxx`), own partitions,
-alongside the working Ubuntu install. Goal: evaluate niri/NixOS with the real
-config and the real app set, not a toy setup.
+Dual-boot NixOS on `erik-HP-ENVY-TE01-1xxx`, own partitions, alongside the
+working Ubuntu install. Goal: evaluate niri/NixOS with the real config and
+the real app set, not a toy setup. Same config also targets the Nitro
+runner (`hosts/nitro.nix`) for a hardware comparison (Intel Arc vs nvidia).
 
-## Status (2026-09-02)
+## Status (2026-09-03)
 
-- `actions-runner.service` (CI runner) **stopped** before starting this —
-  restart with `systemctl --user start actions-runner` once back in Ubuntu.
-- Partition math for reclaiming 50GiB from `nvme0n1p5` is computed and
-  verified against this disk's actual sysfs geometry — see
-  `PARTITION-RUNBOOK.md`. Not yet executed (needs a live USB boot).
-- `niri/` here is a verbatim copy of `~/.config/niri/` (config.kdl,
-  autostart.kdl, noctalia/*.kdl, scripts/) as of today, minus `dms/` (an
-  older, unreferenced shell config) and the dated backup file.
-- App list in `home.nix` and the mouseless udev/tmpfiles/systemd wiring in
-  `configuration.nix`/`home.nix` were read off the live Ubuntu system, not
-  guessed.
+- Currently mid-way through the USB smoke test (`nixos-eval-usb`, see
+  `USB-TEST-RUNBOOK.md`) — installing directly from this Ubuntu session
+  (Nix now installed here) rather than a live-ISO boot.
+- `niri/` is a verbatim copy of `~/.config/niri/` (config.kdl, autostart.kdl,
+  noctalia/*.kdl, scripts/) from 2026-09-02 — but no longer wired into
+  `home.nix` directly. `/home/erik` is bind-mounted from the real Ubuntu
+  partition instead (see `hosts/hp-envy.nix` / `hosts/nitro.nix`), so the
+  live files are used as-is; `niri/` here is just a point-in-time reference.
+- `niri` itself comes straight from nixpkgs (`pkgs.niri`, substituted
+  binary), not niri-flake — niri-flake forced a from-source Rust build that
+  hit a crates.io 403 mid-install; nixpkgs 25.05 has the same version
+  (25.08) pre-built. Lost niri-flake's `niri-session` wrapper; greetd execs
+  `niri` directly instead.
+- `noctalia-shell` package is `pkgs.noctalia` (its own overlay), not
+  `noctalia-shell` — confirmed via `nix flake show`.
+- `nixpkgs` is pinned to `nixos-25.05` (stable), not unstable — hit a
+  transient unstable-branch breakage (`libdisplay-info_0_2` removed)
+  during the first real install attempt. `home-manager` matched to
+  `release-25.05` for the same reason (its `master` branch assumes
+  unstable-shaped nixpkgs internals).
 
 ## Deliberately out of scope
 
@@ -28,31 +38,16 @@ config and the real app set, not a toy setup.
   parts of the desktop, but streaming/VR/launcher infra is a bigger lift than
   "evaluate niri" calls for. Add later if the eval sticks.
 
-## Unverified — confirm once you have `nix search`/`nix flake show` on the live ISO
+## Still worth double-checking
 
-This machine has no `nix` installed, so none of this has been built or
-flake-checked. Things to double-check with network access before
-`nixos-install`:
-
-- `programs.niri.enable` — from `niri-flake` (sodiboo). Confirm the module's
-  actual option surface; nixpkgs may have grown its own niri module by now
-  too, in which case simplify.
-- `noctalia-shell.overlays.default` — the overlay exists (seen in
-  `~/noctalia-shell/flake.nix`), but the exact package attribute it adds
-  (assumed `noctalia-shell`) isn't confirmed.
 - The flatpak remote `net.sonuscape.mouseless` (mouseless) was installed
   from — check `flatpak remote-list` / `flatpak info net.sonuscape.mouseless`
   on the Ubuntu side before trying to reinstall it under NixOS.
-- `system.stateVersion` / `home.stateVersion` are set to `"25.11"` as a
-  placeholder — match to whatever the installer ISO's actual release is.
+- `claude-code` package (home.nix) — confirmed it exists on nixos-25.05, not
+  yet confirmed it actually *runs* correctly once installed.
 
 ## Next steps
 
-1. Download a NixOS minimal/graphical installer ISO, write it to a USB stick.
-2. Boot it on this machine, follow `PARTITION-RUNBOOK.md` start to finish.
-3. Once partitioned and mounted at `/mnt`, `git clone`/`scp` this whole
-   `nixos-config/` directory onto the live environment (or just copy it via
-   the USB stick alongside the ISO).
-4. Resolve the "unverified" items above with actual `nix` commands.
-5. `nixos-install --flake .#nixos-eval`, reboot, pick NixOS via the firmware
-   boot menu (F9).
+See `USB-TEST-RUNBOOK.md` for exactly where the smoke test stands. Once it
+boots cleanly: `PARTITION-RUNBOOK.md` + `nixos-eval` (internal disk) is the
+real dual-boot install, same config either way.

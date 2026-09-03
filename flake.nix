@@ -21,20 +21,19 @@
       url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Tracks upstream niri releases closely; provides the NixOS + home-manager
-    # modules. Confirm this is still the right choice once nixpkgs' own
-    # niri module is reachable (`nix search nixpkgs niri`) — may be redundant
-    # by install time.
+    # niri itself is NOT niri-flake anymore — dropped it (see configuration.nix):
+    # forced a from-source build (Rust, cargo-vendor-dir fetching individual
+    # crates, one hit a crates.io 403 mid-install) where nixpkgs 25.05's own
+    # `niri` package is a substitutable binary. Just `pkgs.niri` now, no input
+    # needed for it.
     #
-    # NOT following the top-level nixpkgs (tried it, reverted): niri-flake and
-    # noctalia-shell each lock against a specific nixpkgs revision they've
-    # actually been built/tested with. Forcing them onto our newer pin broke
-    # the first real install attempt — nixpkgs had removed
-    # `libdisplay-info_0_2` (an old versioned alias) in the window between
-    # their lock and ours. Sharing the mesa/Qt6 base across every input would
-    # save some store space, but a config that fails to evaluate saves none —
-    # each flake keeps its own known-working nixpkgs instead.
-    niri.url = "github:sodiboo/niri-flake";
+    # noctalia-shell is NOT following the top-level nixpkgs (tried it,
+    # reverted): it locks against a specific nixpkgs revision it's actually
+    # been built/tested with. Forcing it onto our newer pin broke the first
+    # real install attempt — nixpkgs had removed `libdisplay-info_0_2` (an old
+    # versioned alias) in the window between its lock and ours. Sharing the
+    # Qt6 base would save some store space, but a config that fails to
+    # evaluate saves none — it keeps its own known-working nixpkgs instead.
     noctalia-shell.url = "github:noctalia-dev/noctalia-shell";
     disko = {
       url = "github:nix-community/disko";
@@ -42,7 +41,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, home-manager, niri, noctalia-shell, disko, ... }:
+  outputs = { self, nixpkgs, home-manager, noctalia-shell, disko, ... }:
     let
       homeModule = {
         home-manager.useGlobalPkgs = true;
@@ -57,9 +56,8 @@
       # whichever target you're installing at the time.
       mkHost = { hostModule, extraModules ? [ ] }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        specialArgs = { inherit niri noctalia-shell; };
+        specialArgs = { inherit noctalia-shell; };
         modules = [
-          niri.nixosModules.niri
           ./configuration.nix
           hostModule
           home-manager.nixosModules.home-manager
