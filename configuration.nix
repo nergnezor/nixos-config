@@ -32,10 +32,17 @@
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
 
+  # uid AND gid both have to match Ubuntu's erik (1000:1000), not just the
+  # uid: the home directory is shared between the two systems, so files
+  # created from NixOS would otherwise land with group 100 ("users", the
+  # NixOS default) against Ubuntu's 1000. The missing `erik` group also
+  # broke systemd-tmpfiles on the first boot — the /dev/uinput rules below
+  # name it: "Failed to resolve group 'erik': No such process".
+  users.groups.erik.gid = 1000;
   users.users.erik = {
     isNormalUser = true;
-    uid = 1000; # matches Ubuntu's erik (confirmed 2026-09-03) — same numeric
-      # owner on files under the shared /mnt/ubuntu mount either way
+    uid = 1000;
+    group = "erik";
     extraGroups = [ "wheel" "networkmanager" "video" "input" ];
     shell = pkgs.bash;
   };
