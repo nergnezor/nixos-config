@@ -73,3 +73,13 @@ USB stick this time.
   save that judgment for the internal NVMe install.
 
 If this works, `PARTITION-RUNBOOK.md` + `nixos-eval` (internal disk) is next.
+
+## Reusing the same stick on Nitro (Intel Arc A750)
+
+Same steps, with two changes: re-confirm `/dev/sda` in step 3 (no guarantee
+it enumerates the same on different hardware), and swap the flake target in
+step 5 — `sudo nixos-install --flake .#nixos-eval-nitro-usb`. That target
+pulls in `hosts/nitro.nix` instead (Intel graphics packages, Nitro's own
+Ubuntu-partition UUID for the `/home/erik` share) rather than HP's nvidia
+config — confirmed via SSH 2026-09-03, not re-verified against nixos-unstable
+itself.
