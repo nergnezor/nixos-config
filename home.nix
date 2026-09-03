@@ -12,11 +12,9 @@
     slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
     vscode
-    # spotify, discord, thunderbird, mpv, vlc, gimp dropped for the smoke
-    # test -- vscode/claude-code/vivaldi are the only big apps actually
-    # needed to evaluate niri; smaller closure = less exposure on the
-    # unreliable USB stick. Add back for the real internal-disk install
-    # once niri itself is proven out.
+    # spotify, discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only
+    # wanted steam added back for the real internal-disk install, not the
+    # rest of the trimmed set.
     git           # was pulled in via programs.git before; that module's gone
                   # now that .gitconfig comes from the shared real home
     lazygit

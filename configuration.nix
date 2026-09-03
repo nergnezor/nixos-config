@@ -65,7 +65,7 @@
   services.pipewire = {
     enable = true;
     alsa.enable = true;
-    # alsa.support32Bit was steam-only, dropped along with programs.steam below
+    alsa.support32Bit = true; # steam
     pulse.enable = true;
   };
   services.pulseaudio.enable = false; # was hardware.pulseaudio, renamed on this nixpkgs revision
@@ -80,8 +80,9 @@
     extraPortals = [ pkgs.xdg-desktop-portal-gtk ]; # generic backend, not niri-specific — good enough for a smoke test
   };
 
-  # programs.steam dropped for the smoke test (~4GB for the 32-bit/FHS
-  # compat layer alone) -- add back for the real internal-disk install.
+  programs.steam.enable = true;
+  # gamescopeSession dropped along with the rest of the trimmed app set --
+  # erik only asked for plain steam back, not gamescope.
 
   # Mouseless virtual-mouse/device quirks, ported verbatim from this Ubuntu
   # install's /etc/udev/rules.d/61-mouseless-no-takeover.rules and
