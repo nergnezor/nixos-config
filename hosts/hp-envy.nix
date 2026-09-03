@@ -32,4 +32,11 @@
                       # revision requires the option to have some value
     options = [ "bind" "nofail" ];
   };
+
+  # nvme0n1p3 is btrfs (switched from ext4 for this) — turn on transparent
+  # zstd compression, which is the whole reason for the switch: /nix/store
+  # is mostly text and ELF, and compresses well. `options` is a list type in
+  # the fileSystems module, so this merges with the device/fsType that
+  # hardware-configuration.nix generates for "/" rather than conflicting.
+  fileSystems."/".options = [ "compress=zstd" ];
 }
