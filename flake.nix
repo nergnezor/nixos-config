@@ -32,7 +32,7 @@
   outputs = { self, nixpkgs, home-manager, niri, noctalia-shell, disko, ... }:
     let
       homeModule = {
-        home-manager.useGlobalPackages = true;
+        home-manager.useGlobalPkgs = true;
         home-manager.useUserPackages = true;
         home-manager.users.erik = import ./home.nix;
       };
