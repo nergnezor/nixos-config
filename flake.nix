@@ -13,7 +13,12 @@
     # online; the npm fallback noted in home.nix still works either way.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     home-manager = {
-      url = "github:nix-community/home-manager";
+      # master tracks nixpkgs-unstable; paired against our stable 25.05 pin
+      # it hit a hard eval error — home-manager's own modules/services-modular
+      # reached for a nixpkgs lib path (lib/services/lib.nix) that doesn't
+      # exist on that branch. release-25.05 is the branch actually meant to
+      # pair with nixpkgs 25.05.
+      url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # Tracks upstream niri releases closely; provides the NixOS + home-manager
