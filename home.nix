@@ -1,4 +1,4 @@
-{ pkgs, config, ... }:
+{ pkgs, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -18,6 +18,8 @@
     mpv
     vlc
     gimp
+    git           # was pulled in via programs.git before; that module's gone
+                  # now that .gitconfig comes from the shared real home
     lazygit
     gh
     jq            # vertical-monitor-stack.sh / dropdown-term.sh parse `niri msg -j` with it
@@ -31,8 +33,9 @@
     # fix if it's not `noctalia-shell` on the overlay's final package set.
     noctalia-shell
 
-    # For AngelBeach conversation/session continuity (shared ~/.claude,
-    # symlinked above). Attribute name unverified — nixpkgs may or may not
+    # For AngelBeach conversation/session continuity (~/.claude comes from
+    # the bind-mounted real home — see configuration.nix). Attribute name
+    # unverified — nixpkgs may or may not
     # carry `claude-code` on whatever nixos-unstable revision you land on;
     # check `nix search nixpkgs claude-code` once online. If it's missing,
     # fall back to the officially documented install instead:
@@ -41,24 +44,14 @@
     claude-code
   ];
 
-  # Whole niri config directory copied verbatim from the working Ubuntu
-  # install (2026-09-02): config.kdl, autostart.kdl, noctalia/*.kdl, scripts/.
-  # (dms/ and the dated backup were left behind — unreferenced by config.kdl.)
-  xdg.configFile."niri" = {
-    source = ./niri;
-    recursive = true;
-  };
-
-  # Share Claude Code's memory/session state and the actual project
-  # checkouts with the Ubuntu install (mounted at /mnt/ubuntu — see
-  # configuration.nix), instead of NixOS starting with none of it. An
-  # out-of-store symlink, NOT a copy: this points straight at the live
-  # Ubuntu files on the shared partition, so edits from either OS are the
-  # same real files. Deliberately narrow — do NOT symlink the whole home
-  # directory, it would collide with the niri config etc. home-manager
-  # already manages above.
-  home.file.".claude".source = config.lib.file.mkOutOfStoreSymlink "/mnt/ubuntu/home/erik/.claude";
-  home.file."projects".source = config.lib.file.mkOutOfStoreSymlink "/mnt/ubuntu/home/erik/projects";
+  # No xdg.configFile."niri" and no programs.git here anymore: /home/erik is
+  # now a bind mount of the real Ubuntu home (see configuration.nix), so
+  # ~/.config/niri, ~/.gitconfig, ~/.claude, ~/projects, ~/.ssh — all of it
+  # — are already the live Ubuntu files. Declaring them here too would mean
+  # home-manager's activation tries to write its own version over the same
+  # real files instead of a nix-store copy, which is destructive, not a
+  # merge. (The niri/ directory still sitting in this repo is now just a
+  # point-in-time reference snapshot, not wired into home.nix.)
 
   # Ported verbatim from ~/.config/systemd/user/mouseless.service on Ubuntu.
   systemd.user.services.mouseless = {
@@ -78,12 +71,6 @@
       Slice = "app.slice";
     };
     Install.WantedBy = [ "graphical-session.target" ];
-  };
-
-  programs.git = {
-    enable = true;
-    userName = "nergnezor";
-    userEmail = "erikrosengren84@gmail.com";
   };
 
   home.sessionVariables = {

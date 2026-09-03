@@ -15,17 +15,24 @@
   # NixOS's OWN ESP — never touches Ubuntu's ESP or GRUB. Switch OS via the
   # firmware boot menu (F9).
 
-  # Shared access to the Ubuntu install (same disk, dual-boot — never
-  # mounted from both OSes at once). Mounted at a neutral path, NOT as
-  # NixOS's own /home/erik: home-manager already declares real files under
-  # ~/.config/niri etc, and those would collide with Ubuntu's actual files
-  # at the same paths if the whole home directory were merged. home.nix
-  # instead symlinks just the specific things worth sharing (~/.claude,
-  # ~/projects) into this mount.
+  # Share the WHOLE Ubuntu home directory (same disk, dual-boot — never
+  # mounted from both OSes at once): SSH keys, real .gitconfig, browser
+  # profiles, shell history, ~/.claude, ~/projects, all of it, automatically
+  # — instead of home.nix enumerating each thing worth sharing one at a
+  # time. Mount the Ubuntu partition at a neutral path first, then bind
+  # /home/erik onto NixOS's actual home directory. home.nix deliberately
+  # does NOT declare xdg.configFile."niri" or programs.git anymore — those
+  # paths are now the real, live Ubuntu files, and home-manager writing its
+  # own version there would overwrite them (they're the same filesystem,
+  # not a copy).
   fileSystems."/mnt/ubuntu" = {
     device = "/dev/disk/by-uuid/ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e"; # nvme0n1p5, confirmed 2026-09-03
     fsType = "ext4";
     options = [ "rw" "noauto" "x-systemd.automount" "x-systemd.idle-timeout=60" ];
+  };
+  fileSystems."/home/erik" = {
+    device = "/mnt/ubuntu/home/erik";
+    options = [ "bind" ];
   };
 
   networking.hostName = "nixos-eval";
