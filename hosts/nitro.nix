@@ -21,6 +21,8 @@
   };
   fileSystems."/home/erik" = {
     device = "/mnt/ubuntu/home/erik";
+    fsType = "none"; # ignored by `mount` for a bind mount, but this nixpkgs
+                      # revision requires the option to have some value
     options = [ "bind" "nofail" ];
   };
 }
