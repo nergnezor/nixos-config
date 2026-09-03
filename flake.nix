@@ -2,7 +2,16 @@
   description = "erik's niri evaluation NixOS config (dual-boot alongside Ubuntu, own partition/ESP)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Was nixos-unstable; switched after hitting a genuine transient breakage
+    # there (`libdisplay-info_0_2` removed from nixpkgs before every internal
+    # caller was updated to the rename — a rolling-branch-today problem, not
+    # anything in this repo). A numbered stable release only gets curated
+    # backports, not that kind of churn — a better fit for a machine meant
+    # to be evaluated, not lived on the bleeding edge of. Tradeoff: `claude-code`
+    # (home.nix) may not exist yet on this branch if it landed in nixpkgs
+    # after 25.05 branched — check `nix search nixpkgs claude-code` once
+    # online; the npm fallback noted in home.nix still works either way.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     home-manager = {
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
