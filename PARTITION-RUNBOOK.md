@@ -551,22 +551,46 @@ and the freed tail (with its `photorec` option) goes too.
 
 ```
 sudo parted /dev/nvme0n1 resizepart 5 3383547903s
-sudo parted /dev/nvme0n1 unit s print
-sudo mkfs.ext4 -L home /dev/nvme0n1p5
+sudo umount /mnt/p5check          # mkfs refuses while it is mounted
+sudo partprobe /dev/nvme0n1       # or mkfs formats only the old extent
 ```
 
 `/home` ends up at 1.58TiB. Final layout: p1 (Ubuntu's old ESP, removable) ·
 p5 home · p2 NIXBOOT · p3 NixOS.
 
+**And make it btrfs, not ext4.** The whole incident began with ext4 being
+unable to shrink while mounted, which is what forced the live-USB GParted
+run that then got interrupted. btrfs resizes online — `btrfs filesystem
+resize -100G /home`, on a running system, no live media — and adds cheap
+snapshots before anything risky plus checksums on file data rather than only
+metadata. The cost is more machinery and less pleasant ENOSPC behaviour,
+neither of which bites at 1.58TiB.
+
+```
+sudo mkfs.btrfs -L home /dev/nvme0n1p5
+sudo mount /dev/nvme0n1p5 /mnt/newhome
+sudo btrfs subvolume create /mnt/newhome/@home
+sudo btrfs subvolume create /mnt/newhome/@snapshots
+sudo umount /mnt/newhome
+```
+
+`@snapshots` is a sibling of `@home`, not a directory inside it, so
+snapshots never end up inside the tree they photograph.
+
 Restore home. A freshly-made p5 means its root **is** the home directory —
 no `home/` level, so no bind mount:
 
 ```
-sudo mount /dev/nvme0n1p5 /mnt/newhome
+sudo mount -o compress=zstd,subvol=@home /dev/nvme0n1p5 /mnt/newhome
 sudo mkdir -p /mnt/newhome/erik
 sudo rsync -aHAX --numeric-ids /mnt/nixos/rescue3/ /mnt/newhome/erik/
 sudo chown -R 1000:1000 /mnt/newhome/erik
 ```
+
+Optional refinement, worth doing *before* the rsync: make
+`erik/.cache`, `erik/Downloads` and `erik/.local/share/Steam` subvolumes of
+their own. A nested subvolume is not included in its parent's snapshot, so
+snapshots of `@home` stay small and cover only what matters.
 
 Once NixOS boots cleanly from p2, Ubuntu's leftovers can go — **after**, not
 before:

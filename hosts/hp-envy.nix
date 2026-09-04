@@ -29,16 +29,28 @@
   # directory. Adopt them deliberately if you want, by copying the live
   # files into the repo first.
   #
+  # btrfs, not ext4, and the reason is the incident that made this partition
+  # necessary: ext4 cannot shrink while mounted, which is what forced the
+  # whole GParted-from-a-live-USB exercise that then got interrupted. btrfs
+  # resizes online (`btrfs filesystem resize -100G /home`), takes snapshots
+  # for free before anything risky, and checksums file *data* rather than
+  # only metadata, so `scrub` finds silent corruption before an open() does.
+  # It also matches p3.
+  #
+  # subvol=@home keeps snapshots out of the tree they photograph: @snapshots
+  # is a sibling subvolume at the filesystem root, not a directory inside
+  # @home.
+  #
   # by-label, not by-uuid: mkfs assigns a fresh UUID every time, and this
   # partition has now been remade once. The label is set deliberately
-  # (`mkfs.ext4 -L home`) and survives in the config across a future rebuild
+  # (`mkfs.btrfs -L home`) and survives in the config across a future rebuild
   # of it. `nofail` stays -- a config accidentally built for the wrong host,
   # or booted before the partition exists, degrades to an empty local home
   # rather than a broken boot.
   fileSystems."/home" = {
     device = "/dev/disk/by-label/home";
-    fsType = "ext4";
-    options = [ "rw" "nofail" ];
+    fsType = "btrfs";
+    options = [ "rw" "nofail" "compress=zstd" "subvol=@home" ];
   };
 
   # nvme0n1p3 is btrfs (switched from ext4 for this) — turn on transparent
