@@ -30,6 +30,17 @@
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
+  # The ESP is 512MiB and each generation puts a kernel plus an initrd on it,
+  # roughly 100MiB a time. Without a cap `nixos-rebuild` eventually fills it
+  # and fails partway through a switch, which is a bad moment to discover a
+  # full /boot. Five is a couple of months of rebuilds and still leaves
+  # plenty to roll back to; older generations stay in the store and reappear
+  # here after a `nix-collect-garbage` and a rebuild if you need them.
+  boot.loader.systemd-boot.configurationLimit = 5;
+  # There is only one OS to boot now, so this is not a menu for choosing
+  # between systems — it is the one for choosing an older generation when a
+  # rebuild breaks something. Short, but never zero.
+  boot.loader.timeout = 3;
   boot.loader.efi.efiSysMountPoint = "/boot"; # nvme0n1p2 (label NIXBOOT) on
     # the internal disk; also matches disko-usb.nix's ESP mountpoint.
   # This ESP was created for NixOS alone and never held Ubuntu's GRUB. The
