@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -61,10 +61,9 @@
   xdg.configFile."niri".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/niri";
 
-  # programs.git stays undeclared: ~/.gitconfig came back from the rescue
-  # and is the working copy. Same reasoning as the niri config had before
-  # this commit — adopt it into the repo deliberately if you want it
-  # managed, rather than letting home-manager write over it.
+  # programs.git stays undeclared: once the rescue copy is out of the way
+  # (below), set user.name / userEmail by hand or adopt a real file into
+  # the repo. Do not let home-manager invent an identity.
 
   # systemd.user.services.mouseless was here, ported from Ubuntu's unit --
   # removed because it writes ~/.config/systemd/user/mouseless.service,
@@ -77,6 +76,75 @@
   # from the shared home regardless, so nothing is lost by dropping it.
   # (It won't actually run on NixOS until the mouseless flatpak is
   # installed there, same as Ubuntu's actions-runner unit doesn't.)
+  #
+  # Generation 10's ~/.config/systemd/user is *not* the session killer:
+  # it only contains home-manager's tray.target symlink. Do not quarantine
+  # that directory.
+
+  # niri-session re-execs itself as `exec -l $SHELL` before it ever starts
+  # niri.service. bash as a login shell sources ~/.profile, and the copy
+  # restored from the damaged ext4 filesystem is 239 bytes of binary
+  # (NUL, a stray `(`, "syntax error near unexpected token"). The login
+  # shell dies, greetd sees the session command exit in one second, niri
+  # never reaches the journal. force: home-manager will not overwrite an
+  # existing file otherwise.
+  home.activation.quarantineCorruptProfile =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      if [ -e "$HOME/.profile" ] && ! sh -n "$HOME/.profile" 2>/dev/null; then
+        $DRY_RUN_CMD mv "$HOME/.profile" "$HOME/.profile.corrupt-rescue"
+      fi
+    '';
+  home.file.".profile" = {
+    force = true;
+    text = ''
+      # Managed by home-manager (nixos-config). The copy restored from the
+      # damaged ext4 filesystem was binary garbage and broke shell startup.
+      if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+        . "$HOME/.bashrc"
+      fi
+    '';
+  };
+
+  # Same class of leftover as .profile: `git status` dies with
+  # "fatal: bad config line 1 in file /home/erik/.gitconfig". Move it
+  # aside; a new identity is not invented here.
+  home.activation.quarantineCorruptGitconfig =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      if [ -e "$HOME/.gitconfig" ] && ! ${pkgs.git}/bin/git config --file "$HOME/.gitconfig" --list >/dev/null 2>&1; then
+        $DRY_RUN_CMD mv "$HOME/.gitconfig" "$HOME/.gitconfig.corrupt-rescue"
+      fi
+    '';
+
+  # Rescue leftovers that keep the three apps from starting on this host:
+  # - vivaldi: Chromium SingletonLock still names the Ubuntu hostname
+  #   (erik-HP-ENVY-TE01-1xxx) and a dead pid.
+  # - ghostty: GTK 4 parses ~/.config/gtk-4.0/gtk.css, which the rescue
+  #   restored as garbage ("Expected a valid selector" then a segfault).
+  # - steam: ~/.local/share/Steam/steam.sh is not a script (Exec format
+  #   error) and the Ubuntu steam-runtime is incomplete. Keep userdata;
+  #   Steam re-bootstraps steam.sh + ubuntu12_32 on the next launch.
+  home.activation.quarantineRescueAppState =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      vivaldiCfg="$HOME/.config/vivaldi"
+      if [ -e "$vivaldiCfg/SingletonLock" ] || [ -e "$vivaldiCfg/SingletonSocket" ] || [ -e "$vivaldiCfg/SingletonCookie" ]; then
+        $DRY_RUN_CMD rm -f "$vivaldiCfg/SingletonLock" "$vivaldiCfg/SingletonSocket" "$vivaldiCfg/SingletonCookie"
+      fi
+
+      for css in "$HOME/.config/gtk-4.0/gtk.css" "$HOME/.config/gtk-3.0/gtk.css"; do
+        if [ -f "$css" ] && grep -q $'\0' "$css" 2>/dev/null; then
+          $DRY_RUN_CMD mv "$css" "$css.corrupt-rescue"
+        fi
+      done
+
+      steamDir="$HOME/.local/share/Steam"
+      if [ -e "$steamDir/steam.sh" ] && ! grep -q '^#!' "$steamDir/steam.sh" 2>/dev/null; then
+        $DRY_RUN_CMD mv "$steamDir/steam.sh" "$steamDir/steam.sh.corrupt-rescue"
+      fi
+      runtimeLogger="$steamDir/ubuntu12_32/steam-runtime/usr/libexec/steam-runtime-tools-0/logger-0.bash"
+      if [ -e "$steamDir/ubuntu12_32" ] && [ ! -f "$runtimeLogger" ]; then
+        $DRY_RUN_CMD mv "$steamDir/ubuntu12_32" "$steamDir/ubuntu12_32.ubuntu-rescue"
+      fi
+    '';
 
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
