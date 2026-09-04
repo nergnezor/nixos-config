@@ -237,6 +237,22 @@ Please run e2fsck -D.`, which is not data loss at all and names its own fix.
 The serious ones are `bad extra_isize` and `invalid magic` on extent headers
 — inodes whose table blocks were mid-relocation at the moment of the abort.
 
+### Do not boot NixOS while p5 is damaged
+
+`hosts/hp-envy.nix` mounts p5 at `/mnt/ubuntu` **rw** with `nofail`, and p5's
+superblock carries `Errors behavior: Continue`. Booting the p3 install (or
+the old disko USB stick, which carries the same host module) therefore
+mounts the damaged filesystem writable and keeps writing through errors
+rather than dropping to read-only — a good way to turn a repairable mess
+into an unrepairable one. Stay in the live ISO until `e2fsck` completes.
+
+A cheap safety net meanwhile, one superblock field that `e2fsck` rewrites
+anyway:
+
+```
+sudo tune2fs -e remount-ro /dev/nvme0n1p5
+```
+
 ### Recovery order
 
 An interrupted resize is what `e2fsck` exists for: the data blocks are still
