@@ -389,6 +389,40 @@ Revised order from here:
    content-addressed, so `git fsck` / `git unpack-objects` against
    `lost+found` can rebuild history without any directory names at all.
 
+   `rdump` refuses to write into a directory that already exists and aborts
+   on the spot (`rdump: File exists while making directory ...`) — and the
+   failed rsync leaves empty `projects/`/`Documents/` behind, so dump to a
+   *fresh* destination (`/mnt/nixos/rescue2`) rather than the one rsync
+   touched.
+
+   **The damage has a clean boundary, visible in `debugfs -c -R "ls -l
+   /home/erik"`.** Sort the entries by inode number:
+
+   | inode range | state |
+   |---|---|
+   | <= 5 796 435 | intact — uid/gid 1000, sane modes and dates |
+   | ~5.1-5.8M | inode fine, directory *block* checksums bad (what the kernel trips on) |
+   | >= 12 337 752 | destroyed — file content sitting in the inode table |
+
+   which matches the fsck output exactly: `bad extra_isize` and
+   `_INODE_UNINIT` were all inodes 12-16M, while the mild "No space for
+   directory leaf checksum" ones sat around 5.1-5.4M. A destroyed entry is
+   obvious on sight — nonsense mode, negative uid/gid, a date in 1981 or
+   2084.
+
+   Since lower inode numbers mean older files, most of the home directory
+   falls in the healthy range. `~/projects` is inode 5276636 with mode
+   40775, uid 1000 and a sane mtime: the directory itself is fine, only its
+   data block's checksum failed, which is exactly what `-c` walks past.
+
+   Written off (high inodes): `.claude`, `.cargo`, `.rustup`, `.gradle`,
+   `.sdkman`, `.mono`, `.java`, `.android`, `Android`, `jdk21`, `.epic`,
+   `UnrealEngine`, `noctalia-shell`, `ladybird`, `Games`, `.zen`,
+   `.vscode-oss`, `.vscode-shared`, `.antigravity-ide`, `xz2c-firmware`,
+   `.vcpkg`, `.nix-defexpr`, `nixos-config`. Nearly all of it is tool cache
+   that reinstalls itself; `nixos-config` is on GitHub, and `.claude.json`
+   (inode 154587) survives even though `.claude/` does not.
+
    The original rsync, for what it can still reach:
    `mount -o ro,noload /dev/nvme0n1p5 /mnt/p5check` (`noload` skips journal
    replay, which is what you want on a half-repaired filesystem), then rsync
