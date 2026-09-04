@@ -80,6 +80,15 @@
     };
   };
 
+  # Lets the phone reach this machine over SSH without port-forwarding or
+  # DDNS on the router: tailscaled joins it to a private WireGuard mesh with
+  # the other devices on the same Tailscale account, so it's reachable at a
+  # stable Tailscale IP/MagicDNS name from anywhere, NAT/CGNAT included.
+  # `sudo tailscale up` after the rebuild does the one-time interactive
+  # login. SSH itself stays as configured above (key-only) -- Tailscale is
+  # just the network path in, not a replacement for that auth.
+  services.tailscale.enable = true;
+
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
 

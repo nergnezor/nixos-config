@@ -23,9 +23,17 @@ export XDG_DATA_HOME="$flatpak_data_home"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
 
+# /usr/bin/flatpak is an Ubuntu-ism; NixOS only puts it on PATH (under
+# /run/current-system/sw/bin), so resolve it there instead of hardcoding it.
+flatpak_bin="$(command -v flatpak || true)"
+if [[ -z "$flatpak_bin" ]]; then
+    echo "flatpak not found on PATH" >&2
+    exit 1
+fi
+
 # Wayland compositor + flatpak session helper need a moment after login.
 sleep 5
 
-exec /usr/bin/flatpak run \
+exec "$flatpak_bin" run \
     --branch=stable --arch=x86_64 --command=mouseless-wrapper \
     net.sonuscape.mouseless

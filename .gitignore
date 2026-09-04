@@ -1,0 +1,6 @@
+# nix build output symlinks
+result
+result-*
+
+# Claude Code local scratch (worktrees, etc.) -- not part of the config
+.claude/
