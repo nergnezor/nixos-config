@@ -52,8 +52,9 @@
         home-manager.users.erik = import ./home.nix;
       };
       # hostModule carries everything machine-specific: hostName, GPU driver,
-      # and that machine's own Ubuntu-partition UUID for the /home share (see
-      # hosts/hp-envy.nix, hosts/nitro.nix). extraModules is for disko, on
+      # and how that machine gets /home — hp-envy has a partition of its own,
+      # nitro still shares Ubuntu's (see hosts/hp-envy.nix, hosts/nitro.nix).
+      # extraModules is for disko, on
       # the USB-test targets. hardware-configuration.nix (shared filename,
       # not host-specific in this repo) gets regenerated/overwritten for
       # whichever target you're installing at the time.
@@ -71,8 +72,11 @@
       };
     in
     {
-      # The real dual-boot install, on its own internal-disk partitions
-      # (nvme0n1p6/p7 — see PARTITION-RUNBOOK.md).
+      # The real install on the HP: nvme0n1p2 (ESP) + p3 (root) + p5 (/home),
+      # see PARTITION-RUNBOOK.md. No longer dual-boot — Ubuntu is gone from
+      # this machine. The "eval" in the name is a leftover from when it was
+      # a trial; install-to-nixos-partition.sh and the runbook both use it,
+      # so it stays until there is a reason to rename it.
       nixosConfigurations.nixos-eval = mkHost {
         hostModule = ./hosts/hp-envy.nix;
       };

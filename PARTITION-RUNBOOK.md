@@ -610,6 +610,51 @@ the `/home/erik` bind mount both gone. It uses the label rather than a UUID
 because mkfs issues a fresh UUID each time and this partition has now been
 remade once.
 
+### Building the new generation from the live USB
+
+Do not boot the existing generation first: it still looks for p5 as **ext4**
+at `/mnt/ubuntu`, finds nothing (p5 is btrfs now), skips it via `nofail`, and
+leaves you at an empty home with the same unreadable-login problem. Build the
+new one from the live session instead.
+
+```
+sudo mkdir -p /mnt/nixroot
+sudo mount -o compress=zstd /dev/nvme0n1p3 /mnt/nixroot &&
+sudo mount /dev/nvme0n1p2 /mnt/nixroot/boot &&
+sudo mount -t btrfs -o compress=zstd,subvol=@home /dev/nvme0n1p5 /mnt/nixroot/home
+```
+
+**`mount` needs `-t btrfs` explicitly here.** Without it libblkid guesses
+from a cache that still remembers the ext4 with the same label on the same
+device, tries ext4, and fails with `VFS: Can't find ext4 filesystem`.
+
+```
+sudo git clone https://github.com/nergnezor/nixos-config /mnt/nixroot/home/erik/nixos-config
+sudo chown -R 1000:1000 /mnt/nixroot/home/erik/nixos-config
+sudo nixos-enter --root /mnt/nixroot -- nixos-rebuild dry-build --flake /home/erik/nixos-config#nixos-eval
+sudo nixos-enter --root /mnt/nixroot -- nixos-rebuild boot     --flake /home/erik/nixos-config#nixos-eval
+sudo nixos-enter --root /mnt/nixroot -- passwd erik
+```
+
+The flake output is `nixos-eval`, **not** `nixos-hp` — that is the hostName
+inside `hosts/hp-envy.nix`, not the attribute name in `flake.nix`.
+
+Set that password with **letters and digits only**. The live console is US
+and the generation you are building sets `console.keyMap = "sv-latin1"`;
+alphanumerics land on the same keys under both, nothing else does. Change it
+to something real once logged in.
+
+Afterwards, once NixOS boots and `findmnt /home` looks right, Ubuntu's
+leftovers go and the first snapshot gets taken:
+
+```
+sudo btrfs subvolume snapshot -r /home /home/../@snapshots/home-$(date +%F)
+sudo parted /dev/nvme0n1 rm 1
+sudo efibootmgr             # find the "ubuntu" entry
+sudo efibootmgr -b <N> -B
+```
+
+
 **Step 3 — copy Ubuntu across.** Still from the live USB, with both
 mounted (`/mnt/old` = p5, `/mnt/new` = the new partition):
 
