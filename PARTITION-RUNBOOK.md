@@ -178,6 +178,70 @@ time; check `lsblk`, don't assume it's p6.
 sudo mkfs.ext4 -L ubuntu /dev/nvme0n1pN
 ```
 
+### Step 2 went wrong: p5's filesystem is corrupt (2026-09-04)
+
+The shrink itself worked. The filesystem on it did not survive.
+
+Confirmed layout after the GParted run — geometry is sound, so this is
+*not* a moved start sector or a filesystem that outgrew its partition:
+
+```
+p1        2048s -     206847s   100MiB   fat32  Ubuntu ESP
+p5      206848s - 3178780671s   1.48TiB  ext4   Ubuntu / + home   <- shrunk
+   3178780672s - 3383547903s   97.6GiB  free   <- Ubuntu's new partition goes here
+p2  3383547904s - 3384596479s   512MiB   fat32  NIXBOOT
+p3  3384596480s - 3907028991s   249GiB   btrfs  nixos
+```
+
+p5 spans 3 178 573 824 sectors; the filesystem wants 397 317 632 x 4KiB
+blocks = 1.4801TiB. It fits, with ~16MiB to spare. `blkid` reads the
+superblock and the UUID still matches `hosts/hp-envy.nix`. Note the free
+space is 97.6GiB, not the 100GiB planned above — take `100%` when creating
+the partition rather than naming a size.
+
+What is broken is the content. `dumpe2fs` reports `Filesystem state: clean
+with errors`, and a read-only walk of the mounted filesystem returns
+`Structure needs cleaning` (EUCLEAN) and `Bad message` (EBADMSG —
+`metadata_csum` mismatch) across large parts of `/home/erik`:
+`.local/share`, `.local/state`, `.local/bin`, `.vscode/extensions`,
+`Midswimmer`, Steam's `appcache`. `du` could only traverse 161GiB of the
+~760GiB.
+
+That spread points at the resize rather than at the deletions in step 1:
+`resize2fs` relocates blocks out of the tail being removed into free space
+earlier in the filesystem, so an interrupted or mis-written relocation
+damages metadata all over the tree, not just at the end.
+
+Neither OS mounts it as a result — NixOS has `nofail` on `/mnt/ubuntu` and
+skips it silently (empty `/home/erik`), Ubuntu fails fsck on its own root in
+the initramfs.
+
+**Do not run `e2fsck -fy` as the first move.** At this scale `-y` answers
+yes to thousands of `Clear?` prompts and empties files or dumps them into
+`lost+found` as numbered inodes, with no backup to fall back on. Order:
+
+1. **Rule out the hardware.** `smartctl -a /dev/nvme0n1`, and `dmesg` for
+   `nvme`/`I/O error`/`EXT4-fs error`. Then run **memtest86+** — bad RAM
+   during a several-hundred-GiB block relocation produces exactly this
+   pattern of scattered checksum failures, and would also explain the
+   garbled console text seen on the NixOS boot. Repairing on faulty
+   hardware just writes fresh corruption.
+2. **Rescue the irreplaceable subset read-only, before repairing.** Most of
+   what errors is cache (Steam appcache, vscode extensions, `.local/share`)
+   and worth nothing. `~/projects`, `~/.ssh`, `~/.gitconfig`, `~/.claude`
+   and documents are small enough to fit in the 97.6GiB hole after p5 if
+   there is no external disk. Use `rsync -aHAX --numeric-ids
+   --ignore-errors` so it walks past the unreadable directories instead of
+   aborting, and keep the log — what it could *not* read is the real
+   damage report.
+3. **Then size the damage:** `e2fsck -fn /dev/nvme0n1p5 | tee ~/fsck-p5.log`.
+   Hundreds of findings means `-fy` is reasonable once the rescue is done.
+   Tens of thousands means p5 is better treated as lost: `mkfs.ext4` it and
+   rebuild home from the rescued subset, which makes steps 3-5 below
+   simpler rather than harder.
+
+Steps 3-5 below assume a healthy p5 and are on hold until this is resolved.
+
 **Step 3 — copy Ubuntu across.** Still from the live USB, with both
 mounted (`/mnt/old` = p5, `/mnt/new` = the new partition):
 

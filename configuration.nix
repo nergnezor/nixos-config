@@ -47,6 +47,29 @@
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
 
+  # The keyboard is Swedish; without these NixOS falls back to the US
+  # layout everywhere. That is not cosmetic: the root/erik passwords were
+  # typed on a Swedish layout during `nixos-install` (run from the Ubuntu
+  # session, see PARTITION-RUNBOOK.md), so every non-alphanumeric character
+  # in them lands on a different key at the greetd/tuigreet prompt and the
+  # login simply fails, with no hint as to why.
+  #
+  # console.keyMap covers the VTs and tuigreet. useXkbConfig is deliberately
+  # NOT used to derive it -- that would make the console depend on the X11
+  # settings, and this machine has no X server.
+  console.keyMap = "sv-latin1";
+  # niri's own xkb block (niri/config.kdl) is empty, which per its docs
+  # means it reads the layout from org.freedesktop.locale1 -- which is what
+  # services.xserver.xkb.layout populates, X server or not. So this is what
+  # gives the Wayland session a Swedish layout too.
+  services.xserver.xkb.layout = "se";
+
+  # tuigreet draws its frame with Unicode box-drawing glyphs, which the
+  # kernel's built-in 8x16 console font does not have. earlySetup loads the
+  # font from the initrd, before greetd starts, rather than after.
+  console.font = "${pkgs.terminus_font}/share/consolefonts/ter-v16n.psf.gz";
+  console.earlySetup = true;
+
   # uid AND gid both have to match Ubuntu's erik (1000:1000), not just the
   # uid: the home directory is shared between the two systems, so files
   # created from NixOS would otherwise land with group 100 ("users", the
