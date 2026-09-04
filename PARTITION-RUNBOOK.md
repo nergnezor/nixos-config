@@ -4,16 +4,16 @@
 
 This machine is **NixOS-only**. Ubuntu is gone, and the home directory was
 rebuilt from a rescue after an interrupted `resize2fs` destroyed the
-filesystem it lived on. The narrative of that is further down; this is the
-state to resume from.
+filesystem it lived on. The narrative of that is further down; this section
+is now a record of how the recovery finished, not a resume point.
 
-Current layout:
+Current layout — Ubuntu's old ESP is gone, nothing on the disk references it
+anymore:
 
 ```
-p1  100MiB    vfat    Ubuntu's old ESP — dead, pending removal
-p5  1.58TiB   btrfs   /home        label "home", subvols @home + @snapshots
 p2  512MiB    vfat    /boot        label NIXBOOT, systemd-boot
 p3  249.1GiB  btrfs   /            label nixos, compress=zstd
+p5  1.58TiB   btrfs   /home        label "home", subvols @home + @snapshots
 ```
 
 **Done:**
@@ -30,27 +30,46 @@ p3  249.1GiB  btrfs   /            label nixos, compress=zstd
 - new generation built from the live USB via
   `nixos-enter --root /mnt/nixroot -- nixos-rebuild boot --flake
   /home/erik/nixos-config#nixos-eval`, password set
+- booted the installed system from p2 and confirmed `/home`, `/boot`, `/`
+  all mount correctly and `~/.config/niri` resolves through the
+  out-of-store symlink into the tracked `niri/` — `nvidia_drm.fbdev=1` was
+  already in `hosts/hp-envy.nix`, so the console was never garbled on this
+  boot
+- Ubuntu's EFI leftovers removed: `Boot0000` ("Ubuntu") and the `UEFI OS`
+  entry pointing at p1's GUID were deleted (identify by matching the
+  device-path GUID against `blkid`/`lsblk -o PARTUUID`, not by assuming
+  entry numbers — they had already shifted from what an earlier revision of
+  this file recorded), then `parted ... rm 1` removed the partition itself.
+  **`efibootmgr` and `parted` are not installed anywhere on this system**
+  (every earlier use was from the live USB, which bundles them) — ran both
+  ad hoc: `sudo nix --extra-experimental-features "nix-command flakes" run
+  github:NixOS/nixpkgs/nixos-25.05#efibootmgr -- <args>`, same pattern for
+  `parted`. `sudo <tool>` alone fails with "command not found": `sudo`'s
+  `secure_path` doesn't include the Nix profile paths erik's own shell has.
+- first snapshot taken: `@snapshots/home-2026-09-04`. Reachable path was
+  `sudo mount -o subvolid=5 /dev/nvme0n1p5 /mnt/p5top` first — `@snapshots`
+  is a sibling of `@home` on p5, not a path under the `/home` mountpoint
+  itself.
 
 **Still to do:**
 
-1. Boot NixOS from p2 and confirm: `findmnt /home`, `btrfs subvolume list
-   /home`, `ls ~/.config/niri`, and that the tuigreet login is readable and
-   accepts the password.
-2. If the console is still garbled, check whether Ctrl+Alt+F2 is readable —
-   if not, it is the nvidia framebuffer handover and wants
-   `boot.kernelParams = [ "nvidia_drm.fbdev=1" ]`.
-3. Remove Ubuntu's EFI leftovers — **two** NVRAM entries point at p1
-   (identify by the `0x800` offset; `Boot0001`/`Boot0003` at `0xc9acd800`
-   are p2 and must stay):
-   ```
-   sudo efibootmgr -b 0000 -B
-   sudo efibootmgr -b 0002 -B
-   sudo parted /dev/nvme0n1 rm 1
-   ```
-4. Take the first snapshot:
-   `sudo btrfs subvolume snapshot -r /home /home/../@snapshots/home-$(date +%F)`
-5. `flatpak install flathub net.sonuscape.mouseless` — it used to come from
-   Ubuntu's flatpak.
+1. `flatpak --user remote-add --if-not-exists sonuscape
+   https://dl.sonuscape.net/flatpak/sonuscape.flatpakrepo && flatpak --user
+   install sonuscape net.sonuscape.mouseless` — it used to come from
+   Ubuntu's flatpak. Not on Flathub; ships from its own repo (confirmed
+   against https://mouseless.click/docs/getting_started.html#linux).
+   Along the way, `~/.local/share/flatpak` (the *user* flatpak install) was
+   found corrupt — `repo/config` was binary garbage, not the GKeyFile it
+   claims to be, a leftover from the rescued Ubuntu home that predates even
+   the resize incident. It broke every `flatpak` command with `opening
+   repo: Invalid UTF-8`. Moved aside to
+   `~/.local/share/flatpak.broken-rescue-leftover` (not deleted) and
+   flathub re-added; safe to delete the `.broken-rescue-leftover` copy once
+   mouseless is confirmed working. The *system* flatpak install
+   (`services.flatpak.enable`, `/var/lib/flatpak`) was unaffected.
+2. Decide when to delete the rescue copies at `/mnt/nixos/rescue2` and
+   `/mnt/nixos/rescue3` (see below) — only once confident nothing else is
+   missing.
 
 **What was lost**, for when something turns up missing: `~/projects` (all on
 GitHub), `~/Documents` (the one thing with no copy anywhere), `Midswimmer`,

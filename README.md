@@ -5,6 +5,13 @@ working Ubuntu install. Goal: evaluate niri/NixOS with the real config and
 the real app set, not a toy setup. Same config also targets the Nitro
 runner (`hosts/nitro.nix`) for a hardware comparison (Intel Arc vs nvidia).
 
+## Status (2026-09-04)
+
+Recovery finished. The machine boots the installed system from p2/p3/p5
+directly — see `PARTITION-RUNBOOK.md` for the final layout and how the
+resize disaster was recovered from. Only remaining item: installing the
+`net.sonuscape.mouseless` flatpak (details in that file).
+
 ## Status (2026-09-03)
 
 - **USB smoke test abandoned — the config is proven, the stick isn't.** The
