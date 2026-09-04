@@ -12,32 +12,31 @@
     nvidiaSettings = true;
   };
 
-  # Share the WHOLE Ubuntu home directory (same disk, dual-boot — never
-  # mounted from both OSes at once): SSH keys, real .gitconfig, browser
-  # profiles, shell history, ~/.claude, ~/projects, all of it, automatically
-  # — instead of home.nix enumerating each thing worth sharing one at a
-  # time. Mount the Ubuntu partition at a neutral path first, then bind
-  # /home/erik onto NixOS's actual home directory. home.nix deliberately
-  # does NOT declare xdg.configFile."niri" or programs.git — those paths
-  # are the real, live Ubuntu files, and home-manager writing its own
-  # version there would overwrite them (same filesystem, not a copy).
+  # /home is p5, a partition dedicated to it and shared with Ubuntu (same
+  # disk, dual-boot -- never mounted from both at once): SSH keys, the real
+  # .gitconfig, shell history, ~/projects, all of it. home.nix deliberately
+  # does NOT declare xdg.configFile."niri" or programs.git -- those paths are
+  # the real, live files, and home-manager writing its own version there
+  # would overwrite them (same filesystem, not a copy).
   #
-  # Do NOT "simplify" this into a single `fileSystems."/home"` on p5. p5's
-  # root is Ubuntu's `/`, so the home directory on it is at `/home/erik`
-  # *relative to that root* — mounting p5 at /home therefore puts the real
-  # home at /home/home/erik and leaves /home/erik empty. The bind mount is
-  # what strips that leading `home/`, and it stays necessary for as long as
-  # p5 keeps Ubuntu's directory layout.
-  fileSystems."/mnt/ubuntu" = {
-    device = "/dev/disk/by-uuid/ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e"; # nvme0n1p5, confirmed 2026-09-03
+  # This used to be p5 mounted at /mnt/ubuntu with /mnt/ubuntu/home/erik
+  # bind-mounted onto /home/erik, because p5 was Ubuntu's root and the home
+  # directory sat at `home/erik` relative to it. p5 was remade as a bare home
+  # partition after the resize destroyed its filesystem (see
+  # PARTITION-RUNBOOK.md), so its root now *is* /home and the bind mount is
+  # gone. Ubuntu mounts the same partition at /home and agrees with that
+  # layout, so the old asymmetry is gone with it.
+  #
+  # by-label, not by-uuid: mkfs assigns a fresh UUID every time, and this
+  # partition has now been remade once. The label is set deliberately
+  # (`mkfs.ext4 -L home`) and survives in the config across a future rebuild
+  # of it. `nofail` stays -- a config accidentally built for the wrong host,
+  # or booted before the partition exists, degrades to an empty local home
+  # rather than a broken boot.
+  fileSystems."/home" = {
+    device = "/dev/disk/by-label/home";
     fsType = "ext4";
     options = [ "rw" "nofail" ];
-  };
-  fileSystems."/home/erik" = {
-    device = "/mnt/ubuntu/home/erik";
-    fsType = "none"; # ignored by `mount` for a bind mount, but this nixpkgs
-                      # revision requires the option to have some value
-    options = [ "bind" "nofail" ];
   };
 
   # nvme0n1p3 is btrfs (switched from ext4 for this) — turn on transparent

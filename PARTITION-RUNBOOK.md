@@ -534,7 +534,47 @@ Order:
    4 is done that space still holds the old filesystem's tail, and
    `photorec` against it remains the last resort.
 
-Steps 3-5 below assume a healthy p5 and are superseded by the above.
+### The rebuild, once extraction is done
+
+Steps 3-5 below are superseded by this — p5 is being remade rather than
+kept, which makes the whole "move Ubuntu out, keep home in place" dance
+unnecessary.
+
+**Last call on p5.** After the mkfs below there is nothing left to retrieve,
+and the freed tail (with its `photorec` option) goes too.
+
+```
+sudo parted /dev/nvme0n1 mkpart ubuntu ext4 3178780672s 3383547903s
+sudo parted /dev/nvme0n1 unit s print       # confirm the number; p4 is the free slot
+sudo mkfs.ext4 -L ubuntu /dev/nvme0n1p4
+sudo mkfs.ext4 -L home  /dev/nvme0n1p5
+```
+
+Final layout: p1 Ubuntu ESP · p4 Ubuntu · p2 NIXBOOT · p3 NixOS · p5 home.
+
+Restore home. A freshly-made p5 means its root **is** the home directory —
+no `home/` level, so no bind mount. That is step 5's end state, arrived at
+for free:
+
+```
+sudo mount /dev/nvme0n1p5 /mnt/newhome
+sudo mkdir -p /mnt/newhome/erik
+sudo rsync -aHAX --numeric-ids /mnt/nixos/rescue3/ /mnt/newhome/erik/
+sudo rsync -aHAX --numeric-ids /mnt/nixos/rescue4/ /mnt/newhome/erik/
+sudo chown -R 1000:1000 /mnt/newhome/erik
+```
+
+Install Ubuntu clean onto p4 — its system tree on p5 was in the same
+destroyed inode range, so copying it across would have copied a broken root.
+In the installer's manual partitioning: p4 as `/` (format), p1 as the ESP,
+p5 as `/home` **without** ticking format. Ubuntu wants exactly this layout
+for `/home`, same as NixOS now does.
+
+`hosts/hp-envy.nix` is already updated for it: a single
+`fileSystems."/home"` on `/dev/disk/by-label/home`, with `/mnt/ubuntu` and
+the `/home/erik` bind mount both gone. It uses the label rather than a UUID
+because mkfs issues a fresh UUID each time and this partition has now been
+remade once.
 
 **Step 3 — copy Ubuntu across.** Still from the live USB, with both
 mounted (`/mnt/old` = p5, `/mnt/new` = the new partition):
