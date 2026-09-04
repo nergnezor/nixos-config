@@ -1,33 +1,84 @@
-# Dual-boot partition runbook — `nvme0n1` internal disk
+# Partition runbook — `nvme0n1` internal disk
 
-## Status: done (2026-09-03), actual layout differs from the original plan
+## Where things stand (2026-09-04)
 
-Shrink was done via **GParted in a live-nix USB**, not the manual
-resize2fs/parted steps below (kept for reference — still valid if you ever
-need to redo this by hand). Reclaimed **~250GiB**, not the originally
-planned 50GiB. The MSR partition (`p2`, 16MiB) got removed along the way —
-harmless, this machine has no Windows install to need it. `efibootmgr`'s
-stray "Windows Boot Manager" NVRAM entry and `/boot/efi/EFI/Microsoft/` were
-also cleaned up (dead references, no actual Windows install behind them).
+This machine is **NixOS-only**. Ubuntu is gone, and the home directory was
+rebuilt from a rescue after an interrupted `resize2fs` destroyed the
+filesystem it lived on. The narrative of that is further down; this is the
+state to resume from.
 
-**Because `p2` was removed, the new partitions did NOT land on `p6`/`p7`**
-as originally planned — `parted mkpart` fills the lowest free number.
-Actual layout:
+Current layout:
 
 ```
-p1  100MiB    EFI System   (Ubuntu's ESP — unchanged)
-p5  ~1.6TiB   ext4 /       (Ubuntu, shrunk)
-p2  512MiB    vfat         (NixOS's ESP — new, label NIXBOOT)
-p3  249.1GiB  ext4         (NixOS's root — new, label nixos)
+p1  100MiB    vfat    Ubuntu's old ESP — dead, pending removal
+p5  1.58TiB   btrfs   /home        label "home", subvols @home + @snapshots
+p2  512MiB    vfat    /boot        label NIXBOOT, systemd-boot
+p3  249.1GiB  btrfs   /            label nixos, compress=zstd
 ```
 
-Two separate ESPs (`p1` for Ubuntu, `p2` for NixOS) means NixOS's
-`systemd-boot` never touches Ubuntu's GRUB — switch OS at boot via the
-firmware boot menu (**F9** on this HP at the POST screen).
+**Done:**
 
-**`hosts/hp-envy.nix` was not yet updated for this** — it doesn't reference
-partition numbers directly (that's `hardware-configuration.nix`, generated
-fresh below), so no changes needed there for the layout itself.
+- p5 remade as btrfs, `/home` restored from `/mnt/nixos/rescue3` (44GB,
+  30288 files) into `@home/erik`, owned 1000:1000
+- nested subvolumes for `erik/.cache`, `erik/Downloads`,
+  `erik/.local/share/Steam` so snapshots of `@home` stay small
+- `hosts/hp-envy.nix` collapsed to one `fileSystems."/home"` on
+  `/dev/disk/by-label/home` — no `/mnt/ubuntu`, no bind mount, no vivaldi
+  bind
+- Swedish console keymap and a console font added (the login was unusable
+  without them), generation limit of 5 on the 512MiB ESP, 3s boot timeout
+- new generation built from the live USB via
+  `nixos-enter --root /mnt/nixroot -- nixos-rebuild boot --flake
+  /home/erik/nixos-config#nixos-eval`, password set
+
+**Still to do:**
+
+1. Boot NixOS from p2 and confirm: `findmnt /home`, `btrfs subvolume list
+   /home`, `ls ~/.config/niri`, and that the tuigreet login is readable and
+   accepts the password.
+2. If the console is still garbled, check whether Ctrl+Alt+F2 is readable —
+   if not, it is the nvidia framebuffer handover and wants
+   `boot.kernelParams = [ "nvidia_drm.fbdev=1" ]`.
+3. Remove Ubuntu's EFI leftovers — **two** NVRAM entries point at p1
+   (identify by the `0x800` offset; `Boot0001`/`Boot0003` at `0xc9acd800`
+   are p2 and must stay):
+   ```
+   sudo efibootmgr -b 0000 -B
+   sudo efibootmgr -b 0002 -B
+   sudo parted /dev/nvme0n1 rm 1
+   ```
+4. Take the first snapshot:
+   `sudo btrfs subvolume snapshot -r /home /home/../@snapshots/home-$(date +%F)`
+5. `flatpak install flathub net.sonuscape.mouseless` — it used to come from
+   Ubuntu's flatpak.
+
+**What was lost**, for when something turns up missing: `~/projects` (all on
+GitHub), `~/Documents` (the one thing with no copy anywhere), `Midswimmer`,
+`midswimmer1`, `godot4`, `jobb`, `jdk17`, `gxloops`,
+`UnrealEngine-Angelscript`, `~/.claude`, and the tool caches — `.cargo`,
+`.rustup`, `.gradle`, `.sdkman`, `.vscode`, `.epic`. Steam game *installs*
+were never rescued (excluded to save space) but re-download; saves under
+`.local/share/Steam/userdata`, `.wine` and `.var` did come across.
+
+The rescue copies are still on p3 at `/mnt/nixos/rescue2` and
+`/mnt/nixos/rescue3` — mounted at `/rescue2`/`/rescue3` paths relative to
+p3's root, not under `/home`. Delete them only once you are confident
+nothing else is missing.
+
+## History: how the filesystem was lost, and what got it back
+
+### The original shrink (2026-09-03)
+
+Done via **GParted in a live-nix USB**, not the manual resize2fs/parted steps
+below (kept for reference — still valid if you ever need to redo this by
+hand). Reclaimed ~250GiB. The MSR partition got removed along the way —
+harmless, this machine has no Windows install. `efibootmgr`'s stray "Windows
+Boot Manager" NVRAM entry and `/boot/efi/EFI/Microsoft/` were cleaned up too
+(dead references, no actual Windows behind them).
+
+`parted mkpart` fills the lowest free partition number, so the new
+partitions landed on `p2`/`p3` rather than the `p6`/`p7` originally planned
+— check `lsblk` after `mkpart`, don't assume.
 
 ## Reference: the original manual steps (not what was actually run this time)
 
