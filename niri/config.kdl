@@ -161,6 +161,10 @@ overview {
 // This line starts waybar, a commonly used bar for Wayland compositors.
 environment {
   XDG_CURRENT_DESKTOP "niri"
+  DISPLAY ":0" // xwayland-satellite listens on :0 (see configuration.nix);
+               // without this, X11-only apps (steam) fail with "Unable to
+               // open a connection to X" since niri's env block is what
+               // pushes vars into the systemd/dbus activation environment.
 }
 hotkey-overlay {
     skip-at-startup

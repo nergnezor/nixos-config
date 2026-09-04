@@ -20,6 +20,10 @@
     lazygit
     gh
     jq            # vertical-monitor-stack.sh / dropdown-term.sh parse `niri msg -j` with it
+    qdirstat      # disk usage treemap, GUI
+    gdu           # disk usage, terminal TUI
+    nerd-fonts.jetbrains-mono # VS Code/ghostty had no monospace font on this
+                              # NixOS install; Ubuntu had one system-wide
     # cliphist
     # wl-clipboard
     # bottom
