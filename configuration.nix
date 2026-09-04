@@ -55,6 +55,20 @@
 
   networking.networkmanager.enable = true;
 
+  # Debugging this machine from its own console has been the hard part of
+  # every problem it has had: a garbled framebuffer or a wrong console font
+  # makes journalctl unreadable exactly when you most need it. sshd gives a
+  # way in that does not go through the display at all. Password auth stays
+  # off -- ~/.ssh/authorized_keys on the restored home is the way in, and
+  # `ssh-copy-id` from a trusted machine is how it gets populated.
+  services.openssh = {
+    enable = true;
+    settings = {
+      PasswordAuthentication = false;
+      PermitRootLogin = "no";
+    };
+  };
+
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
 
