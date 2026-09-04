@@ -49,11 +49,6 @@
       homeModule = {
         home-manager.useGlobalPkgs = true;
         home-manager.useUserPackages = true;
-        # noctalia-shell here (not in the NixOS-level specialArgs below): its
-        # package needs to come from ITS OWN flake output, evaluated against
-        # its own nixpkgs — see configuration.nix for why the overlay
-        # approach doesn't work.
-        home-manager.extraSpecialArgs = { inherit noctalia-shell; };
         home-manager.users.erik = import ./home.nix;
       };
       # hostModule carries everything machine-specific: hostName, GPU driver,
@@ -69,6 +64,9 @@
           hostModule
           home-manager.nixosModules.home-manager
           homeModule
+          # Binds programs.noctalia.package to THIS flake's package output
+          # (its own nixpkgs), not an overlay on ours — see configuration.nix.
+          noctalia-shell.nixosModules.default
         ] ++ extraModules;
       };
     in

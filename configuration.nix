@@ -5,13 +5,28 @@
   imports = [ ./hardware-configuration.nix ];
 
   nixpkgs.config.allowUnfree = true; # vivaldi, vscode, claude-code
-  # NOT using noctalia-shell.overlays.default here: an overlay builds its
-  # package against the CONSUMER's nixpkgs (this one, 25.05), not the
-  # flake's own locked one — confirmed the hard way, its build failed
-  # wanting a wayland-protocols staging file (ext-background-effect-v1)
-  # that doesn't exist in nixpkgs 25.05's version. home.nix instead takes
-  # the package straight from noctalia-shell's own flake output, which
-  # evaluates against ITS OWN nixpkgs and actually has the right versions.
+  # noctalia-shell.overlays.default was tried and reverted: an overlay
+  # builds against THIS nixpkgs, and the meson build wanted a
+  # wayland-protocols staging file this pin didn't have.
+  # noctalia-shell.nixosModules.default (imported in flake.nix) already
+  # sets programs.noctalia.package to the flake's own package output.
+  #
+  # Ubuntu starts noctalia via ~/.local/share/systemd/user/noctalia.service
+  # (ExecStart=/usr/local/bin/noctalia) which lives in the shared home, so
+  # NixOS sees the unit — but /usr/local/bin/noctalia is Ubuntu-only, so
+  # the unit fails. Putting the binary in home.packages does not help:
+  # nothing execs that store path. This NixOS user unit lives in
+  # /etc/systemd/user, which outranks ~/.local/share, so the same unit
+  # *name* (and the shared enable symlink under
+  # graphical-session.target.wants) runs the store path instead.
+  # Do NOT use the home-manager module for this: it would write the unit
+  # into ~/.config/systemd/user and collide with the shared home, same
+  # class of failure as the mouseless.service abort.
+  programs.noctalia = {
+    enable = true;
+    systemd.enable = true;
+    recommendedServices.enable = true; # bluetooth, upower, power-profiles-daemon
+  };
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
@@ -49,23 +64,26 @@
 
   hardware.graphics.enable = true; # GPU-specific extras (nvidia, intel-media-driver) are per-host
 
-  # Was niri-flake's programs.niri.enable module: dropped after it forced a
-  # from-source build (niri is Rust, cargo-vendor-dir fetches its crates
-  # individually — one fetch got a 403 from crates.io mid-install). nixpkgs
-  # 25.05 carries the exact same niri version (25.08) as a substitutable
-  # binary from cache.nixos.org, no source build at all. Loses niri-flake's
-  # convenience wrapper (a niri-session script for login-manager
-  # integration) — greetd execs the plain `niri` binary directly instead,
-  # fine for a smoke test, worth revisiting if session/portal integration
-  # turns out to matter.
-  environment.systemPackages = [ pkgs.niri ];
+  # nixpkgs' own programs.niri.enable (not niri-flake). niri-flake forced a
+  # from-source Rust build that hit a crates.io 403; this pin ships niri
+  # 26.04 as a cached binary AND, via systemd.packages, installs its user
+  # units (niri.service, niri-shutdown.target). Without those units,
+  # niri-session cannot start niri.service, graphical-session.target never
+  # becomes active, and every WantedBy=graphical-session.target user unit
+  # in the shared home stays dead — including Ubuntu's noctalia.service
+  # and mouseless.service. greetd must exec niri-session, not the bare
+  # niri binary, for the same reason.
+  programs.niri = {
+    enable = true;
+    useNautilus = false; # gtk file-chooser is enough; nautilus is a big extra
+  };
 
   services.greetd = {
     enable = true;
     settings.default_session = {
       # pkgs.tuigreet, not pkgs.greetd.tuigreet -- it moved out of the greetd
       # attribute set into a top-level package in newer nixpkgs.
-      command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --cmd niri";
+      command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --cmd ${pkgs.niri}/bin/niri-session";
       user = "greeter";
     };
   };
@@ -92,6 +110,31 @@
   programs.steam.enable = true;
   # gamescopeSession dropped along with the rest of the trimmed app set --
   # erik only asked for plain steam back, not gamescope.
+
+  # niri ships no Xwayland of its own, so in a bare niri session DISPLAY is
+  # unset and every X11-only app dies -- steam pops "Unable to open a
+  # connection to X". xwayland-satellite supplies the X server. The display
+  # number is pinned to :0 so niri's environment block (shared home,
+  # ~/.config/niri/config.kdl) can hand the same DISPLAY to the clients niri
+  # spawns; those inherit niri's env and would otherwise miss the DISPLAY
+  # that xwayland-satellite pushes into the systemd/dbus activation env.
+  systemd.user.services.xwayland-satellite = {
+    description = "Xwayland outside your Wayland";
+    bindsTo = [ "graphical-session.target" ];
+    partOf = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" ];
+    requisite = [ "graphical-session.target" ];
+    wantedBy = [ "graphical-session.target" ];
+    serviceConfig = {
+      Type = "notify";
+      NotifyAccess = "all";
+      ExecStart = "${pkgs.xwayland-satellite}/bin/xwayland-satellite :0";
+      StandardOutput = "journal";
+    };
+  };
+
+  # nix-ld gör att NixOS kan köra vanliga dynamiskt länkade Linux-binärer
+  programs.nix-ld.enable = true;
 
   # Mouseless virtual-mouse/device quirks, ported verbatim from this Ubuntu
   # install's /etc/udev/rules.d/61-mouseless-no-takeover.rules and

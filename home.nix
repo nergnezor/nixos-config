@@ -1,4 +1,4 @@
-{ pkgs, noctalia-shell, ... }:
+{ pkgs, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -6,10 +6,10 @@
 
   home.packages = (with pkgs; [
     ghostty       # dropdown-term.sh spawns this specifically
-    alacritty
-    fuzzel
-    grim
-    slurp
+    # alacritty
+    # fuzzel
+    # grim
+    # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
     vscode
     # spotify, discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only
@@ -20,26 +20,21 @@
     lazygit
     gh
     jq            # vertical-monitor-stack.sh / dropdown-term.sh parse `niri msg -j` with it
-    cliphist
-    wl-clipboard
-    bottom
+    # cliphist
+    # wl-clipboard
+    # bottom
 
     # claude-code: confirmed via `nix eval` that it exists as a real
     # package on nixos-25.05 (previously flagged unverified, now checked).
     claude-code
-  ]) ++ [
-    # Taken straight from noctalia-shell's OWN flake output (built against
-    # its own nixpkgs), NOT via nixpkgs.overlays.default applied to our
-    # pkgs — the overlay route builds noctalia against OUR nixpkgs (25.05)
-    # and its meson build failed wanting a wayland-protocols staging file
-    # (ext-background-effect-v1) that doesn't exist there. This way it
-    # builds/substitutes against whatever nixpkgs noctalia-shell actually
-    # locks, which has it.
-    noctalia-shell.packages.${pkgs.system}.default
-  ];
+  ]);
+  # noctalia is installed by programs.noctalia in configuration.nix (NixOS
+  # module, systemd user unit in /etc), not here — a home.packages entry
+  # only put the binary in the profile; Ubuntu's shared-home unit still
+  # exec'd /usr/local/bin/noctalia, which does not exist on NixOS.
 
-  # No xdg.configFile."niri" and no programs.git here anymore: /home/erik is
-  # now a bind mount of the real Ubuntu home (see configuration.nix), so
+  # No xdg.configFile."niri" and no programs.git here anymore: /home is the
+  # partition shared with Ubuntu (see hosts/hp-envy.nix), so
   # ~/.config/niri, ~/.gitconfig, ~/.claude, ~/projects, ~/.ssh — all of it
   # — are already the live Ubuntu files. Declaring them here too would mean
   # home-manager's activation tries to write its own version over the same
