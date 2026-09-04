@@ -26,13 +26,10 @@
   # its filesystem (see PARTITION-RUNBOOK.md), so its root simply *is*
   # /home now.
   #
-  # home.nix still does NOT declare xdg.configFile."niri" or programs.git.
-  # The original reason (those files being Ubuntu's live copies) is gone,
-  # but the files themselves were restored from the rescue and remain the
-  # working versions — home-manager declaring them would overwrite the
-  # restored config with the point-in-time snapshot in this repo's niri/
-  # directory. Adopt them deliberately if you want, by copying the live
-  # files into the repo first.
+  # home.nix now points ~/.config/niri at this repo's niri/ directory with
+  # mkOutOfStoreSymlink, after the rescue turned config.kdl into 10240 bytes
+  # of unrelated data and left niri unable to start. ~/.gitconfig is still
+  # undeclared and still the restored working copy.
   #
   # btrfs, not ext4, and the reason is the incident that made this partition
   # necessary: ext4 cannot shrink while mounted, which is what forced the

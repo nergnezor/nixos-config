@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -33,14 +33,38 @@
   # only put the binary in the profile; Ubuntu's shared-home unit still
   # exec'd /usr/local/bin/noctalia, which does not exist on NixOS.
 
-  # No xdg.configFile."niri" and no programs.git here anymore: /home is the
-  # partition shared with Ubuntu (see hosts/hp-envy.nix), so
-  # ~/.config/niri, ~/.gitconfig, ~/.claude, ~/projects, ~/.ssh — all of it
-  # — are already the live Ubuntu files. Declaring them here too would mean
-  # home-manager's activation tries to write its own version over the same
-  # real files instead of a nix-store copy, which is destructive, not a
-  # merge. (The niri/ directory still sitting in this repo is now just a
-  # point-in-time reference snapshot, not wired into home.nix.)
+  # ~/.config/niri is a symlink to this repo's niri/ directory, so the live
+  # config IS the tracked one. mkOutOfStoreSymlink, not the usual
+  # xdg.configFile source: that would copy the files into the nix store and
+  # symlink to a read-only path, which means every keybind tweak needs a
+  # rebuild and niri's own live reload stops being useful. This points at
+  # the working tree instead — edit, save, niri reloads, `git diff` shows
+  # what changed.
+  #
+  # This exists because the config was nearly lost. The filesystem damage
+  # left `config.kdl` as 10240 bytes of unrelated data and emptied
+  # `noctalia/` entirely, and niri will not start without a readable config
+  # — which is what turned an unreadable login prompt into an unloggable-in
+  # machine. What saved it was this repo's `niri/` snapshot, which was
+  # sitting here by accident, described as "a point-in-time reference". Now
+  # it is the source rather than a coincidence.
+  #
+  # A dangling link (repo moved or missing) degrades to niri's built-in
+  # defaults rather than a failure to start, so it cannot lock you out the
+  # way a corrupt config did.
+  #
+  # **Before the first rebuild after adding this, move the existing
+  # directory aside** — home-manager refuses to overwrite a real
+  # `~/.config/niri` and aborts the whole activation, which is the same
+  # failure that once left the profile with no packages at all:
+  #   mv ~/.config/niri ~/.config/niri.pre-symlink
+  xdg.configFile."niri".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/niri";
+
+  # programs.git stays undeclared: ~/.gitconfig came back from the rescue
+  # and is the working copy. Same reasoning as the niri config had before
+  # this commit — adopt it into the repo deliberately if you want it
+  # managed, rather than letting home-manager write over it.
 
   # systemd.user.services.mouseless was here, ported from Ubuntu's unit --
   # removed because it writes ~/.config/systemd/user/mouseless.service,
