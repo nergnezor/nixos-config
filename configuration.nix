@@ -26,8 +26,10 @@
   # so anything in ~/.config/systemd/user SHADOWS what this module installs.
   # Ubuntu-era units restored into that directory are therefore able to
   # break the session outright — a unit pointing at a binary that does not
-  # exist on NixOS, or a file the rescue brought back corrupt. If a session
-  # dies the instant it opens, look there first.
+  # exist on NixOS, or a file the rescue brought back corrupt. Generation 10
+  # confirmed it: greetd opened erik's session and closed it one second later
+  # with niri never reaching the journal. home.nix quarantines that directory
+  # once on activation (see quarantineUbuntuSystemdUserUnits).
   #
   # Do NOT use the home-manager module for this: it writes the unit into
   # ~/.config/systemd/user, which is both the shadowing path above and a

@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -77,6 +77,45 @@
   # from the shared home regardless, so nothing is lost by dropping it.
   # (It won't actually run on NixOS until the mouseless flatpak is
   # installed there, same as Ubuntu's actions-runner unit doesn't.)
+
+  # Generation 10's journal (2026-09-04): greetd opened erik's session and
+  # closed it one second later, with niri never mentioned. ~/.config/systemd/user
+  # outranks /etc/systemd/user, so rescued Ubuntu units (noctalia pointing at
+  # /usr/local/bin, mouseless, actions-runner with Exec format error) shadow
+  # the NixOS niri.service and graphical-session.target dies before niri
+  # starts. Quarantine once, before home-manager writes anything there.
+  home.activation.quarantineUbuntuSystemdUserUnits =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      stamp="$HOME/.config/systemd/.nixos-quarantined-ubuntu-rescue"
+      src="$HOME/.config/systemd/user"
+      if [ -d "$src" ] && [ ! -L "$src" ] && [ ! -e "$stamp" ]; then
+        $DRY_RUN_CMD mkdir -p "$HOME/.config/systemd"
+        $DRY_RUN_CMD mv "$src" "$HOME/.config/systemd/user.ubuntu-rescue"
+        $DRY_RUN_CMD touch "$stamp"
+      fi
+    '';
+
+  # hm-activate-erik sourced this on generation 10 and got
+  # "syntax error near unexpected token '('" plus a 239-byte binary blob —
+  # another rescue leftover. Replace it so login shells and activation stop
+  # tripping over it. force: home-manager will not overwrite an existing
+  # file otherwise.
+  home.activation.quarantineCorruptProfile =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      if [ -e "$HOME/.profile" ] && ! sh -n "$HOME/.profile" 2>/dev/null; then
+        $DRY_RUN_CMD mv "$HOME/.profile" "$HOME/.profile.corrupt-rescue"
+      fi
+    '';
+  home.file.".profile" = {
+    force = true;
+    text = ''
+      # Managed by home-manager (nixos-config). The copy restored from the
+      # damaged ext4 filesystem was binary garbage and broke shell startup.
+      if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+        . "$HOME/.bashrc"
+      fi
+    '';
+  };
 
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";

@@ -16,6 +16,13 @@
   # has set up, and the greetd/tuigreet prompt on tty1 is the first thing
   # you see it on. Enabling nvidia-drm's own fbdev gives fbcon a real target.
   boot.kernelParams = [ "nvidia_drm.fbdev=1" ];
+  # fbdev=1 is not enough by itself. Generation 10's journal: simpledrm owns
+  # fb0 at 10:08:06, greetd starts on that console, then nvidia-drm loads at
+  # 10:08:13, deactivates the VGA console, and fbcon migrates onto
+  # nvidia-drmdrmfb — which is exactly when every glyph turns into garbage.
+  # Putting the nvidia modules in the initrd means fbcon's first (and only)
+  # framebuffer is nvidia's, so the handover never happens.
+  boot.initrd.kernelModules = [ "nvidia" "nvidia_modeset" "nvidia_drm" ];
 
   # /home is p5, a partition dedicated to it. NixOS is now the only OS on
   # this machine — the Ubuntu install that used to share the disk is gone,
