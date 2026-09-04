@@ -131,11 +131,13 @@ home plus ~150GiB of Ubuntu system tree (~41GiB of that is just
 `swapfile.ue` and `swap.img`). 929GiB used, ~579GiB free. There is no
 unallocated space anywhere on the disk.
 
-As a first step `hosts/hp-envy.nix` now mounts **p5 at `/home` directly**,
-replacing the old `/mnt/ubuntu` mount plus `/home/erik` bind mount: p5's own
-`/home/erik` lines up with NixOS's `/home/erik` with no indirection. Pure
-config change, zero bytes moved, and it stays correct through every step
-below.
+The mount stays as it is until the move below is done: p5 at `/mnt/ubuntu`,
+with `/mnt/ubuntu/home/erik` bind-mounted onto `/home/erik`. **Mounting p5
+at `/home` directly does not work** — p5's root is Ubuntu's `/`, so the home
+directory on it sits at `home/erik` relative to that root, and mounting p5
+at `/home` puts the real home at `/home/home/erik` while `/home/erik` comes
+up empty. The bind mount is what strips that leading `home/`. It can only go
+away once p5 no longer has Ubuntu's directory layout (step 5).
 
 ### The plan: move Ubuntu *out*, don't move home
 
@@ -148,17 +150,16 @@ left as a dedicated home partition, with Ubuntu still bootable.
 them). From NixOS:
 
 ```
-sudo rm /home/swapfile.ue /home/swap.img
+sudo rm /mnt/ubuntu/swapfile.ue /mnt/ubuntu/swap.img
 ```
 
-They sit at p5's root, which is `/home` under the new mount. Ubuntu will
-fail to swapon at next boot until its `/etc/fstab` line is removed too —
-harmless, but tidy it in step 3.
+Ubuntu will fail to swapon at next boot until its `/etc/fstab` line is
+removed too — harmless, but tidy it in step 3.
 
 **Step 2 — shrink p5 and create Ubuntu's new partition.** ext4 cannot shrink
-while mounted, and `/home` is mounted the moment you log in, so this needs a
-**live USB** (GParted, as in the shrink at the top of this file). Shrink p5
-to ~1.05TiB and create a new ~160GiB partition in the freed space. Note the
+while mounted, and `/mnt/ubuntu` is mounted at boot, so this needs a **live
+USB** (GParted, as in the shrink at the top of this file). Shrink p5 to
+~1.05TiB and create a new ~160GiB partition in the freed space. Note the
 number `parted` assigns — it fills the lowest free slot, which bit us last
 time; check `lsblk`, don't assume it's p6.
 
@@ -184,6 +185,9 @@ Then point Ubuntu at its new home — inside `/mnt/new`:
 - `/etc/fstab`: change the `/` entry to the new partition's UUID
   (`blkid`), add a `/home` entry for p5's UUID
   (`ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e`), and delete the swapfile lines.
+  Note that Ubuntu mounting p5 at `/home` *is* correct for Ubuntu — its
+  home is p5's `home/` and it wants exactly that directory at `/home`. The
+  asymmetry with NixOS is the whole reason NixOS needs the bind mount.
 - Reinstall GRUB against the new root (chroot with `/dev`, `/proc`, `/sys`
   and Ubuntu's ESP p1 bind-mounted in, then `update-grub` and
   `grub-install /dev/nvme0n1`).
@@ -193,19 +197,37 @@ up on the new partition (`findmnt /`) with home intact. Only then delete
 Ubuntu's leftovers from p5, from a **NixOS** boot:
 
 ```
-sudo mount /dev/nvme0n1p5 /mnt
-sudo find /mnt -mindepth 1 -maxdepth 1 ! -name home ! -name lost+found -exec rm -rf {} +
-sudo umount /mnt
+sudo find /mnt/ubuntu -mindepth 1 -maxdepth 1 ! -name home ! -name lost+found -exec rm -rf {} +
 ```
 
-Mount p5 separately at `/mnt` for this rather than deleting through the live
-`/home` mount: a path typo under `/home` hits the running system's own home
-directory, and the `! -name home` guard is all that stands between this
-command and 760GiB.
+The `! -name home` guard is all that stands between this command and
+760GiB — read it twice before pressing enter.
 
-Finally grow p5 back over the freed space (`parted resizepart` then
+Then grow p5 back over the freed space (`parted resizepart` then
 `resize2fs` — ext4 grows online, no live USB needed) and relabel it:
 `sudo e2label /dev/nvme0n1p5 home`.
+
+**Step 5 — flatten p5, and only then drop the bind mount.** After step 4,
+p5 contains a single `home/` directory, so it still needs the bind mount.
+To be rid of it, move the contents up a level so p5's root *is* the home
+directory. This has to happen with p5 not mounted at `/home` — do it from a
+live USB with p5 at `/mnt`:
+
+```
+sudo mv /mnt/home/erik /mnt/erik && sudo rmdir /mnt/home
+```
+
+`mv` within one filesystem is a rename, so this is instant regardless of the
+760GiB. Ubuntu is gone by now, so nothing else expects the old layout. Then
+`hosts/hp-envy.nix` can finally collapse to:
+
+```nix
+fileSystems."/home" = {
+  device = "/dev/disk/by-uuid/ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e";
+  fsType = "ext4";
+  options = [ "rw" "nofail" ];
+};
+```
 
 ### Later, when Ubuntu really goes
 
@@ -216,8 +238,7 @@ sudo efibootmgr                 # find the "ubuntu" entry number
 sudo efibootmgr -b <N> -B
 ```
 
-NixOS needs no change at that point — `/home` is already mounted from p5
-independently of Ubuntu. Note that growing `/` (p3) is not possible by
-reclaiming p1: it is 100MiB and at the wrong end of the disk, and p3 sits
-between p2 and p5, so growing it means shrinking p5 from the front, which
-ext4 cannot do. If `/` ever needs more room, put `/nix` on p5 instead.
+Growing `/` (p3) is not possible by reclaiming p1: it is 100MiB and at the
+wrong end of the disk, and p3 sits between p2 and p5, so growing it means
+shrinking p5 from the front, which ext4 cannot do. If `/` ever needs more
+room, put `/nix` on p5 instead.

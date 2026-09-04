@@ -12,22 +12,32 @@
     nvidiaSettings = true;
   };
 
-  # p5 IS the home partition. It is still Ubuntu's root filesystem too, but
-  # mounting it at /home rather than at a neutral path lines its own
-  # /home/erik up with NixOS's /home/erik directly — no bind mount, and no
-  # second mount point to unwind on the day Ubuntu goes away. Ubuntu's other
-  # top-level directories simply sit unused beside /home until then (see
-  # PARTITION-RUNBOOK.md, "Retiring Ubuntu").
+  # Share the WHOLE Ubuntu home directory (same disk, dual-boot — never
+  # mounted from both OSes at once): SSH keys, real .gitconfig, browser
+  # profiles, shell history, ~/.claude, ~/projects, all of it, automatically
+  # — instead of home.nix enumerating each thing worth sharing one at a
+  # time. Mount the Ubuntu partition at a neutral path first, then bind
+  # /home/erik onto NixOS's actual home directory. home.nix deliberately
+  # does NOT declare xdg.configFile."niri" or programs.git — those paths
+  # are the real, live Ubuntu files, and home-manager writing its own
+  # version there would overwrite them (same filesystem, not a copy).
   #
-  # Sharing the whole home rather than enumerating pieces is deliberate: SSH
-  # keys, real .gitconfig, shell history, ~/.claude, ~/projects, all of it.
-  # home.nix therefore does NOT declare xdg.configFile."niri" or
-  # programs.git — those paths are the real, live files, and home-manager
-  # writing its own version there would overwrite them, not shadow them.
-  fileSystems."/home" = {
+  # Do NOT "simplify" this into a single `fileSystems."/home"` on p5. p5's
+  # root is Ubuntu's `/`, so the home directory on it is at `/home/erik`
+  # *relative to that root* — mounting p5 at /home therefore puts the real
+  # home at /home/home/erik and leaves /home/erik empty. The bind mount is
+  # what strips that leading `home/`, and it stays necessary for as long as
+  # p5 keeps Ubuntu's directory layout.
+  fileSystems."/mnt/ubuntu" = {
     device = "/dev/disk/by-uuid/ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e"; # nvme0n1p5, confirmed 2026-09-03
     fsType = "ext4";
     options = [ "rw" "nofail" ];
+  };
+  fileSystems."/home/erik" = {
+    device = "/mnt/ubuntu/home/erik";
+    fsType = "none"; # ignored by `mount` for a bind mount, but this nixpkgs
+                      # revision requires the option to have some value
+    options = [ "bind" "nofail" ];
   };
 
   # nvme0n1p3 is btrfs (switched from ext4 for this) — turn on transparent
