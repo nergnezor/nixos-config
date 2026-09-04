@@ -115,6 +115,37 @@
       fi
     '';
 
+  # Rescue leftovers that keep the three apps from starting on this host:
+  # - vivaldi: Chromium SingletonLock still names the Ubuntu hostname
+  #   (erik-HP-ENVY-TE01-1xxx) and a dead pid.
+  # - ghostty: GTK 4 parses ~/.config/gtk-4.0/gtk.css, which the rescue
+  #   restored as garbage ("Expected a valid selector" then a segfault).
+  # - steam: ~/.local/share/Steam/steam.sh is not a script (Exec format
+  #   error) and the Ubuntu steam-runtime is incomplete. Keep userdata;
+  #   Steam re-bootstraps steam.sh + ubuntu12_32 on the next launch.
+  home.activation.quarantineRescueAppState =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      vivaldiCfg="$HOME/.config/vivaldi"
+      if [ -e "$vivaldiCfg/SingletonLock" ] || [ -e "$vivaldiCfg/SingletonSocket" ] || [ -e "$vivaldiCfg/SingletonCookie" ]; then
+        $DRY_RUN_CMD rm -f "$vivaldiCfg/SingletonLock" "$vivaldiCfg/SingletonSocket" "$vivaldiCfg/SingletonCookie"
+      fi
+
+      for css in "$HOME/.config/gtk-4.0/gtk.css" "$HOME/.config/gtk-3.0/gtk.css"; do
+        if [ -f "$css" ] && grep -q $'\0' "$css" 2>/dev/null; then
+          $DRY_RUN_CMD mv "$css" "$css.corrupt-rescue"
+        fi
+      done
+
+      steamDir="$HOME/.local/share/Steam"
+      if [ -e "$steamDir/steam.sh" ] && ! grep -q '^#!' "$steamDir/steam.sh" 2>/dev/null; then
+        $DRY_RUN_CMD mv "$steamDir/steam.sh" "$steamDir/steam.sh.corrupt-rescue"
+      fi
+      runtimeLogger="$steamDir/ubuntu12_32/steam-runtime/usr/libexec/steam-runtime-tools-0/logger-0.bash"
+      if [ -e "$steamDir/ubuntu12_32" ] && [ ! -f "$runtimeLogger" ]; then
+        $DRY_RUN_CMD mv "$steamDir/ubuntu12_32" "$steamDir/ubuntu12_32.ubuntu-rescue"
+      fi
+    '';
+
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
   };
