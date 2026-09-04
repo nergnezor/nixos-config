@@ -61,10 +61,9 @@
   xdg.configFile."niri".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/niri";
 
-  # programs.git stays undeclared: ~/.gitconfig came back from the rescue
-  # and is the working copy. Same reasoning as the niri config had before
-  # this commit — adopt it into the repo deliberately if you want it
-  # managed, rather than letting home-manager write over it.
+  # programs.git stays undeclared: once the rescue copy is out of the way
+  # (below), set user.name / userEmail by hand or adopt a real file into
+  # the repo. Do not let home-manager invent an identity.
 
   # systemd.user.services.mouseless was here, ported from Ubuntu's unit --
   # removed because it writes ~/.config/systemd/user/mouseless.service,
@@ -105,6 +104,16 @@
       fi
     '';
   };
+
+  # Same class of leftover as .profile: `git status` dies with
+  # "fatal: bad config line 1 in file /home/erik/.gitconfig". Move it
+  # aside; a new identity is not invented here.
+  home.activation.quarantineCorruptGitconfig =
+    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+      if [ -e "$HOME/.gitconfig" ] && ! ${pkgs.git}/bin/git config --file "$HOME/.gitconfig" --list >/dev/null 2>&1; then
+        $DRY_RUN_CMD mv "$HOME/.gitconfig" "$HOME/.gitconfig.corrupt-rescue"
+      fi
+    '';
 
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
