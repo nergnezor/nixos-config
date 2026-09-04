@@ -11,17 +11,28 @@
   # noctalia-shell.nixosModules.default (imported in flake.nix) already
   # sets programs.noctalia.package to the flake's own package output.
   #
-  # Ubuntu starts noctalia via ~/.local/share/systemd/user/noctalia.service
-  # (ExecStart=/usr/local/bin/noctalia) which lives in the shared home, so
-  # NixOS sees the unit — but /usr/local/bin/noctalia is Ubuntu-only, so
-  # the unit fails. Putting the binary in home.packages does not help:
-  # nothing execs that store path. This NixOS user unit lives in
+  # Ubuntu started noctalia via ~/.local/share/systemd/user/noctalia.service
+  # (ExecStart=/usr/local/bin/noctalia). That path is Ubuntu-only, so the
+  # unit fails here; putting the binary in home.packages does not help,
+  # since nothing execs that store path. This NixOS unit lives in
   # /etc/systemd/user, which outranks ~/.local/share, so the same unit
-  # *name* (and the shared enable symlink under
-  # graphical-session.target.wants) runs the store path instead.
-  # Do NOT use the home-manager module for this: it would write the unit
-  # into ~/.config/systemd/user and collide with the shared home, same
-  # class of failure as the mouseless.service abort.
+  # *name* (and the enable symlink under graphical-session.target.wants)
+  # runs the store path instead.
+  #
+  # **That precedence only holds against ~/.local/share.**
+  # systemd's user unit search order is, highest first:
+  #   1. ~/.config/systemd/user      2. /etc/systemd/user
+  #   3. ~/.local/share/systemd/user 4. /usr/lib/systemd/user
+  # so anything in ~/.config/systemd/user SHADOWS what this module installs.
+  # Ubuntu-era units restored into that directory are therefore able to
+  # break the session outright — a unit pointing at a binary that does not
+  # exist on NixOS, or a file the rescue brought back corrupt. If a session
+  # dies the instant it opens, look there first.
+  #
+  # Do NOT use the home-manager module for this: it writes the unit into
+  # ~/.config/systemd/user, which is both the shadowing path above and a
+  # collision with whatever already sits there — the same class of failure
+  # as the mouseless.service abort.
   programs.noctalia = {
     enable = true;
     systemd.enable = true;
