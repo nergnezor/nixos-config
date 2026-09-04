@@ -368,9 +368,17 @@ Revised order from here:
    read-only chance to get files out *with their names*, and it opens the
    device read-only without `-w`, so it cannot make anything worse:
 
+   **`-c` is not optional here.** Plain `debugfs` reads the allocation
+   bitmaps when it opens the filesystem, and the block bitmap is one of the
+   structures the resize wrecked, so it fails before running the command at
+   all: `Block bitmap checksum does not match bitmap while reading
+   allocation bitmaps` / `Filesystem not open`. Catastrophic mode skips the
+   bitmap load, which reading files does not need — inodes and extent trees
+   are separate structures. `-c` does not imply `-w`; it stays read-only.
+
    ```
-   sudo debugfs -R "ls -l /home/erik" /dev/nvme0n1p5
-   sudo debugfs -R "rdump /home/erik/projects /mnt/nixos/rescue" /dev/nvme0n1p5 \
+   sudo debugfs -c -R "ls -l /home/erik" /dev/nvme0n1p5
+   sudo debugfs -c -R "rdump /home/erik/projects /mnt/nixos/rescue" /dev/nvme0n1p5 \
      2>&1 | sudo tee /mnt/nixos/debugfs-projects.log
    ```
 
