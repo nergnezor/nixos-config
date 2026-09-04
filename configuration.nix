@@ -80,6 +80,15 @@
     };
   };
 
+  # Lets the phone reach this machine over SSH without port-forwarding or
+  # DDNS on the router: tailscaled joins it to a private WireGuard mesh with
+  # the other devices on the same Tailscale account, so it's reachable at a
+  # stable Tailscale IP/MagicDNS name from anywhere, NAT/CGNAT included.
+  # `sudo tailscale up` after the rebuild does the one-time interactive
+  # login. SSH itself stays as configured above (key-only) -- Tailscale is
+  # just the network path in, not a replacement for that auth.
+  services.tailscale.enable = true;
+
   # A separate, log-in-able remote desktop -- NOT a mirror of the running
   # niri session. niri is Wayland-only and xrdp's xorgxrdp backend only
   # ever drives its own private Xorg, spun up fresh per RDP connection, so
@@ -97,9 +106,8 @@
   };
   # Port 3389 is only reachable over the Tailscale mesh, never the LAN/WAN
   # -- RDP is a common scanning target and password auth is off everywhere
-  # else on this machine for the same reason. Requires
-  # services.tailscale.enable (tracked separately) so the tailscale0
-  # interface actually exists; harmless if it doesn't yet.
+  # else on this machine for the same reason. tailscale0 exists thanks to
+  # services.tailscale.enable above.
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 3389 ];
 
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
