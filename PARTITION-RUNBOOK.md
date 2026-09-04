@@ -465,11 +465,36 @@ Order:
    `/mnt/nixos/rescue2`. Costs nothing, do it first. Note `.gnupg` (inode
    131965) — GPG private keys cannot be re-cloned — and `.config` (131107),
    the real niri config that `home.nix` deliberately does not declare.
-2. `tune2fs -O ^metadata_csum /dev/nvme0n1p5`, then re-dump whatever failed
-   into `/mnt/nixos/rescue3`. `debugfs -c` skips the allocation bitmaps but
-   still verifies *directory block* checksums, which is what stopped
-   `~/projects` (`Directory block checksum does not match directory block
-   while dumping`, 0 bytes out) — clearing the feature is what gets past it.
+   What step 1 actually yielded: clean, no errors at all — `.gnupg` (the one
+   thing that could not be re-fetched from anywhere), `.ssh`, `.steam`,
+   `hotel` 565M, `Library`, `Desktop`. Partial — `Downloads` 28G, `Music`
+   3.4G, `midswimmer` 554M, `blade` 6.3M, `Pictures` 38M, `musicgame`,
+   `actions-runner`, `.config`, `.cursor`. Nothing at all — `projects`,
+   `Documents`, `Midswimmer`, `midswimmer1`, `godot4`, `jobb`, `jdk17`,
+   where the checksum error hit the *top* level so `rdump` gave up before
+   entering. (`du -sh rescue2/*` does not match dotfile directories; use
+   `rescue2/.[!.]*` to see the rest.)
+
+2. `tune2fs -O ^metadata_csum /dev/nvme0n1p5`. Every remaining failure is
+   `Directory block checksum does not match` — `debugfs -c` skips the
+   allocation bitmaps but still verifies *directory block* checksums, and
+   that is what stopped `~/projects` (0 bytes out). Clearing the feature is
+   what gets past it.
+
+   With the feature gone the **kernel** stops rejecting those directories
+   too, so the rest of the extraction is a plain mount and rsync rather than
+   `rdump` — and rsync, unlike `rdump`, does not abort on a destination
+   directory that already exists:
+
+   ```
+   sudo mount -o ro,noload /dev/nvme0n1p5 /mnt/p5check
+   sudo rsync -aHAX --numeric-ids --ignore-errors --info=progress2 \
+     --exclude='.cache' --exclude='.local/share/Steam/steamapps' \
+     /mnt/p5check/home/erik/ /mnt/nixos/rescue3/ 2>&1 | sudo tee /mnt/nixos/rescue3.log
+   ```
+
+   The excludes keep p3's 236GiB from filling — `Downloads` alone was 28G,
+   and steamapps re-downloads.
 3. `e2fsck -fy -C 0 /dev/nvme0n1p5`, log on p3, run to completion.
 4. Mount read-only and rsync the remainder, `lost+found` included.
 5. Only then draw the final layout: create the partition in the freed space,
