@@ -12,20 +12,22 @@
     nvidiaSettings = true;
   };
 
-  # /home is p5, a partition dedicated to it and shared with Ubuntu (same
-  # disk, dual-boot -- never mounted from both at once): SSH keys, the real
-  # .gitconfig, shell history, ~/projects, all of it. home.nix deliberately
-  # does NOT declare xdg.configFile."niri" or programs.git -- those paths are
-  # the real, live files, and home-manager writing its own version there
-  # would overwrite them (same filesystem, not a copy).
+  # /home is p5, a partition dedicated to it. NixOS is now the only OS on
+  # this machine — the Ubuntu install that used to share the disk is gone,
+  # along with everything that arrangement required here: p5 mounted at
+  # /mnt/ubuntu, and /mnt/ubuntu/home/erik bind-mounted onto /home/erik to
+  # strip the leading `home/` that Ubuntu's root layout imposed. p5 was
+  # remade as a bare home partition after the interrupted resize destroyed
+  # its filesystem (see PARTITION-RUNBOOK.md), so its root simply *is*
+  # /home now.
   #
-  # This used to be p5 mounted at /mnt/ubuntu with /mnt/ubuntu/home/erik
-  # bind-mounted onto /home/erik, because p5 was Ubuntu's root and the home
-  # directory sat at `home/erik` relative to it. p5 was remade as a bare home
-  # partition after the resize destroyed its filesystem (see
-  # PARTITION-RUNBOOK.md), so its root now *is* /home and the bind mount is
-  # gone. Ubuntu mounts the same partition at /home and agrees with that
-  # layout, so the old asymmetry is gone with it.
+  # home.nix still does NOT declare xdg.configFile."niri" or programs.git.
+  # The original reason (those files being Ubuntu's live copies) is gone,
+  # but the files themselves were restored from the rescue and remain the
+  # working versions — home-manager declaring them would overwrite the
+  # restored config with the point-in-time snapshot in this repo's niri/
+  # directory. Adopt them deliberately if you want, by copying the live
+  # files into the repo first.
   #
   # by-label, not by-uuid: mkfs assigns a fresh UUID every time, and this
   # partition has now been remade once. The label is set deliberately
@@ -46,20 +48,13 @@
   # hardware-configuration.nix generates for "/" rather than conflicting.
   fileSystems."/".options = [ "compress=zstd" ];
 
-  # Keep the browser profile OUT of the shared home. It's the one piece of
-  # shared state where version skew can actually destroy data rather than
-  # just misbehave: Chromium-based profiles don't survive a downgrade, and
-  # no available build matches Ubuntu's vivaldi 7.9 exactly (25.05 had 7.6,
-  # unstable has 8.1) -- so whichever side runs "newer" migrates the 4.2GB
-  # profile and the other side then chokes on it. A per-system profile
-  # sidesteps that entirely; the cost is bookmarks/sessions not following
-  # you between the two OSes.
-  systemd.tmpfiles.rules = [ "d /var/lib/local-home/vivaldi 0700 erik erik - -" ];
-  fileSystems."/home/erik/.config/vivaldi" = {
-    device = "/var/lib/local-home/vivaldi";
-    fsType = "none";
-    options = [ "bind" "nofail" ];
-  };
+  # The vivaldi profile used to be bind-mounted out of the home directory to
+  # a per-system path, because Ubuntu and NixOS shared one home and their
+  # vivaldi versions differed — Chromium-based profiles do not survive a
+  # downgrade, so whichever side ran newer migrated the 4.2GB profile and
+  # the other then choked on it. With Ubuntu gone there is no second version
+  # to skew against, so the bind mount and its tmpfiles rule are removed and
+  # ~/.config/vivaldi is simply the real profile again.
 
   # nixos-generate-config writes fmask=0022/dmask=0022 for the ESP, which
   # makes it world-readable — bootctl warns about it during install because

@@ -540,35 +540,45 @@ Steps 3-5 below are superseded by this — p5 is being remade rather than
 kept, which makes the whole "move Ubuntu out, keep home in place" dance
 unnecessary.
 
+**Decision: no Ubuntu.** Its value was the accumulated installation — the
+config, the tooling, years of state — and that is what the resize destroyed.
+A freshly installed Ubuntu offers nothing NixOS does not, so the hp-envy
+becomes NixOS-only and the freed space goes to `/home` instead of to a new
+partition.
+
 **Last call on p5.** After the mkfs below there is nothing left to retrieve,
 and the freed tail (with its `photorec` option) goes too.
 
 ```
-sudo parted /dev/nvme0n1 mkpart ubuntu ext4 3178780672s 3383547903s
-sudo parted /dev/nvme0n1 unit s print       # confirm the number; p4 is the free slot
-sudo mkfs.ext4 -L ubuntu /dev/nvme0n1p4
-sudo mkfs.ext4 -L home  /dev/nvme0n1p5
+sudo parted /dev/nvme0n1 resizepart 5 3383547903s
+sudo parted /dev/nvme0n1 unit s print
+sudo mkfs.ext4 -L home /dev/nvme0n1p5
 ```
 
-Final layout: p1 Ubuntu ESP · p4 Ubuntu · p2 NIXBOOT · p3 NixOS · p5 home.
+`/home` ends up at 1.58TiB. Final layout: p1 (Ubuntu's old ESP, removable) ·
+p5 home · p2 NIXBOOT · p3 NixOS.
 
 Restore home. A freshly-made p5 means its root **is** the home directory —
-no `home/` level, so no bind mount. That is step 5's end state, arrived at
-for free:
+no `home/` level, so no bind mount:
 
 ```
 sudo mount /dev/nvme0n1p5 /mnt/newhome
 sudo mkdir -p /mnt/newhome/erik
 sudo rsync -aHAX --numeric-ids /mnt/nixos/rescue3/ /mnt/newhome/erik/
-sudo rsync -aHAX --numeric-ids /mnt/nixos/rescue4/ /mnt/newhome/erik/
 sudo chown -R 1000:1000 /mnt/newhome/erik
 ```
 
-Install Ubuntu clean onto p4 — its system tree on p5 was in the same
-destroyed inode range, so copying it across would have copied a broken root.
-In the installer's manual partitioning: p4 as `/` (format), p1 as the ESP,
-p5 as `/home` **without** ticking format. Ubuntu wants exactly this layout
-for `/home`, same as NixOS now does.
+Once NixOS boots cleanly from p2, Ubuntu's leftovers can go — **after**, not
+before:
+
+```
+sudo parted /dev/nvme0n1 rm 1
+sudo efibootmgr            # find the "ubuntu" entry number
+sudo efibootmgr -b <N> -B
+```
+
+p1 is 100MiB and sits *before* p5, so its space cannot be reclaimed by
+growing home (ext4 cannot grow at the front). Not worth caring about.
 
 `hosts/hp-envy.nix` is already updated for it: a single
 `fileSystems."/home"` on `/dev/disk/by-label/home`, with `/mnt/ubuntu` and

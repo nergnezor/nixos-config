@@ -30,17 +30,17 @@
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
-  boot.loader.efi.efiSysMountPoint = "/boot"; # matches both the internal-disk
-    # ESP (nvme0n1p6, mounted at /boot per PARTITION-RUNBOOK.md step 8) and
-    # disko-usb.nix's ESP mountpoint.
-  # NixOS's OWN ESP — never touches Ubuntu's ESP or GRUB. Switch OS via the
-  # firmware boot menu (F9).
+  boot.loader.efi.efiSysMountPoint = "/boot"; # nvme0n1p2 (label NIXBOOT) on
+    # the internal disk; also matches disko-usb.nix's ESP mountpoint.
+  # This ESP was created for NixOS alone and never held Ubuntu's GRUB. The
+  # hp-envy is now NixOS-only, so there is no boot menu to choose between
+  # them any more; nitro is still dual-boot (see hosts/nitro.nix).
 
-  # Per-host: networking.hostName, GPU driver, and the /mnt/ubuntu +
-  # /home/erik share (each machine's Ubuntu partition has a different UUID —
-  # see hosts/hp-envy.nix and hosts/nitro.nix). Both use `nofail` on the
-  # mount/bind so a config accidentally built for the wrong host degrades to
-  # a normal empty local home instead of a broken boot.
+  # Per-host: networking.hostName, GPU driver, and how /home is provided.
+  # hp-envy has a dedicated home partition; nitro still shares Ubuntu's
+  # (see hosts/nitro.nix). Both use `nofail`, so a config accidentally built
+  # for the wrong host degrades to a normal empty local home instead of a
+  # broken boot.
 
   networking.networkmanager.enable = true;
 
@@ -120,10 +120,10 @@
   };
   services.pulseaudio.enable = false; # was hardware.pulseaudio, renamed on this nixpkgs revision
 
-  # mouseless (net.sonuscape.mouseless) is flatpak-installed on the Ubuntu
-  # side. Enable flatpak here, then after first boot:
-  #   flatpak remote-list          # check the Ubuntu install for which remote it came from
-  #   flatpak install <remote> net.sonuscape.mouseless
+  # mouseless (net.sonuscape.mouseless) used to come from the Ubuntu side's
+  # flatpak install, which is gone with Ubuntu. Install it here instead:
+  #   flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+  #   flatpak install flathub net.sonuscape.mouseless
   services.flatpak.enable = true;
   xdg.portal = {
     enable = true; # required assertion for flatpak; niri itself also needs a portal for screen-share/file-pickers
