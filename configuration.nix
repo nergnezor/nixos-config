@@ -80,6 +80,28 @@
     };
   };
 
+  # A separate, log-in-able remote desktop -- NOT a mirror of the running
+  # niri session. niri is Wayland-only and xrdp's xorgxrdp backend only
+  # ever drives its own private Xorg, spun up fresh per RDP connection, so
+  # the two can't be the same desktop; Xfce is what runs inside that
+  # private X session. (Mirroring the actual niri screen instead would be
+  # wayvnc, not xrdp -- different tool, not configured here.)
+  #
+  # desktopManager.xfce.enable, not services.xserver.enable: this only
+  # registers the xfce4-session package/session, it does not turn Xfce (or
+  # any X server) into the local display manager -- greetd/niri keeps that.
+  services.xserver.desktopManager.xfce.enable = true;
+  services.xrdp = {
+    enable = true;
+    defaultWindowManager = "${pkgs.xfce.xfce4-session}/bin/xfce4-session";
+  };
+  # Port 3389 is only reachable over the Tailscale mesh, never the LAN/WAN
+  # -- RDP is a common scanning target and password auth is off everywhere
+  # else on this machine for the same reason. Requires
+  # services.tailscale.enable (tracked separately) so the tailscale0
+  # interface actually exists; harmless if it doesn't yet.
+  networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 3389 ];
+
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
 
