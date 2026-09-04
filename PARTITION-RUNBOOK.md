@@ -146,20 +146,31 @@ so home never moves. Ubuntu's system tree is ~110GiB once the swapfiles are
 gone — small enough to relocate. Move Ubuntu to its own partition and p5 is
 left as a dedicated home partition, with Ubuntu still bootable.
 
-**Step 1 — drop Ubuntu's swapfiles** (~41GiB back, and no point copying
-them). From NixOS:
+**Step 1 — trim Ubuntu (done 2026-09-04).** Freed ~105GiB before copying
+anything, taking p5 from 929GiB used to 824GiB:
 
-```
-sudo rm /mnt/ubuntu/swapfile.ue /mnt/ubuntu/swap.img
-```
+- `swapfile.ue` + `swap.img` at p5's root, ~41GiB. Ubuntu fails to swapon
+  until its `/etc/fstab` line goes too — tidy that in step 3.
+- `/var/lib/apport/coredump`, ~27GiB of UnrealEditor coredumps. Ubuntu never
+  expires these.
+- `/nix`, ~38GiB — the Nix that bootstrapped NixOS from Ubuntu (see
+  `install-to-nixos-partition.sh`). Dead weight now that NixOS boots and
+  rebuilds itself. Only keep it if you want to reinstall NixOS *from*
+  Ubuntu again. Safe to delete from a running NixOS: that store is p5's,
+  while the live one is p3's `/nix/store`.
 
-Ubuntu will fail to swapon at next boot until its `/etc/fstab` line is
-removed too — harmless, but tidy it in step 3.
+flatpak (8.2GiB) and snapd (7.7GiB) were deliberately kept — mouseless
+lives in the flatpak one.
+
+That leaves Ubuntu's system tree at **~45GiB**, against 760GiB of home.
 
 **Step 2 — shrink p5 and create Ubuntu's new partition.** ext4 cannot shrink
 while mounted, and `/mnt/ubuntu` is mounted at boot, so this needs a **live
 USB** (GParted, as in the shrink at the top of this file). Shrink p5 to
-~1.05TiB and create a new ~160GiB partition in the freed space. Note the
+~1.45TiB and create a new **100GiB** partition in the freed space. 100GiB
+is a bit over twice what Ubuntu now occupies: enough headroom for apt and
+even a distro upgrade, and there is no reason to shave it closer when the
+remainder returns to home in step 4 either way. Note the
 number `parted` assigns — it fills the lowest free slot, which bit us last
 time; check `lsblk`, don't assume it's p6.
 
