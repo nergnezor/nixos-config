@@ -323,27 +323,38 @@ orphan the children into `lost+found` under numeric names.
 
 Revised order from here:
 
-0. Create the partition in the freed space and use it as the rescue target
-   — it is ~97.6GiB of empty local space that shares no filesystem with
-   anything broken, which beats p3 (NixOS's own root and store). Both ends
-   of the hole are already 1MiB-aligned (3178780672 / 2048 = 1552139,
-   3383547904 / 2048 = 1652123), so name the sectors exactly rather than
-   letting a GUI round them:
+0. **Do not create Ubuntu's partition in the freed space yet, and do not
+   use that space as the rescue target** (an earlier revision of this file
+   said to — wrong). Those ~97.6GiB are the tail of the *old* filesystem.
+   `resize2fs` relocates in-use blocks out of the region it is removing but
+   never erases the originals, so that space still holds a copy of whatever
+   lived in the last 97.6GiB before the shrink. `mkfs` there destroys it
+   permanently. It is a long shot — the damage is in the inode tables
+   around inodes 5.1M-16M, not in the tail — but if `e2fsck` destroys files
+   with no other copy, carving that region with `photorec`/`ext4magic` is
+   the only thing left to try, and preserving the option costs nothing.
+   The partition belongs to step 2 below, which is blocked on p5 either way;
+   create it once p5's fate is settled, so the final layout gets drawn once
+   rather than in instalments.
+
+   When it is time, both ends of the hole are already 1MiB-aligned
+   (3178780672 / 2048 = 1552139, 3383547904 / 2048 = 1652123), so name the
+   sectors outright rather than letting a GUI round them:
 
    ```
    sudo parted /dev/nvme0n1 mkpart ubuntu ext4 3178780672s 3383547903s
    sudo parted /dev/nvme0n1 unit s print     # read the number off -- p4 is the free slot, not p6
-   sudo mkfs.ext4 -L rescue /dev/nvme0n1p4
    ```
 
-   Note that GParted queues operations and does nothing until Apply is
-   pressed — a partition "created" and not applied leaves the table
-   untouched, which is what happened on the first go. Verify with `parted`,
-   and check `lsblk` across *all* disks, since on a live USB it is easy to
-   act on the stick instead of the internal drive. The label becomes
-   `ubuntu` later; its job right now is holding the rescue.
+   Note also that GParted queues operations and does nothing until Apply is
+   pressed, and that on a live USB it is easy to act on the stick instead of
+   the internal disk — verify with `parted`, and check `lsblk` across *all*
+   disks.
 1. `mount -o compress=zstd /dev/nvme0n1p3 /mnt/nixos` — somewhere real to
-   write logs.
+   write logs and hold the rescue. p3 is btrfs, entirely separate from p5,
+   and 249GiB against a NixOS install that uses a fraction of it. An
+   external disk is better still, since it touches the internal drive not at
+   all.
 2. Rescue read-only *before* touching it again:
    `mount -o ro,noload /dev/nvme0n1p5 /mnt/p5check` (`noload` skips journal
    replay, which is what you want on a half-repaired filesystem), then rsync
