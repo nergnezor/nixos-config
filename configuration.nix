@@ -24,12 +24,10 @@
   #   1. ~/.config/systemd/user      2. /etc/systemd/user
   #   3. ~/.local/share/systemd/user 4. /usr/lib/systemd/user
   # so anything in ~/.config/systemd/user SHADOWS what this module installs.
-  # Ubuntu-era units restored into that directory are therefore able to
-  # break the session outright — a unit pointing at a binary that does not
-  # exist on NixOS, or a file the rescue brought back corrupt. Generation 10
-  # confirmed it: greetd opened erik's session and closed it one second later
-  # with niri never reaching the journal. home.nix quarantines that directory
-  # once on activation (see quarantineUbuntuSystemdUserUnits).
+  # Generation 10's directory there only had home-manager's tray.target —
+  # the one-second session death was niri-session re-execing a login shell
+  # that sourced a binary ~/.profile (see home.nix). Still look here first
+  # if a later rescue puts real units back.
   #
   # Do NOT use the home-manager module for this: it writes the unit into
   # ~/.config/systemd/user, which is both the shadowing path above and a

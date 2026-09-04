@@ -77,29 +77,18 @@
   # from the shared home regardless, so nothing is lost by dropping it.
   # (It won't actually run on NixOS until the mouseless flatpak is
   # installed there, same as Ubuntu's actions-runner unit doesn't.)
+  #
+  # Generation 10's ~/.config/systemd/user is *not* the session killer:
+  # it only contains home-manager's tray.target symlink. Do not quarantine
+  # that directory.
 
-  # Generation 10's journal (2026-09-04): greetd opened erik's session and
-  # closed it one second later, with niri never mentioned. ~/.config/systemd/user
-  # outranks /etc/systemd/user, so rescued Ubuntu units (noctalia pointing at
-  # /usr/local/bin, mouseless, actions-runner with Exec format error) shadow
-  # the NixOS niri.service and graphical-session.target dies before niri
-  # starts. Quarantine once, before home-manager writes anything there.
-  home.activation.quarantineUbuntuSystemdUserUnits =
-    lib.hm.dag.entryBefore [ "writeBoundary" ] ''
-      stamp="$HOME/.config/systemd/.nixos-quarantined-ubuntu-rescue"
-      src="$HOME/.config/systemd/user"
-      if [ -d "$src" ] && [ ! -L "$src" ] && [ ! -e "$stamp" ]; then
-        $DRY_RUN_CMD mkdir -p "$HOME/.config/systemd"
-        $DRY_RUN_CMD mv "$src" "$HOME/.config/systemd/user.ubuntu-rescue"
-        $DRY_RUN_CMD touch "$stamp"
-      fi
-    '';
-
-  # hm-activate-erik sourced this on generation 10 and got
-  # "syntax error near unexpected token '('" plus a 239-byte binary blob —
-  # another rescue leftover. Replace it so login shells and activation stop
-  # tripping over it. force: home-manager will not overwrite an existing
-  # file otherwise.
+  # niri-session re-execs itself as `exec -l $SHELL` before it ever starts
+  # niri.service. bash as a login shell sources ~/.profile, and the copy
+  # restored from the damaged ext4 filesystem is 239 bytes of binary
+  # (NUL, a stray `(`, "syntax error near unexpected token"). The login
+  # shell dies, greetd sees the session command exit in one second, niri
+  # never reaches the journal. force: home-manager will not overwrite an
+  # existing file otherwise.
   home.activation.quarantineCorruptProfile =
     lib.hm.dag.entryBefore [ "writeBoundary" ] ''
       if [ -e "$HOME/.profile" ] && ! sh -n "$HOME/.profile" 2>/dev/null; then
