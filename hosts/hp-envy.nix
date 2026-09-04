@@ -11,6 +11,11 @@
     package = config.boot.kernelPackages.nvidiaPackages.stable;
     nvidiaSettings = true;
   };
+  # Without this the console is unreadable once nvidia_drm takes the display
+  # over from simpledrm: the handover leaves fbcon on a framebuffer nothing
+  # has set up, and the greetd/tuigreet prompt on tty1 is the first thing
+  # you see it on. Enabling nvidia-drm's own fbdev gives fbcon a real target.
+  boot.kernelParams = [ "nvidia_drm.fbdev=1" ];
 
   # /home is p5, a partition dedicated to it. NixOS is now the only OS on
   # this machine — the Ubuntu install that used to share the disk is gone,

@@ -76,10 +76,16 @@
   services.xserver.xkb.layout = "se";
 
   # tuigreet draws its frame with Unicode box-drawing glyphs, which the
-  # kernel's built-in 8x16 console font does not have. earlySetup loads the
-  # font from the initrd, before greetd starts, rather than after.
-  console.font = "${pkgs.terminus_font}/share/consolefonts/ter-v16n.psf.gz";
-  console.earlySetup = true;
+  # kernel's built-in 8x16 console font does not have.
+  #
+  # Name the kbd font, do NOT point at a .psf.gz in the store, and do NOT
+  # turn on earlySetup. Tried that first and it made things worse rather
+  # than better: most characters rendered as some *other* character while a
+  # few stayed correct, which is the signature of text being indexed into
+  # the font byte-by-byte because the font's unicode table never got
+  # applied. A bare name goes through the normal (post-initrd) console
+  # setup, which loads the map with it.
+  console.font = "Lat2-Terminus16";
 
   # uid AND gid both have to match Ubuntu's erik (1000:1000), not just the
   # uid: the home directory is shared between the two systems, so files
