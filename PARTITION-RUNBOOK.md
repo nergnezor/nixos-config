@@ -271,6 +271,61 @@ than the raw error count suggests — but repair is still one-way, so:
    and rebuild home from the rescued subset, which makes steps 3-5 below
    simpler rather than harder.
 
+### First repair attempt aborted (2026-09-04)
+
+Two lessons, both worth not repeating.
+
+**Never write the log or the undo file to the live USB's `/root`.** The
+NixOS live ISO keeps its root filesystem in RAM, so `tee /root/...` and
+`e2fsck -z /root/...` both wrote to tmpfs: the log dies at reboot, and the
+undo file for a 1.5TiB filesystem ran the tmpfs out of space, which is what
+`while force-closing undo file` reports. A half-written undo file that could
+not be closed is not trustworthy, so `e2undo` stopped being an option.
+Mount p3 (`/mnt/nixos`) or an external disk and write there instead.
+
+**Rescue really does have to come first.** The repair was started before the
+read-only rsync, and `e2fsck` then aborted partway through pass 2:
+
+```
+ext2fs_read_inode: Inode checksum does not match inode while reading
+inode 16466339 in check_filetype
+e2fsck: aborted
+***** FILE SYSTEM WAS MODIFIED *****
+```
+
+which leaves the filesystem half-repaired — worse than either untouched or
+fully checked. It has to be run to completion.
+
+**The damage is worse than the error count suggested.** A contiguous run of
+directory inodes (5132823, 5132833, 5132834, 5132838, 5132846, 5132860,
+5132868 ... 5133009) all report `block #0 ... directory corrupted` with
+missing `.`/`..`, and one entry has a raw-binary name pointing at an inode
+`in group 2010 where _INODE_UNINIT is set`. That is file content sitting
+where an inode table belongs: the interrupted resize wrote data blocks over
+metadata in that region. `e2fsck` cannot reconstruct that — it can only
+orphan the children into `lost+found` under numeric names.
+
+Revised order from here:
+
+1. `mount -o compress=zstd /dev/nvme0n1p3 /mnt/nixos` — somewhere real to
+   write logs.
+2. Rescue read-only *before* touching it again:
+   `mount -o ro,noload /dev/nvme0n1p5 /mnt/p5check` (`noload` skips journal
+   replay, which is what you want on a half-repaired filesystem), then rsync
+   `~/projects`, `~/.ssh`, `~/.gitconfig`, `~/.claude`, documents to
+   `/mnt/nixos/rescue`.
+3. Finish the check: `e2fsck -fy -C 0 /dev/nvme0n1p5 | tee
+   /mnt/nixos/fsck-p5-2.log`. No `-z` this time — undo could now only roll
+   back to the half-repaired state, so it buys nothing.
+4. If it aborts on the same inode-checksum error, take the checksums out of
+   the fatal path and rerun: `tune2fs -O ^metadata_csum /dev/nvme0n1p5`.
+   Re-enable later with `tune2fs -O metadata_csum` + `e2fsck -fD` if the
+   filesystem survives.
+5. Then judge `lost+found`. A large one with a flattened tree means p5 is
+   better reformatted from the rescued subset — which makes steps 3-5 below
+   *simpler*, since Ubuntu is moving off p5 anyway and p5 is meant to end up
+   as a bare home partition.
+
 Steps 3-5 below assume a healthy p5 and are on hold until this is resolved.
 
 **Step 3 — copy Ubuntu across.** Still from the live USB, with both
