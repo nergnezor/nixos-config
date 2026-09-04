@@ -440,7 +440,44 @@ Revised order from here:
    *simpler*, since Ubuntu is moving off p5 anyway and p5 is meant to end up
    as a bare home partition.
 
-Steps 3-5 below assume a healthy p5 and are on hold until this is resolved.
+### Decision: extract, then reformat p5 (2026-09-04)
+
+`~/projects` is on GitHub, so nothing on p5 justifies fighting to save the
+*filesystem* — only to get **files** out of it. That inverts one earlier
+warning: once reformatting is the plan, **`e2fsck` has no downside**.
+Everything it was cautioned against — clearing inodes, filling `lost+found`,
+making the damage permanent — stops mattering when the filesystem is going
+away regardless. It becomes just a tool for making more files readable, run
+last.
+
+It also lands better than the original plan. Step 3 below rsyncs Ubuntu's
+system tree from p5 onto a new partition, but that tree lives in the same
+broken filesystem and its files sit in the same high-inode range that was
+destroyed. A clean Ubuntu install on the new partition is more honest than a
+copy of a damaged root. And a freshly-made p5 makes step 5 free: with no
+Ubuntu directory layout left on it, `hosts/hp-envy.nix` can collapse
+straight to the simple `fileSystems."/home"` form, bind mount and all its
+caveats gone.
+
+Order:
+
+1. Read-only `debugfs -c ... rdump` of everything still dumpable, into
+   `/mnt/nixos/rescue2`. Costs nothing, do it first. Note `.gnupg` (inode
+   131965) — GPG private keys cannot be re-cloned — and `.config` (131107),
+   the real niri config that `home.nix` deliberately does not declare.
+2. `tune2fs -O ^metadata_csum /dev/nvme0n1p5`, then re-dump whatever failed
+   into `/mnt/nixos/rescue3`. `debugfs -c` skips the allocation bitmaps but
+   still verifies *directory block* checksums, which is what stopped
+   `~/projects` (`Directory block checksum does not match directory block
+   while dumping`, 0 bytes out) — clearing the feature is what gets past it.
+3. `e2fsck -fy -C 0 /dev/nvme0n1p5`, log on p3, run to completion.
+4. Mount read-only and rsync the remainder, `lost+found` included.
+5. Only then draw the final layout: create the partition in the freed space,
+   mkfs both, install Ubuntu clean, restore home from the rescue. Until step
+   4 is done that space still holds the old filesystem's tail, and
+   `photorec` against it remains the last resort.
+
+Steps 3-5 below assume a healthy p5 and are superseded by the above.
 
 **Step 3 — copy Ubuntu across.** Still from the live USB, with both
 mounted (`/mnt/old` = p5, `/mnt/new` = the new partition):
