@@ -71,6 +71,42 @@ p5  1.58TiB   btrfs   /home        label "home", subvols @home + @snapshots
    `/mnt/nixos/rescue3` (see below) — only once confident nothing else is
    missing.
 
+**Pattern to watch for: scattered silent content corruption in rescued
+files.** Beyond the flatpak repo config above, testing every app in
+`home.nix`/`configuration.nix` after the first real boot (2026-09-04) turned
+up three more casualties, all with the same signature as the original
+`config.kdl` damage described earlier in this file — correct metadata
+(size, timestamp) but content replaced by unrelated binary garbage
+(sometimes literal x86 machine code fragments), so nothing flags it until
+the file is actually read:
+
+- `~/.local/share/icons/hicolor/icon-theme.cache` — every GTK4 app
+  (ghostty, zenity, xdg-desktop-portal-gnome) segfaulted on launch,
+  100% reproducible, because `gtk_icon_theme_has_icon` reads this cache on
+  startup. Deleted; GTK4 regenerates it on demand, it's a pure cache.
+- `~/.local/share/Steam/steam.sh` — `Exec format error`. Replaced from
+  Steam's own `bootstrap.tar.xz` (already present, re-downloaded earlier).
+- `~/.local/share/Steam/ubuntu12_32/steam-runtime.tar.xz` — `xz -t` failed
+  ("File format not recognized"); its `.checksum` sidecar was also
+  corrupted (all-zero bytes). This file is mandatory — `steam.sh` hard-exits
+  without it, no `STEAM_RUNTIME=0` escape hatch — and steam.sh does not
+  redownload it itself if missing, only on checksum mismatch against a
+  present-but-wrong archive. Ended up doing a full reset of
+  `~/.local/share/Steam` (kept `userdata/` and `config/`, moved the rest
+  aside, let a fresh `steam` launch reinstall everything) rather than
+  hunting file-by-file — faster once more than one corrupt file turned up
+  in the same tree, and Steam's own installer is the only legitimate
+  source for that archive (no working public direct-download URL found).
+
+If something else acts inexplicably broken later — crashes on startup,
+"unrecognized format", garbled output — suspect this class of damage before
+anything else and check the file's content, not just that it exists.
+
+Also worth knowing for next time: `~/.local/share/Steam` needs `DISPLAY`
+set (`xwayland-satellite` runs on `:0`, per `configuration.nix`) when
+launched from a shell that isn't a child of the niri session and so never
+picked up the env var niri's systemd/dbus activation environment carries.
+
 **What was lost**, for when something turns up missing: `~/projects` (all on
 GitHub), `~/Documents` (the one thing with no copy anywhere), `Midswimmer`,
 `midswimmer1`, `godot4`, `jobb`, `jdk17`, `gxloops`,
