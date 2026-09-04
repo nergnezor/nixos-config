@@ -307,6 +307,25 @@ orphan the children into `lost+found` under numeric names.
 
 Revised order from here:
 
+0. Create the partition in the freed space and use it as the rescue target
+   — it is ~97.6GiB of empty local space that shares no filesystem with
+   anything broken, which beats p3 (NixOS's own root and store). Both ends
+   of the hole are already 1MiB-aligned (3178780672 / 2048 = 1552139,
+   3383547904 / 2048 = 1652123), so name the sectors exactly rather than
+   letting a GUI round them:
+
+   ```
+   sudo parted /dev/nvme0n1 mkpart ubuntu ext4 3178780672s 3383547903s
+   sudo parted /dev/nvme0n1 unit s print     # read the number off -- p4 is the free slot, not p6
+   sudo mkfs.ext4 -L rescue /dev/nvme0n1p4
+   ```
+
+   Note that GParted queues operations and does nothing until Apply is
+   pressed — a partition "created" and not applied leaves the table
+   untouched, which is what happened on the first go. Verify with `parted`,
+   and check `lsblk` across *all* disks, since on a live USB it is easy to
+   act on the stick instead of the internal drive. The label becomes
+   `ubuntu` later; its job right now is holding the rescue.
 1. `mount -o compress=zstd /dev/nvme0n1p3 /mnt/nixos` — somewhere real to
    write logs.
 2. Rescue read-only *before* touching it again:
