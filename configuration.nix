@@ -83,22 +83,22 @@
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
 
-  # The keyboard is Swedish; without these NixOS falls back to the US
-  # layout everywhere. That is not cosmetic: the root/erik passwords were
-  # typed on a Swedish layout during `nixos-install` (run from the Ubuntu
-  # session, see PARTITION-RUNBOOK.md), so every non-alphanumeric character
-  # in them lands on a different key at the greetd/tuigreet prompt and the
-  # login simply fails, with no hint as to why.
-  #
-  # console.keyMap covers the VTs and tuigreet. useXkbConfig is deliberately
-  # NOT used to derive it -- that would make the console depend on the X11
-  # settings, and this machine has no X server.
-  console.keyMap = "sv-latin1";
-  # niri's own xkb block (niri/config.kdl) is empty, which per its docs
-  # means it reads the layout from org.freedesktop.locale1 -- which is what
-  # services.xserver.xkb.layout populates, X server or not. So this is what
-  # gives the Wayland session a Swedish layout too.
-  services.xserver.xkb.layout = "se";
+  # Physical board is ISO (pc105, the extra key next to left shift).
+  # Layout is US International with AltGr dead keys — åäö on AltGr+w/q/p,
+  # no dead keys on apostrophe/quote (those make programming miserable).
+  # niri/config.kdl sets the same xkb block so the session does not depend
+  # on locale1; this is what localed/tuigreet and a future empty niri xkb
+  # block would read.
+  services.xserver.xkb = {
+    layout = "us";
+    variant = "altgr-intl";
+    model = "pc105";
+  };
+  # Console/tuigreet cannot do altgr-intl. `us` matches the alphanumeric
+  # keys, which is what the erik password was set to (letters and digits
+  # only, see PARTITION-RUNBOOK.md). Special characters in a password
+  # would still be a mismatch against the old sv-latin1 mapping.
+  console.keyMap = "us";
 
   # tuigreet draws its frame with Unicode box-drawing glyphs, which the
   # kernel's built-in 8x16 console font does not have.
