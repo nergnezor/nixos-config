@@ -56,8 +56,15 @@ Same technique that worked on the USB smoke test — Nix and `nixos-install`
 both run fine on a non-NixOS host, so the install onto `p2`/`p3` happens
 right here.
 
+`p3` is btrfs (switched from the ext4 in the GParted notes above) —
+mount with `compress=zstd` so new writes match `hosts/hp-envy.nix`.
+
+The repeatable sequence (build, copy, `nixos-install`) is
+`install-to-nixos-partition.sh`. First-time extras below
+(`nixos-install-tools`, `nixos-generate-config`) are only needed once.
+
 ```
-sudo mount /dev/nvme0n1p3 /mnt
+sudo mount -o compress=zstd /dev/nvme0n1p3 /mnt
 sudo mkdir -p /mnt/boot
 sudo mount /dev/nvme0n1p2 /mnt/boot
 ```
@@ -114,3 +121,103 @@ sudo parted /dev/nvme0n1 rm 2 rm 3
 sudo parted /dev/nvme0n1 resizepart 5 100%
 sudo resize2fs /dev/nvme0n1p5
 ```
+
+## `/home` on its own partition, keeping Ubuntu bootable
+
+### Where things stand
+
+p5 (1.6TiB) is today both Ubuntu's root *and* the home directory: ~760GiB of
+home plus ~150GiB of Ubuntu system tree (~41GiB of that is just
+`swapfile.ue` and `swap.img`). 929GiB used, ~579GiB free. There is no
+unallocated space anywhere on the disk.
+
+As a first step `hosts/hp-envy.nix` now mounts **p5 at `/home` directly**,
+replacing the old `/mnt/ubuntu` mount plus `/home/erik` bind mount: p5's own
+`/home/erik` lines up with NixOS's `/home/erik` with no indirection. Pure
+config change, zero bytes moved, and it stays correct through every step
+below.
+
+### The plan: move Ubuntu *out*, don't move home
+
+Home is 760GiB and there is nowhere on this disk to put a second copy of it,
+so home never moves. Ubuntu's system tree is ~110GiB once the swapfiles are
+gone — small enough to relocate. Move Ubuntu to its own partition and p5 is
+left as a dedicated home partition, with Ubuntu still bootable.
+
+**Step 1 — drop Ubuntu's swapfiles** (~41GiB back, and no point copying
+them). From NixOS:
+
+```
+sudo rm /home/swapfile.ue /home/swap.img
+```
+
+They sit at p5's root, which is `/home` under the new mount. Ubuntu will
+fail to swapon at next boot until its `/etc/fstab` line is removed too —
+harmless, but tidy it in step 3.
+
+**Step 2 — shrink p5 and create Ubuntu's new partition.** ext4 cannot shrink
+while mounted, and `/home` is mounted the moment you log in, so this needs a
+**live USB** (GParted, as in the shrink at the top of this file). Shrink p5
+to ~1.05TiB and create a new ~160GiB partition in the freed space. Note the
+number `parted` assigns — it fills the lowest free slot, which bit us last
+time; check `lsblk`, don't assume it's p6.
+
+```
+sudo mkfs.ext4 -L ubuntu /dev/nvme0n1pN
+```
+
+**Step 3 — copy Ubuntu across.** Still from the live USB, with both
+mounted (`/mnt/old` = p5, `/mnt/new` = the new partition):
+
+```
+sudo rsync -aHAXv --numeric-ids \
+  --exclude=/home --exclude=/lost+found \
+  --exclude={/dev/*,/proc/*,/sys/*,/tmp/*,/run/*,/mnt/*,/media/*} \
+  /mnt/old/ /mnt/new/
+```
+
+`-H -A -X --numeric-ids` matter: hardlinks, ACLs, xattrs and raw uid/gid.
+Without them a copied root filesystem boots subtly broken.
+
+Then point Ubuntu at its new home — inside `/mnt/new`:
+
+- `/etc/fstab`: change the `/` entry to the new partition's UUID
+  (`blkid`), add a `/home` entry for p5's UUID
+  (`ee53b2ae-86cb-42a9-8ef6-c3e7bbd1908e`), and delete the swapfile lines.
+- Reinstall GRUB against the new root (chroot with `/dev`, `/proc`, `/sys`
+  and Ubuntu's ESP p1 bind-mounted in, then `update-grub` and
+  `grub-install /dev/nvme0n1`).
+
+**Step 4 — verify, then reclaim.** Boot Ubuntu via F9 and confirm it comes
+up on the new partition (`findmnt /`) with home intact. Only then delete
+Ubuntu's leftovers from p5, from a **NixOS** boot:
+
+```
+sudo mount /dev/nvme0n1p5 /mnt
+sudo find /mnt -mindepth 1 -maxdepth 1 ! -name home ! -name lost+found -exec rm -rf {} +
+sudo umount /mnt
+```
+
+Mount p5 separately at `/mnt` for this rather than deleting through the live
+`/home` mount: a path typo under `/home` hits the running system's own home
+directory, and the `! -name home` guard is all that stands between this
+command and 760GiB.
+
+Finally grow p5 back over the freed space (`parted resizepart` then
+`resize2fs` — ext4 grows online, no live USB needed) and relabel it:
+`sudo e2label /dev/nvme0n1p5 home`.
+
+### Later, when Ubuntu really goes
+
+Delete its partition and its 100MiB ESP p1, and drop the NVRAM entry:
+
+```
+sudo efibootmgr                 # find the "ubuntu" entry number
+sudo efibootmgr -b <N> -B
+```
+
+NixOS needs no change at that point — `/home` is already mounted from p5
+independently of Ubuntu. Note that growing `/` (p3) is not possible by
+reclaiming p1: it is 100MiB and at the wrong end of the disk, and p3 sits
+between p2 and p5, so growing it means shrinking p5 from the front, which
+ext4 cannot do. If `/` ever needs more room, put `/nix` on p5 instead.
