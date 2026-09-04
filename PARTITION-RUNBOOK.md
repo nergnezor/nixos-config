@@ -495,6 +495,38 @@ Order:
 
    The excludes keep p3's 236GiB from filling — `Downloads` alone was 28G,
    and steamapps re-downloads.
+
+   **`tune2fs` refuses this** — "This operation requires a freshly checked
+   filesystem. Please run e2fsck -f" — which is circular, since `e2fsck`
+   aborts on the very checksums the flag governs. That check is a safeguard
+   for a filesystem you intend to keep using, and p5 is being reformatted,
+   so go around it with `debugfs` writing the superblock feature bit
+   directly (`-c` for the same unreadable-bitmap reason as before, `-w` to
+   write):
+
+   ```
+   sudo debugfs -w -c -R "feature -metadata_csum" /dev/nvme0n1p5
+   sudo debugfs -c    -R "features" /dev/nvme0n1p5     # verify it is gone
+   ```
+
+   **Result: 127GB and 30541 files, against 7 files on the first attempt.**
+   `projects`, `Documents`, `Midswimmer`, `godot4`, `jobb` and `jdk17` all
+   came across — no top-level errors left for any of them. What still fails
+   is `Structure needs cleaning` on individual entries, which is the
+   destroyed high-inode range; there is nothing there for `e2fsck` to
+   recover either, so extraction is effectively complete at this point.
+
+   Worth doing before moving on, now that `projects` is readable: check each
+   repo for work that never reached GitHub, which is the only thing this
+   whole episode could actually have cost.
+
+   ```
+   for g in /mnt/nixos/rescue3/projects/*/.git; do
+     d=$(dirname "$g"); echo "=== $(basename "$d")"
+     git -C "$d" log --oneline -1
+     git -C "$d" status --porcelain -uno | head -5
+   done
+   ```
 3. `e2fsck -fy -C 0 /dev/nvme0n1p5`, log on p3, run to completion.
 4. Mount read-only and rsync the remainder, `lost+found` included.
 5. Only then draw the final layout: create the partition in the freed space,
