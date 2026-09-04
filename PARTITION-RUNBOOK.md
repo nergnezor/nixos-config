@@ -355,7 +355,33 @@ Revised order from here:
    and 249GiB against a NixOS install that uses a fraction of it. An
    external disk is better still, since it touches the internal drive not at
    all.
-2. Rescue read-only *before* touching it again:
+2. Rescue read-only *before* touching it again — but expect the kernel to
+   block most of it. The first attempt got 7 files out of 11: the kernel
+   refuses `readdir` on any directory whose checksum fails, so `~/projects`
+   and `~/Documents/Unreal Projects` returned `Bad message` and `~/.claude`
+   could not even be `stat`ed. Only `.ssh` and `.gitconfig` came across.
+   (Also: `sudo rsync ... | tee` writes the log as the *unprivileged* user
+   and fails on a root-owned destination — pipe to `sudo tee`.)
+
+   So try `debugfs` next, which reads the on-disk structures directly and
+   walks past the checksum failures the kernel enforces. It is the last
+   read-only chance to get files out *with their names*, and it opens the
+   device read-only without `-w`, so it cannot make anything worse:
+
+   ```
+   sudo debugfs -R "ls -l /home/erik" /dev/nvme0n1p5
+   sudo debugfs -R "rdump /home/erik/projects /mnt/nixos/rescue" /dev/nvme0n1p5 \
+     2>&1 | sudo tee /mnt/nixos/debugfs-projects.log
+   ```
+
+   What is broken is the directory — the list of names. The inodes and data
+   blocks behind them are a separate matter, and `e2fsck` pass 4 will find
+   them unattached and drop them in `lost+found` under numeric names. For
+   git repositories that is survivable even so: objects are
+   content-addressed, so `git fsck` / `git unpack-objects` against
+   `lost+found` can rebuild history without any directory names at all.
+
+   The original rsync, for what it can still reach:
    `mount -o ro,noload /dev/nvme0n1p5 /mnt/p5check` (`noload` skips journal
    replay, which is what you want on a half-repaired filesystem), then rsync
    `~/projects`, `~/.ssh`, `~/.gitconfig`, `~/.claude`, documents to
