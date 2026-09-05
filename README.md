@@ -55,6 +55,33 @@ resize disaster was recovered from. Only remaining item: installing the
   `release-25.05` for the same reason (its `master` branch assumes
   unstable-shaped nixpkgs internals).
 
+## Noctalia settings
+
+`noctalia/settings.toml` is a snapshot of the live
+`~/.local/state/noctalia/settings.toml` (bar layout, desktop widgets, idle
+behaviour, theme/templates, plugins, wallpaper). Sync it with
+`./noctalia/sync.sh {pull|push|diff}`.
+
+It is a **copy, not a symlink**, on purpose. `~/.config/niri` can be an
+`mkOutOfStoreSymlink` into this repo (home.nix) because niri only reads its
+config; noctalia *writes* settings.toml from its own GUI and does so by
+replacing the file, which turns a symlink back into a plain file on the
+first tweak. So: change things in the GUI as usual, then `sync.sh pull` and
+commit.
+
+The tracked copy drops `[calendar.account.<name>]` -- this repo is public and
+that section is keyed on the Google account name. Nothing is lost: the OAuth
+credentials were never in settings.toml, so the calendar has to be re-linked
+in the GUI on a restored machine either way. `sync.sh` scrubs it on `pull`
+and ignores it on `diff`, so a linked account locally isn't a standing diff.
+
+Not tracked: `state.toml` (migration flags), `plugins/`,
+`community-palettes/`, `community-templates/`, notification/clipboard
+history — machine state and fetched content, not configuration. The
+generated theme files (`~/.config/gtk-3.0/noctalia.css`, btop, ghostty,
+lazygit, qt5ct/qt6ct, …) aren't tracked either; noctalia regenerates them
+from `[theme.templates]`.
+
 ## Deliberately out of scope
 
 - **The Steam game library and every per-game `.desktop` launcher** (Half-Life
