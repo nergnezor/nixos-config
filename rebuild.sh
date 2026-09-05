@@ -41,6 +41,7 @@ fi
 
 echo "==> syncing live config into $repo"
 ./noctalia/sync.sh pull
+./home/sync.sh pull
 # ~/.config/niri is an mkOutOfStoreSymlink into this repo (home.nix), so the
 # niri config needs no sync step -- the live files ARE the tracked ones.
 

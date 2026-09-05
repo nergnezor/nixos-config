@@ -1,108 +1,129 @@
-# niri on NixOS — parallel eval install
+# niri on NixOS — `nixos-config`
 
-Dual-boot NixOS on `erik-HP-ENVY-TE01-1xxx`, own partitions, alongside the
-working Ubuntu install. Goal: evaluate niri/NixOS with the real config and
-the real app set, not a toy setup. Same config also targets the Nitro
-runner (`hosts/nitro.nix`) for a hardware comparison (Intel Arc vs nvidia).
+The NixOS configuration for `nixos-hp` (an HP ENVY TE01, nvidia RTX 3060 Ti):
+a niri/Wayland session with the noctalia shell, greetd/tuigreet, and the real
+app set. The same config also targets the Nitro runner (`hosts/nitro.nix`,
+Intel Arc A750) for a hardware comparison.
 
-## Status (2026-09-04)
+## Status (2026-09-05)
 
-Recovery finished. The machine boots the installed system from p2/p3/p5
-directly — see `PARTITION-RUNBOOK.md` for the final layout and how the
-resize disaster was recovered from. Only remaining item: installing the
-`net.sonuscape.mouseless` flatpak (details in that file).
+The HP is **NixOS-only** — the Ubuntu install it used to dual-boot with is
+gone, along with the shared-home arrangement that came with it. `/home` is
+now a partition of its own (`nvme0n1p5`, btrfs, label `home`, `subvol=@home`);
+see `PARTITION-RUNBOOK.md` for the layout and for how the interrupted resize
+was recovered from. The `net.sonuscape.mouseless` flatpak is installed and its
+user unit is declared in `configuration.nix`.
 
-## Status (2026-09-03)
+## Layout
 
-- **USB smoke test abandoned — the config is proven, the stick isn't.** The
-  full 12GB closure built and copied successfully (steam, nvidia, noctalia,
-  everything), but `nix-store --verify --check-contents` then found
-  *thousands* of paths silently missing from the USB stick's copy despite
-  the DB believing them present, and the verify run itself crashed with a
-  SQLite foreign-key error partway through repairing it. Consistent with the
-  repeated "device offline"/disconnect events that stick had all session —
-  it's silently dropping written data, not a config problem. Moving straight
-  to the internal-disk install instead: the local build (against reliable
-  NVMe) already succeeded cleanly, which was the actual point of the smoke
-  test.
-- `actions-runner.service` confirmed still stopped (from the start of this
-  session) — no restart needed before the internal-disk work.
-- `PARTITION-RUNBOOK.md` updated: only the shrink/create-partitions steps
-  (0-7) need live boot media now. Once `p6`/`p7` exist, install onto them
-  happens from a normal running Ubuntu session — same
-  build-locally-then-copy technique that worked on the USB target, using
-  the internal NVMe (reliable) as the copy destination instead. Also fixed
-  there: pin `nixos-install-tools` to the explicit
-  `github:NixOS/nixpkgs/nixos-25.05#` URL — bare `nixpkgs#nixos-install-tools`
-  resolves through the global flake registry to whatever unstable currently
-  points at (hit a `26.11pre` dev snapshot with a broken chroot/bootloader
-  step on the USB attempt).
-- `niri/` is a verbatim copy of `~/.config/niri/` (config.kdl, autostart.kdl,
-  noctalia/*.kdl, scripts/) from 2026-09-02 — but no longer wired into
-  `home.nix` directly. `/home/erik` is bind-mounted from the real Ubuntu
-  partition instead (see `hosts/hp-envy.nix` / `hosts/nitro.nix`), so the
-  live files are used as-is; `niri/` here is just a point-in-time reference.
-- `niri` itself comes straight from nixpkgs (`pkgs.niri`, substituted
-  binary), not niri-flake — niri-flake forced a from-source Rust build that
-  hit a crates.io 403 mid-install; nixpkgs 25.05 has the same version
-  (25.08) pre-built. Lost niri-flake's `niri-session` wrapper; greetd execs
-  `niri` directly instead.
-- `noctalia-shell` package is `pkgs.noctalia` (its own overlay), not
-  `noctalia-shell` — confirmed via `nix flake show`.
-- `nixpkgs` is pinned to `nixos-25.05` (stable), not unstable — hit a
-  transient unstable-branch breakage (`libdisplay-info_0_2` removed)
-  during the first real install attempt. `home-manager` matched to
-  `release-25.05` for the same reason (its `master` branch assumes
-  unstable-shaped nixpkgs internals).
+| File | What it carries |
+|---|---|
+| `flake.nix`, `flake.lock` | The pins: an exact nixpkgs revision (**unstable**, not a release branch — the reasoning is in `flake.nix` and it matters), home-manager `master`, noctalia-shell on its own nixpkgs, disko |
+| `configuration.nix` | The system: niri, greetd/tuigreet, noctalia, pipewire, steam, xrdp+Plasma over Tailscale, sshd, flatpak, xwayland-satellite, mouseless's unit and udev/tmpfiles rules, `erik` as 1000:1000, Swedish layout |
+| `hosts/hp-envy.nix`, `hosts/nitro.nix` | Everything machine-specific: hostname, GPU driver, how `/home` is provided |
+| `hardware-configuration.nix` | **The HP's**, by UUID. One filename for every host — regenerate it on any new machine (see below) |
+| `home.nix` | The user's packages, and the `mkOutOfStoreSymlink` that makes `~/.config/niri` this repo's `niri/` |
+| `niri/**` | The live niri config. Not a snapshot — `~/.config/niri` *is* this directory |
+| `noctalia/settings.toml`, `noctalia/sync.sh` | Noctalia's settings, as a synced copy |
+| `home/**`, `home/sync.sh` | The hand-written `$HOME` dotfiles, as synced copies |
+| `rebuild.sh` | Sync live config into the repo, then `nixos-rebuild`; optionally commit/push once it built |
+| `disko-usb.nix`, `install-to-nixos-partition.sh`, `USB-TEST-RUNBOOK.md`, `PARTITION-RUNBOOK.md` | Installation |
 
-## Noctalia settings
+Day to day, `nrb` / `nrbc` / `nrbp` (aliases in `home/bashrc`) are `rebuild.sh`.
 
-`noctalia/settings.toml` is a snapshot of the live
-`~/.local/state/noctalia/settings.toml` (bar layout, desktop widgets, idle
-behaviour, theme/templates, plugins, wallpaper). Sync it with
-`./noctalia/sync.sh {pull|push|diff}`.
+**Untracked `.nix` files are invisible to the flake build** — nix only sees
+what git tracks, so a new module you forgot to `git add` simply does not
+exist as far as the build is concerned. `rebuild.sh` warns about this.
 
-It is a **copy, not a symlink**, on purpose. `~/.config/niri` can be an
-`mkOutOfStoreSymlink` into this repo (home.nix) because niri only reads its
-config; noctalia *writes* settings.toml from its own GUI and does so by
-replacing the file, which turns a symlink back into a plain file on the
-first tweak. So: change things in the GUI as usual, then `sync.sh pull` and
-commit.
+## The three sync mechanisms, and why they differ
 
-The tracked copy drops `[calendar.account.<name>]` -- this repo is public and
-that section is keyed on the Google account name. Nothing is lost: the OAuth
-credentials were never in settings.toml, so the calendar has to be re-linked
-in the GUI on a restored machine either way. `sync.sh` scrubs it on `pull`
-and ignores it on `diff`, so a linked account locally isn't a standing diff.
+- **niri — a symlink.** `~/.config/niri` points into this working tree, so
+  edit, save, and niri live-reloads; `git diff` shows what changed. This works
+  because niri only ever *reads* its config. (It exists because the config was
+  nearly lost: filesystem damage left `config.kdl` as 10240 bytes of unrelated
+  data, and niri will not start without a readable config — an unreadable
+  login prompt became an unloggable-in machine.)
+- **noctalia — a copy** (`./noctalia/sync.sh {pull|push|diff}`). Noctalia
+  *writes* `settings.toml` from its own GUI, and by replacing the file, which
+  turns a symlink back into a plain file on the first tweak. So: change things
+  in the GUI, then `sync.sh pull` and commit.
+- **`$HOME` dotfiles — copies** (`./home/sync.sh {pull|push|diff}`):
+  `.bashrc`, `.profile`, `.gitconfig`, `~/.config/ghostty/config`, and VS
+  Code's `settings.json` / `keybindings.json` / extension list. Not
+  home-manager: each of these already exists as a real file in `$HOME`, and
+  home-manager aborts the *entire* activation rather than overwrite one —
+  the failure that once left the profile with no packages at all.
 
-Not tracked: `state.toml` (migration flags), `plugins/`,
-`community-palettes/`, `community-templates/`, notification/clipboard
-history — machine state and fetched content, not configuration. The
-generated theme files (`~/.config/gtk-3.0/noctalia.css`, btop, ghostty,
-lazygit, qt5ct/qt6ct, …) aren't tracked either; noctalia regenerates them
-from `[theme.templates]`.
+`rebuild.sh` runs both `pull`s before every rebuild, so the repo does not
+drift from the machine.
 
-## Deliberately out of scope
+## Not tracked
 
-- **The Steam game library and every per-game `.desktop` launcher** (Half-Life
-  Alyx, Portal 2, Subnautica, the VR titles, etc.) — those are Steam-managed
-  content, not config. Point Steam at the existing library after logging in
-  if you want them under NixOS too.
-- **WiVRn, Sunshine, open-tv, Heroic Games Launcher** (all flatpaks) — real
-  parts of the desktop, but streaming/VR/launcher infra is a bigger lift than
-  "evaluate niri" calls for. Add later if the eval sticks.
+Some of this is deliberate, some is simply not expressible here. All of it is
+what a new machine still needs by hand.
 
-## Still worth double-checking
+- **Secrets and accounts.** `sudo tailscale up`, `gh auth login`, Steam, the
+  `erik`/`root` passwords (set during install), and noctalia's Google calendar
+  — `noctalia/sync.sh` scrubs `[calendar.account.<name>]` on `pull` because
+  this repo is public. Nothing is lost: the OAuth credentials were never in
+  `settings.toml`, so the calendar has to be re-linked in the GUI anyway.
+- **SSH.** Keys, `~/.ssh/config` (it names a real host and port), and
+  `authorized_keys` — which is *empty*, while sshd has `PasswordAuthentication
+  = false`. There is no SSH way into a fresh machine until `ssh-copy-id` has
+  run from a trusted one.
+- **The flatpak remote.** `flatpak remote-add --if-not-exists sonuscape
+  https://dl.sonuscape.net/flatpak/repo`, then `flatpak install sonuscape
+  net.sonuscape.mouseless`. Both `--user` scope. nixpkgs has no option for
+  declaring flatpak remotes at all — that needs the nix-flatpak flake, which
+  is not an input here.
+- **Noctalia plugins and generated themes.** `settings.toml` enables nine
+  plugins (bongocat, game-launcher, claude-companion, desktop-launcher,
+  git_companion, nix-monitor, nvtop, tailscale, tmux-provider) and the bar
+  refers to their widgets, but `plugins/`, `plugin-cache/`,
+  `community-palettes/`, `community-templates/` and `state.toml` are machine
+  state, not config. The generated theme files (`~/.config/gtk-3.0/noctalia.css`,
+  btop, ghostty, lazygit, qt5ct/qt6ct, the VS Code theme) are regenerated from
+  `[theme.templates]`.
+- **The wallpaper.** `settings.toml` points every output at
+  `~/Pictures/hyperlink-dimension-al-7680x4320.jpg` (5.5 MB), which lives in
+  the home directory, not here.
+- **The Steam library and its per-game `.desktop` launchers** — Steam-managed
+  content. Point Steam at an existing library after logging in.
+- **WiVRn, Sunshine, open-tv, Heroic** (flatpaks) — real parts of the desktop,
+  never carried over.
 
-- The flatpak remote `net.sonuscape.mouseless` (mouseless) was installed
-  from — check `flatpak remote-list` / `flatpak info net.sonuscape.mouseless`
-  on the Ubuntu side before trying to reinstall it under NixOS.
-- `claude-code` package (home.nix) — confirmed it exists on nixos-25.05, not
-  yet confirmed it actually *runs* correctly once installed.
+## Bringing up a new machine
 
-## Next steps
+1. Partition and install per `PARTITION-RUNBOOK.md`.
+2. `nixos-generate-config` on the target, and put the result in
+   `hardware-configuration.nix` — the tracked one is the HP's, by UUID.
+3. Add a `hosts/<machine>.nix` and a `nixosConfigurations.<name>` output in
+   `flake.nix`, plus the host→attr mapping in `rebuild.sh` (it only knows
+   `nixos-hp` → `nixos-eval`).
+4. `git add` all of it before building.
+5. `mv ~/.config/niri ~/.config/niri.pre-symlink` before the first rebuild —
+   home-manager will not overwrite a real directory, and aborts the whole
+   activation if it finds one.
+6. `nixos-rebuild switch --flake .#<name>`.
+7. Then, by hand: `./noctalia/sync.sh push`, `./home/sync.sh push`, the
+   flatpak remote and mouseless, the wallpaper, `sudo tailscale up`,
+   `gh auth login`, SSH keys.
 
-`PARTITION-RUNBOOK.md`, steps 0-7: boot a NixOS live USB/SD (the SD card is
-still flashed from the smoke test), shrink `nvme0n1p5`, create `p6`/`p7`.
-Steps 8-9 (the actual install) happen back in Ubuntu, no live boot needed
-for those.
+## History worth keeping
+
+- `niri` comes from nixpkgs (`programs.niri.enable`), not niri-flake:
+  niri-flake forced a from-source Rust build that hit a crates.io 403
+  mid-install. The nixpkgs module also installs niri's *user units*, without
+  which `graphical-session.target` never activates and every user service
+  hanging off it stays dead.
+- The nixpkgs pin is a specific unstable revision on purpose, and
+  home-manager tracks `master` to match it. A floating unstable broke an
+  install outright (`libdisplay-info_0_2` removed mid-flight); a release
+  branch shipped a niri too old to parse this config. `flake.nix` has the
+  long version.
+- `noctalia-shell` deliberately does **not** follow this flake's nixpkgs, and
+  its overlay is not used — both were tried and reverted. It keeps the
+  nixpkgs it was built against.
+- An earlier USB smoke-test install was abandoned: the stick silently dropped
+  written data (`nix-store --verify` found thousands of paths missing). The
+  config was never the problem — the local build against the NVMe succeeded.

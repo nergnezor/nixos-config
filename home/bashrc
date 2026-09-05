@@ -1,0 +1,13 @@
+# Rebuild NixOS from ~/nixos-config, syncing the live config (noctalia's
+# settings.toml) into the repo first. `nrbc` also commits, once it built.
+#   nrb            switch
+#   nrb test       no bootloader entry
+#   nrbc / nrb --push
+#
+# Deliberately a plain alias and NOT home-manager's programs.bash: that module
+# writes ~/.bashrc, which already exists in this shared Ubuntu home, and
+# home-manager aborts the ENTIRE activation on such a collision -- the failure
+# that once left the profile with no packages at all (see home.nix).
+alias nrb='~/nixos-config/rebuild.sh'
+alias nrbc='~/nixos-config/rebuild.sh --commit'
+alias nrbp='~/nixos-config/rebuild.sh --push'

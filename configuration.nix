@@ -253,9 +253,16 @@ in
   services.pulseaudio.enable = false; # was hardware.pulseaudio, renamed on this nixpkgs revision
 
   # mouseless (net.sonuscape.mouseless) used to come from the Ubuntu side's
-  # flatpak install, which is gone with Ubuntu. Install it here instead:
-  #   flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  #   flatpak install flathub net.sonuscape.mouseless
+  # flatpak install, which is gone with Ubuntu. It is NOT on flathub -- it
+  # ships from Sonuscape's own repo, so that remote has to exist first or
+  # the install simply does not resolve:
+  #   flatpak remote-add --if-not-exists sonuscape https://dl.sonuscape.net/flatpak/repo
+  #   flatpak install sonuscape net.sonuscape.mouseless
+  #
+  # Both are `--user` scope on this machine (confirmed with
+  # `flatpak remotes -d`), and they stay as commands rather than config
+  # because nixpkgs has no option for declaring flatpak remotes at all --
+  # that needs the nix-flatpak flake, which is not an input here.
   services.flatpak.enable = true;
   xdg.portal = {
     enable = true; # required assertion for flatpak; niri itself also needs a portal for screen-share/file-pickers
@@ -290,6 +297,50 @@ in
 
   # nix-ld gör att NixOS kan köra vanliga dynamiskt länkade Linux-binärer
   programs.nix-ld.enable = true;
+
+  # mouseless's own user unit. Ubuntu's copy of this sat in
+  # ~/.config/systemd/user, was hand-restored after the rescue, and was
+  # tracked nowhere -- so a fresh machine got the udev rules and tmpfiles
+  # entries below, and the start script from this repo, but nothing that
+  # ever started it.
+  #
+  # Declared here and NOT in home.nix on purpose: home-manager writes user
+  # units into ~/.config/systemd/user, which is both the directory that
+  # SHADOWS what this module installs (see the search-order note at the top
+  # of this file) and the exact path Ubuntu's file already occupied -- the
+  # collision that once aborted the whole activation and left the profile
+  # with no packages. The NixOS module writes /etc/systemd/user instead.
+  #
+  # **Remove the handwritten ~/.config/systemd/user/mouseless.service and
+  # its graphical-session.target.wants/ symlink** when adopting this, or the
+  # old file keeps shadowing this one and nothing appears to change.
+  #
+  # ExecStart keeps Ubuntu's %h form rather than a store path: ~/.config/niri
+  # is an mkOutOfStoreSymlink into this repo (home.nix), so %h resolves to
+  # the working-tree script and editing it does not need a rebuild. ExecStop
+  # does the opposite and uses absolute store paths -- a user unit gets a
+  # near-empty PATH, and the original's bare `flatpak`/`pkill` (and its
+  # /bin/bash, which is only a compat symlink here) are not something to
+  # rely on at shutdown.
+  systemd.user.services.mouseless = {
+    description = "Mouseless keyboard mouse control";
+    partOf = [ "graphical-session.target" ];
+    wants = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" "niri.service" ];
+    wantedBy = [ "graphical-session.target" ];
+    serviceConfig = {
+      Type = "exec";
+      ExecStart = "%h/.config/niri/scripts/start-mouseless.sh";
+      # Flatpak reparents into its own scope, so stopping this unit
+      # otherwise leaves the old python process -- and its virtual
+      # mouse/joystick device -- running.
+      ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.flatpak}/bin/flatpak kill net.sonuscape.mouseless; ${pkgs.procps}/bin/pkill -f \"/app/share/mouseless/src/main.pyc\" || true'";
+      TimeoutStopSec = 15;
+      Restart = "on-failure";
+      RestartSec = 10;
+      Slice = "app.slice";
+    };
+  };
 
   # Mouseless virtual-mouse/device quirks, ported verbatim from this Ubuntu
   # install's /etc/udev/rules.d/61-mouseless-no-takeover.rules and
