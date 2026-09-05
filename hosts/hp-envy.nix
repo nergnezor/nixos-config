@@ -7,6 +7,19 @@
   services.xserver.videoDrivers = [ "nvidia" ];
   hardware.nvidia = {
     modesetting.enable = true;
+    # Without this, waking from suspend gives you a live machine with a dead
+    # display: audio plays, the compositor is running and answering, both
+    # monitors are powered and report their modes — and nothing is drawn.
+    # Observed 2026-09-05 on the first suspend/resume of this install.
+    #
+    # It is what installs nvidia-{suspend,resume,hibernate}.service and sets
+    # NVreg_PreserveVideoMemoryAllocations=1, i.e. what saves the driver's
+    # video memory to disk on the way down and restores it on the way up.
+    # Without those services the driver comes back without its display
+    # allocations and there is nothing left to scan out. The tell is that
+    # `systemctl is-enabled nvidia-resume.service` says not-found rather than
+    # disabled: the unit is not shipped at all until this option is on.
+    powerManagement.enable = true;
     open = false; # Ampere also supports the open kernel module (R515+); "stable" is the safer default
     package = config.boot.kernelPackages.nvidiaPackages.stable;
     nvidiaSettings = true;

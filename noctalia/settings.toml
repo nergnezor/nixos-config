@@ -30,15 +30,15 @@ widget_order = [
 ]
 
     [desktop_widgets.grid]
-    cell_size = 8
+    cell_size = 32
     major_interval = 4
-    visible = false
+    visible = true
 
     [desktop_widgets.widget.desktop-widget-0000000000000001]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 166.59765625
-    cy = 1672.29296875
+    box_height = 125.17578125
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1507.205078125
     output = "DP-1"
     placement_height = 2048.0
     placement_width = 1152.0
@@ -52,10 +52,10 @@ widget_order = [
         stat2 = "gpu_usage"
 
     [desktop_widgets.widget.desktop-widget-0000000000000002]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 166.59765625
-    cy = 1774.29296875
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1649.0709228515625
     output = "DP-1"
     placement_height = 2048.0
     placement_width = 1152.0
@@ -71,10 +71,10 @@ widget_order = [
         stat2 = "gpu_temp"
 
     [desktop_widgets.widget.desktop-widget-0000000000000003]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 166.59765625
-    cy = 1880.29296875
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1796.500244140625
     output = "DP-1"
     placement_height = 2048.0
     placement_width = 1152.0
@@ -88,10 +88,10 @@ widget_order = [
         stat2 = "gpu_vram_used"
 
     [desktop_widgets.widget.desktop-widget-0000000000000004]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 166.59765625
-    cy = 1978.29296875
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1950.587890625
     output = "DP-1"
     placement_height = 2048.0
     placement_width = 1152.0
@@ -106,10 +106,10 @@ widget_order = [
         stat2 = "net_rx"
 
     [desktop_widgets.widget."sysmon-cpu@DP-2"]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 2900.0
-    cy = 77.0
+    box_height = 125.17578125
+    box_width = 141.26171875
+    cx = 2966.017578125
+    cy = 115.205078125
     output = "DP-2"
     placement_height = 1728.0
     placement_width = 3072.0
@@ -117,16 +117,17 @@ widget_order = [
     type = "sysmon"
 
         [desktop_widgets.widget."sysmon-cpu@DP-2".settings]
+        background_opacity = 0.80000000000000004
         background_padding = 0
         display = "graph"
         stat = "cpu_usage"
         stat2 = "gpu_usage"
 
     [desktop_widgets.widget."sysmon-gpu@DP-2"]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 2900.0
-    cy = 285.0
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 2966.017578125
+    cy = 404.50021362304688
     output = "DP-2"
     placement_height = 1728.0
     placement_width = 3072.0
@@ -140,10 +141,10 @@ widget_order = [
         stat2 = "gpu_vram_used"
 
     [desktop_widgets.widget."sysmon-ram@DP-2"]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 2900.0
-    cy = 179.0
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 2966.017578125
+    cy = 257.07095336914062
     output = "DP-2"
     placement_height = 1728.0
     placement_width = 3072.0
@@ -159,10 +160,10 @@ widget_order = [
         stat2 = "gpu_temp"
 
     [desktop_widgets.widget."sysmon-vram@DP-2"]
-    box_height = 90.0
-    box_width = 280.0
-    cx = 2900.0
-    cy = 383.0
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 2966.017578125
+    cy = 558.587890625
     output = "DP-2"
     placement_height = 1728.0
     placement_width = 3072.0
