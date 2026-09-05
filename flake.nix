@@ -38,13 +38,9 @@
     # Qt6 base would save some store space, but a config that fails to
     # evaluate saves none — it keeps its own known-working nixpkgs instead.
     noctalia-shell.url = "github:noctalia-dev/noctalia-shell";
-    disko = {
-      url = "github:nix-community/disko";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, home-manager, noctalia-shell, disko, ... }:
+  outputs = { self, nixpkgs, home-manager, noctalia-shell, ... }:
     let
       homeModule = {
         home-manager.useGlobalPkgs = true;
@@ -52,13 +48,11 @@
         home-manager.users.erik = import ./home.nix;
       };
       # hostModule carries everything machine-specific: hostName, GPU driver,
-      # and how that machine gets /home — hp-envy has a partition of its own,
-      # nitro still shares Ubuntu's (see hosts/hp-envy.nix, hosts/nitro.nix).
-      # extraModules is for disko, on
-      # the USB-test targets. hardware-configuration.nix (shared filename,
+      # and how that machine gets /home — hp-envy has its own partition,
+      # see hosts/hp-envy.nix. hardware-configuration.nix (shared filename,
       # not host-specific in this repo) gets regenerated/overwritten for
-      # whichever target you're installing at the time.
-      mkHost = { hostModule, extraModules ? [ ] }: nixpkgs.lib.nixosSystem {
+      # whichever target you're installing.
+      mkHost = { hostModule }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
           ./configuration.nix
@@ -68,39 +62,14 @@
           # Binds programs.noctalia.package to THIS flake's package output
           # (its own nixpkgs), not an overlay on ours — see configuration.nix.
           noctalia-shell.nixosModules.default
-        ] ++ extraModules;
+        ];
       };
     in
     {
-      # The real install on the HP: nvme0n1p2 (ESP) + p3 (root) + p5 (/home),
-      # see PARTITION-RUNBOOK.md. No longer dual-boot — Ubuntu is gone from
-      # this machine. The "eval" in the name is a leftover from when it was
-      # a trial; install-to-nixos-partition.sh and the runbook both use it,
-      # so it stays until there is a reason to rename it.
+      # The main install on the HP: nvme0n1p2 (ESP) + p3 (root) + p5 (/home),
+      # see PARTITION-RUNBOOK.md.
       nixosConfigurations.nixos-eval = mkHost {
         hostModule = ./hosts/hp-envy.nix;
-      };
-
-      # Smoke-test install target: the 14.6GB external "USB DISK" stick
-      # (formerly running Ventoy — see disko-usb.nix), booted from a
-      # SEPARATE small USB/SD card flashed with the NixOS installer ISO.
-      # Same config as nixos-eval (full app set — this target has the room)
-      # minus the internal disk's PARTITION-RUNBOOK.md; disko partitions it
-      # instead.
-      nixosConfigurations.nixos-eval-usb = mkHost {
-        hostModule = ./hosts/hp-envy.nix;
-        extraModules = [ disko.nixosModules.disko ./disko-usb.nix ];
-      };
-
-      # Same USB-test idea, but for the Nitro runner (Intel Arc A750, its
-      # own Ubuntu partition UUID — see hosts/nitro.nix) — plug the same
-      # stick in there, re-run disko + nixos-install targeting this output
-      # instead. Confirm the stick is still /dev/sda on that machine before
-      # running disko (see disko-usb.nix's own caveat) — not guaranteed to
-      # match just because it did on the HP box.
-      nixosConfigurations.nixos-eval-nitro-usb = mkHost {
-        hostModule = ./hosts/nitro.nix;
-        extraModules = [ disko.nixosModules.disko ./disko-usb.nix ];
       };
     };
 }
