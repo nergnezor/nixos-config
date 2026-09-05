@@ -7,7 +7,19 @@ tint_intensity = 0.669999985024333
 
 [bar.default]
 center = [ "clock", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "weather" ]
-start = [ "launcher", "wallpaper", "workspaces", "active_window", "audio_visualizer", "cat", "launcher_2" ]
+start = [
+    "launcher",
+    "wallpaper",
+    "workspaces",
+    "active_window",
+    "audio_visualizer",
+    "cat",
+    "launcher_2",
+    "pulse",
+    "widget",
+    "nix-monitor",
+    "status"
+]
 
 [calendar]
 enabled = true
@@ -290,16 +302,26 @@ widget_order = [ "lockscreen-login-box@HDMI-A-1", "lockscreen-login-box@DP-2", "
         show_weather = true
 
 [plugins]
-enabled = [ "noctalia/bongocat", "alexander/game-launcher" ]
+enabled = [
+    "noctalia/bongocat",
+    "alexander/game-launcher",
+    "lowcache/claude-companion",
+    "yocraft/desktop-launcher",
+    "tphilippot/git_companion",
+    "avivbintangaringga/nix-monitor",
+    "tordex/nvtop",
+    "davemhammer/tailscale",
+    "dunarand/tmux-provider"
+]
 
 [shell]
 lang = "sv"
+screen_time_enabled = true
 
     [shell.animation]
     speed = 2.0000000298023224
 
     [shell.panel]
-    launcher_placement = "attached"
     transparency_mode = "glass"
 
     [shell.screen_corners]
@@ -325,7 +347,6 @@ wallpaper_scheme = "m3-content"
 
 [wallpaper]
 fill_mode = "center"
-transition_on_startup = true
 
     [wallpaper.default]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -352,5 +373,17 @@ type = "noctalia/bongocat:cat"
 capsule = true
 type = "alexander/game-launcher:launcher"
 
+[widget.nix-monitor]
+type = "avivbintangaringga/nix-monitor:nix-monitor"
+
+[widget.pulse]
+type = "lowcache/claude-companion:pulse"
+
 [widget.spacer_2]
 type = "spacer"
+
+[widget.status]
+type = "davemhammer/tailscale:status"
+
+[widget.widget]
+type = "tphilippot/git_companion:widget"
