@@ -22,9 +22,9 @@
     jq            # vertical-monitor-stack.sh / dropdown-term.sh parse `niri msg -j` with it
     qdirstat      # disk usage treemap, GUI
     gdu           # disk usage, terminal TUI
-    tmux          # persistent terminal sessions -- attach over SSH (incl. from
-                  # mobile, via Tailscale) to watch/steer a long-running
-                  # Claude Code session without staying at the machine
+    # tmux moved to programs.tmux below -- that module installs the package
+    # itself, and the resurrect/continuum plugins have to be declared next
+    # to it anyway.
     nerd-fonts.jetbrains-mono # VS Code/ghostty had no monospace font on this
                               # NixOS install; Ubuntu had one system-wide
     # cliphist
@@ -87,6 +87,58 @@
   # from the shared home regardless, so nothing is lost by dropping it.
   # (It won't actually run on NixOS until the mouseless flatpak is
   # installed there, same as Ubuntu's actions-runner unit doesn't.)
+
+  # Persistent terminal sessions -- attach over SSH (incl. from mobile, via
+  # Tailscale) to watch/steer a long-running Claude Code session without
+  # staying at the machine. resurrect/continuum make that survive a reboot.
+  #
+  # What actually comes back: sessions, windows, panes, layouts, working
+  # directories, the active pane, and (capture-pane-contents) the visible
+  # text in each pane. What does NOT come back is the processes -- a Claude
+  # Code that was running in a pane is gone, and the way back into that
+  # conversation is `claude --continue`, not tmux. Restoring the shape of
+  # the workspace is the whole benefit here; do not expect more.
+  #
+  # No systemd user service and no `loginctl enable-linger erik`: continuum
+  # restores when the tmux *server* starts, and without linger that is the
+  # first time you run tmux after logging in, not boot. So the session is
+  # not sitting there waiting when you SSH in -- run `tmux new -A -s main`
+  # and the previous layout comes back. Add the unit + linger later if
+  # having it pre-started matters.
+  #
+  # **Before the first rebuild after adding this, move the old config
+  # aside** -- tmux reads `~/.tmux.conf` OR `$XDG_CONFIG_HOME/tmux/tmux.conf`
+  # (tmux(1)), and the former wins, so a leftover ~/.tmux.conf silently
+  # shadows everything below and none of it takes effect:
+  #   mv ~/.tmux.conf ~/.tmux.conf.pre-hm
+  programs.tmux = {
+    enable = true;
+    # The lone binding that was in the hand-written ~/.tmux.conf.
+    extraConfig = ''
+      bind-key J move-window -t 0
+    '';
+    # Submodule form ({ plugin; extraConfig; }), not a bare package: the
+    # @-options have to be set BEFORE the plugin's run-shell line or the
+    # plugin never sees them, and this form is what emits them in that
+    # order.
+    plugins = with pkgs.tmuxPlugins; [
+      {
+        plugin = resurrect;
+        # Off by default; without it panes come back empty and you lose the
+        # scrollback that says what the session was doing.
+        extraConfig = "set -g @resurrect-capture-pane-contents 'on'";
+      }
+      {
+        plugin = continuum;
+        # continuum must come after resurrect -- it drives resurrect's save
+        # and restore, and has nothing to call otherwise.
+        extraConfig = ''
+          set -g @continuum-restore 'on'
+          set -g @continuum-save-interval '15'
+        '';
+      }
+    ];
+  };
 
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
