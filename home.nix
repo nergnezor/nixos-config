@@ -28,7 +28,10 @@
     nerd-fonts.jetbrains-mono # VS Code/ghostty had no monospace font on this
                               # NixOS install; Ubuntu had one system-wide
     # cliphist
-    # wl-clipboard
+    wl-clipboard  # Claude Code shells out to `wl-paste` to read an image off
+                  # the clipboard; without it Ctrl+V in the CLI finds nothing
+                  # and silently pastes no image. Also what noctalia's
+                  # clipboard widget uses.
     # bottom
 
     # claude-code: confirmed via `nix eval` that it exists as a real
