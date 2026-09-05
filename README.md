@@ -25,7 +25,7 @@ user unit is declared in `configuration.nix`.
 | `home.nix` | The user's packages, and the `mkOutOfStoreSymlink` that makes `~/.config/niri` this repo's `niri/` |
 | `niri/**` | The live niri config. Not a snapshot — `~/.config/niri` *is* this directory |
 | `noctalia/settings.toml`, `noctalia/sync.sh` | Noctalia's settings, as a synced copy |
-| `home/**`, `home/sync.sh` | The hand-written `$HOME` dotfiles, as synced copies |
+| `home/**`, `home/sync.sh` | The hand-written `$HOME` dotfiles that nothing else syncs, as synced copies |
 | `rebuild.sh` | Sync live config into the repo, then `nixos-rebuild`; optionally commit/push once it built |
 | `disko-usb.nix`, `install-to-nixos-partition.sh`, `USB-TEST-RUNBOOK.md`, `PARTITION-RUNBOOK.md` | Installation |
 
@@ -48,8 +48,7 @@ exist as far as the build is concerned. `rebuild.sh` warns about this.
   turns a symlink back into a plain file on the first tweak. So: change things
   in the GUI, then `sync.sh pull` and commit.
 - **`$HOME` dotfiles — copies** (`./home/sync.sh {pull|push|diff}`):
-  `.bashrc`, `.profile`, `.gitconfig`, `~/.config/ghostty/config`, and VS
-  Code's `settings.json` / `keybindings.json` / extension list. Not
+  `.bashrc`, `.profile`, `.gitconfig`, `~/.config/ghostty/config`. Not
   home-manager: each of these already exists as a real file in `$HOME`, and
   home-manager aborts the *entire* activation rather than overwrite one —
   the failure that once left the profile with no packages at all.
@@ -87,6 +86,11 @@ what a new machine still needs by hand.
 - **The wallpaper.** `settings.toml` points every output at
   `~/Pictures/hyperlink-dimension-al-7680x4320.jpg` (5.5 MB), which lives in
   the home directory, not here.
+- **VS Code.** Settings, keybindings and extensions come back by signing
+  into VS Code's own Settings Sync, which is enabled on this machine
+  (`~/.config/Code/User/sync/` holds its state). Tracking those files here
+  as well would be a second source of truth for the same paths, with
+  `home/sync.sh push` stomping whatever Settings Sync had just written.
 - **The Steam library and its per-game `.desktop` launchers** — Steam-managed
   content. Point Steam at an existing library after logging in.
 - **WiVRn, Sunshine, open-tv, Heroic** (flatpaks) — real parts of the desktop,
@@ -107,7 +111,7 @@ what a new machine still needs by hand.
 6. `nixos-rebuild switch --flake .#<name>`.
 7. Then, by hand: `./noctalia/sync.sh push`, `./home/sync.sh push`, the
    flatpak remote and mouseless, the wallpaper, `sudo tailscale up`,
-   `gh auth login`, SSH keys.
+   `gh auth login`, SSH keys, and signing into VS Code's Settings Sync.
 
 ## History worth keeping
 

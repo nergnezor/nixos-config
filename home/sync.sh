@@ -28,12 +28,17 @@ files=(
   "profile:$HOME/.profile"
   "gitconfig:$HOME/.gitconfig"
   "ghostty/config:$cfg/ghostty/config"
-  "vscode/settings.json:$cfg/Code/User/settings.json"
-  "vscode/keybindings.json:$cfg/Code/User/keybindings.json"
 )
 # Deliberately NOT synced:
 #   ~/.ssh/*                     keys, and config names a real host:port --
 #                                this repo is public
+#   ~/.config/Code/User/*        VS Code has its own Settings Sync, and it is
+#                                signed in here (~/.config/Code/User/sync/
+#                                holds live lastSync* state). Tracking
+#                                settings/keybindings/extensions here too
+#                                would be a second source of truth for the
+#                                same files, and `push` would stomp whatever
+#                                Settings Sync had just written
 #   ~/.config/ghostty/config.ghostty, themes/*, and every other generated
 #                                theme file (gtk, btop, lazygit, qt, vscode)
 #                                -- noctalia writes those from
@@ -64,13 +69,6 @@ case "${1:-}" in
       scrubbed "$rel" "$live" > "$repo/$rel"
       echo "pulled  $live"
     done
-    # Extensions are not files to copy -- ask VS Code what is installed.
-    if command -v code >/dev/null; then
-      code --list-extensions | sort > "$repo/vscode/extensions.txt"
-      echo "pulled  $(wc -l < "$repo/vscode/extensions.txt") VS Code extensions"
-    else
-      echo "skip    VS Code extensions (code not on PATH)"
-    fi
     git -C "$repo" diff --stat -- "$repo" || true
     ;;
   push)
@@ -82,19 +80,11 @@ case "${1:-}" in
       cp "$repo/$rel" "$live"
       echo "pushed  $live"
     done
-    if [ -s "$repo/vscode/extensions.txt" ] && command -v code >/dev/null; then
-      installed="$(code --list-extensions | tr 'A-Z' 'a-z' | sort)"
-      while read -r ext; do
-        [ -n "$ext" ] || continue
-        if grep -qxF "$(echo "$ext" | tr 'A-Z' 'a-z')" <<<"$installed"; then continue; fi
-        echo "  installing $ext"
-        code --install-extension "$ext" --force >/dev/null || echo "  !! failed: $ext"
-      done < "$repo/vscode/extensions.txt"
-    fi
     echo
     echo "note: the gh credential helper in ~/.gitconfig is the generic"
     echo "      \`gh auth git-credential\` form -- run \`gh auth login\` to make"
-    echo "      it actually work. SSH keys and ~/.ssh/config are not tracked."
+    echo "      it actually work. SSH keys and ~/.ssh/config are not tracked,"
+    echo "      and VS Code restores itself by signing into Settings Sync."
     ;;
   diff)
     rc=0
@@ -104,10 +94,6 @@ case "${1:-}" in
       if ! diff -u --label "repo/$rel" --label "$live" \
              "$repo/$rel" <(scrubbed "$rel" "$live"); then rc=1; fi
     done
-    if command -v code >/dev/null; then
-      diff -u --label repo/vscode/extensions.txt --label "installed" \
-        "$repo/vscode/extensions.txt" <(code --list-extensions | sort) || rc=1
-    fi
     [ "$rc" = 0 ] && echo "identical"
     exit 0
     ;;
