@@ -1,4 +1,7 @@
-{ config, pkgs, ... }:
+{ config, pkgs, spicetify-nix, ... }:
+let
+  spicePkgs = spicetify-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
+in
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
@@ -12,9 +15,11 @@
     # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
     vscode
-    # spotify, discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only
-    # wanted steam added back for the real internal-disk install, not the
-    # rest of the trimmed set.
+    # discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only wanted
+    # steam added back for the real internal-disk install, not the rest of
+    # the trimmed set. Spotify itself now comes from programs.spicetify
+    # below, not this list -- the spicetify-nix module installs its own
+    # patched build and warns against also listing pkgs.spotify here.
     git           # was pulled in via programs.git before; that module's gone
                   # now that .gitconfig comes from the shared real home
     lazygit
@@ -142,5 +147,13 @@
 
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
+  };
+
+  # No theme/extensions picked here -- Marketplace is the in-app browser for
+  # both, so pick visually from inside Spotify rather than guessing here.
+  # After a rebuild: open Spotify, the Marketplace icon sits in the top bar.
+  programs.spicetify = {
+    enable = true;
+    enabledCustomApps = with spicePkgs.apps; [ marketplace ];
   };
 }

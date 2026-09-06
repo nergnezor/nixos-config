@@ -38,13 +38,24 @@
     # Qt6 base would save some store space, but a config that fails to
     # evaluate saves none — it keeps its own known-working nixpkgs instead.
     noctalia-shell.url = "github:noctalia-dev/noctalia-shell";
+
+    # Provides spotify + spicetify-cli wired together as one home-manager
+    # module (programs.spicetify) -- plain nixpkgs spicetify-cli patches an
+    # Electron install in place, which doesn't work against a read-only
+    # nix store. This builds the patched app as its own derivation instead.
+    spicetify-nix = {
+      url = "github:Gerg-L/spicetify-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, home-manager, noctalia-shell, ... }:
+  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, ... }:
     let
       homeModule = {
         home-manager.useGlobalPkgs = true;
         home-manager.useUserPackages = true;
+        home-manager.extraSpecialArgs = { inherit spicetify-nix; };
+        home-manager.sharedModules = [ spicetify-nix.homeManagerModules.spicetify ];
         home-manager.users.erik = import ./home.nix;
       };
       # hostModule carries everything machine-specific: hostName, GPU driver,
