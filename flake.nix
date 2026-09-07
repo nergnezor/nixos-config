@@ -59,10 +59,12 @@
         home-manager.users.erik = import ./home.nix;
       };
       # hostModule carries everything machine-specific: hostName, GPU driver,
-      # and how that machine gets /home — hp-envy has its own partition,
-      # see hosts/hp-envy.nix. hardware-configuration.nix (shared filename,
-      # not host-specific in this repo) gets regenerated/overwritten for
-      # whichever target you're installing.
+      # how that machine gets /home, and (2026-09-07) its own
+      # hardware-configuration-<name>.nix import — see hosts/hp-envy.nix and
+      # hosts/nitro.nix. Used to be one shared hardware-configuration.nix;
+      # split per-host once nitro stopped being a throwaway USB comparison,
+      # since a shared file meant either host's `nixos-generate-config`
+      # would silently overwrite the other's UUIDs.
       mkHost = { hostModule }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [

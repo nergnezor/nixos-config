@@ -1,5 +1,12 @@
 { config, lib, pkgs, ... }:
 {
+  # Split out of the shared configuration.nix (2026-09-07) now that nitro is
+  # a permanent second host, not a throwaway USB comparison: a single
+  # shared hardware-configuration.nix meant nitro's own
+  # `nixos-generate-config` would silently overwrite the HP's UUIDs the
+  # next time either machine ran `rebuild.sh --push`.
+  imports = [ ../hardware-configuration-hp-envy.nix ];
+
   networking.hostName = "nixos-hp";
 
   # RTX 3060 Ti (GA104) — proprietary driver, needed for a usable niri

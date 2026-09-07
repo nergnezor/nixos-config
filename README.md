@@ -21,13 +21,13 @@ user unit is declared in `configuration.nix`.
 | `flake.nix`, `flake.lock` | The pins: an exact nixpkgs revision (**unstable**, not a release branch — the reasoning is in `flake.nix` and it matters), home-manager `master`, noctalia-shell on its own nixpkgs, disko |
 | `configuration.nix` | The system: niri, greetd/tuigreet, noctalia, pipewire, steam, xrdp+Plasma over Tailscale, sshd, flatpak, xwayland-satellite, mouseless's unit and udev/tmpfiles rules, `erik` as 1000:1000, Swedish layout |
 | `hosts/hp-envy.nix`, `hosts/nitro.nix` | Everything machine-specific: hostname, GPU driver, how `/home` is provided |
-| `hardware-configuration.nix` | **The HP's**, by UUID. One filename for every host — regenerate it on any new machine (see below) |
+| `hardware-configuration-hp-envy.nix`, `hardware-configuration-nitro.nix` | Per-host, by UUID — imported from the matching `hosts/*.nix`, not a shared filename (see below) |
 | `home.nix` | The user's packages, and the `mkOutOfStoreSymlink` that makes `~/.config/niri` this repo's `niri/` |
 | `niri/**` | The live niri config. Not a snapshot — `~/.config/niri` *is* this directory |
 | `noctalia/settings.toml`, `noctalia/sync.sh` | Noctalia's settings, as a synced copy |
 | `home/**`, `home/sync.sh` | The hand-written `$HOME` dotfiles that nothing else syncs, as synced copies |
 | `rebuild.sh` | Sync live config into the repo, then `nixos-rebuild`; optionally commit/push once it built |
-| `disko-usb.nix`, `install-to-nixos-partition.sh`, `USB-TEST-RUNBOOK.md`, `PARTITION-RUNBOOK.md` | Installation |
+| `disko-usb.nix`, `disko-nitro.nix`, `install-to-nixos-partition.sh`, `USB-TEST-RUNBOOK.md`, `PARTITION-RUNBOOK.md`, `NITRO-INSTALL-RUNBOOK.md` | Installation |
 
 Day to day, `nrb` / `nrbc` / `nrbp` (aliases in `home/bashrc`) are `rebuild.sh`.
 
@@ -103,12 +103,15 @@ what a new machine still needs by hand.
 
 ## Bringing up a new machine
 
-1. Partition and install per `PARTITION-RUNBOOK.md`.
-2. `nixos-generate-config` on the target, and put the result in
-   `hardware-configuration.nix` — the tracked one is the HP's, by UUID.
-3. Add a `hosts/<machine>.nix` and a `nixosConfigurations.<name>` output in
-   `flake.nix`, plus the host→attr mapping in `rebuild.sh` (it only knows
-   `nixos-hp` → `nixos-eval`).
+1. Partition and install per `PARTITION-RUNBOOK.md` (or `disko-<name>.nix`
+   for a whole-disk install, see `NITRO-INSTALL-RUNBOOK.md`).
+2. `nixos-generate-config` on the target, and put the result in its own
+   `hardware-configuration-<name>.nix` — **not** the HP's or nitro's, each
+   host has its own file, imported from its `hosts/<name>.nix`.
+3. Add a `hosts/<machine>.nix` (importing that file) and a
+   `nixosConfigurations.<name>` output in `flake.nix`, plus the host→attr
+   mapping in `rebuild.sh` (it knows `nixos-hp` → `nixos-eval` and
+   `nixos-nitro` → `nixos-nitro`).
 4. `git add` all of it before building.
 5. `git clone https://github.com/nergnezor/astronvim ~/astronvim`, then
    `mv ~/.config/niri ~/.config/niri.pre-symlink` and
