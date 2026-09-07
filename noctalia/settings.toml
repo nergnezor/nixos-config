@@ -7,6 +7,20 @@ tint_intensity = 0.669999985024333
 
 [bar.default]
 center = [ "clock", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "weather" ]
+end = [
+    "media",
+    "tray",
+    "notifications",
+    "clipboard",
+    "network",
+    "bluetooth",
+    "volume",
+    "brightness",
+    "battery",
+    "control-center",
+    "session",
+    "bar"
+]
 start = [
     "launcher",
     "wallpaper",
@@ -283,8 +297,8 @@ widget_order = [
     [lockscreen_widgets.widget."lockscreen-login-box@DP-3"]
     box_height = 196.0
     box_width = 810.0
-    cx = 1670.0
-    cy = 1696.0
+    cx = 1670.0001220703125
+    cy = 1695.9998779296875
     output = "DP-3"
     placement_height = 1878.0
     placement_width = 3339.0
@@ -311,7 +325,7 @@ widget_order = [
     box_height = 196.0
     box_width = 810.0
     cx = 491.0
-    cy = 1563.0
+    cy = 1562.9998779296875
     output = "DP-4"
     placement_height = 1745.0
     placement_width = 982.0
@@ -396,9 +410,9 @@ screen_time_enabled = true
 
 [theme]
 builtin = "Noctalia"
-community_palette = "Shien"
+community_palette = "Atuel"
 mode = "dark"
-source = "builtin"
+source = "community"
 wallpaper_scheme = "m3-content"
 
     [theme.templates]
@@ -422,6 +436,9 @@ fill_mode = "center"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+
+[widget.bar]
+type = "raycursive/niri-displays:bar"
 
 [widget.cat]
 audio_spectrum = true
