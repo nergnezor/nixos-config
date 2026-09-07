@@ -96,4 +96,39 @@
   # replace the generated values instead of both sets ending up in the
   # option list with order-dependent behaviour.
   fileSystems."/boot".options = lib.mkForce [ "fmask=0077" "dmask=0077" ];
+
+  # AngelBeach's self-hosted CI runner. It used to run as the Ubuntu install's
+  # own `actions.runner.*.service` (installed by the upstream `svc.sh`,
+  # outside this repo entirely) against `~/actions-runner`, registered by
+  # `scripts/setup-runner.sh`. That Ubuntu install is gone (see the /home
+  # comment above), and the same disk corruption that wiped niri's config.kdl
+  # also hit `~/actions-runner/.runner` and `.credentials` -- both are now
+  # garbage bytes, not JSON, with no working backup (`.runner_migrated`
+  # survived for `.runner` but there is no equivalent for `.credentials`).
+  # So there is neither a service to start it nor a valid registration for it
+  # to use even if there were. This declares the service NixOS never had.
+  #
+  # tokenFile is a classic PAT (repo scope) dropped outside git, e.g.:
+  #   echo -n 'ghp_...' | sudo tee /etc/github-runner-token >/dev/null
+  #   sudo chmod 600 /etc/github-runner-token
+  # A PAT (not a 1-hour registration token) is what lets the service
+  # re-register itself on every restart without manual intervention.
+  #
+  # `name` matches the existing (now offline) GitHub Actions runner entry so
+  # `replace` reclaims it instead of leaving a dead duplicate; `extraLabels`
+  # supplies the `ue5` label every workflow's `runs-on:` requires alongside
+  # the auto-added `self-hosted`/`Linux`/`X64`. `workDir` reuses the old
+  # runner's checkout path so incremental builds keep their cache across job
+  # runs (it is only wiped on a service restart, not between jobs).
+  services.github-runners.angelbeach-ue5 = {
+    enable = true;
+    url = "https://github.com/nergnezor/AngelBeach";
+    name = "erik-HP-ENVY-TE01-1xxx-ue5";
+    tokenFile = "/etc/github-runner-token";
+    replace = true;
+    extraLabels = [ "ue5" ];
+    user = "erik";
+    workDir = "/home/erik/actions-runner/_work";
+    serviceOverrides.ProtectHome = false;
+  };
 }

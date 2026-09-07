@@ -33,4 +33,29 @@
     device = "/swap/swapfile";
     size = 20 * 1024;
   }];
+
+  # AngelBeach's self-hosted CI runner — same story as hosts/hp-envy.nix's
+  # copy of this block: nitro used to run the runner as an Ubuntu
+  # `actions.runner.*.service` against `~/actions-runner`; today's whole-disk
+  # NixOS reinstall (see the swap comment above) took that OS, and with it
+  # the service, with it. `replace = true` reclaims the existing (now
+  # offline) GitHub Actions runner entry rather than leaving a dead
+  # duplicate. See hosts/hp-envy.nix for the tokenFile setup steps.
+  #
+  # serviceOverrides.ProtectHome = false for the same reason as hp-envy.nix:
+  # the module's default hardening hides all of /home, which breaks
+  # build-linux.yml's lookup of `$HOME/UnrealEngine-Angelscript` and (if a
+  # workDir is ever pointed under /home here too) the CHDIR into it — see
+  # the hp-envy.nix comment for the exact failure this caused there
+  # (2026-09-07).
+  services.github-runners.angelbeach-ue5 = {
+    enable = true;
+    url = "https://github.com/nergnezor/AngelBeach";
+    name = "erik-Nitro-N50-640";
+    tokenFile = "/etc/github-runner-token";
+    replace = true;
+    extraLabels = [ "ue5" ];
+    user = "erik";
+    serviceOverrides.ProtectHome = false;
+  };
 }
