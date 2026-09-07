@@ -23,4 +23,14 @@
   # partitions the entire nvme0n1 for NixOS alone. No /mnt/ubuntu, no bind
   # mount: unlike hp-envy's history, this /home was never shared with
   # another OS, so there is no inherited layout to work around.
+
+  # 20G swapfile on its own nodatacow @swap subvolume (disko-nitro.nix) --
+  # 31G RAM was not enough headroom during the very first build (tmpfs
+  # root filled up mid-build, see NITRO-INSTALL-RUNBOOK.md), so give the
+  # installed system real swap rather than relying on RAM alone for large
+  # rebuilds.
+  swapDevices = [{
+    device = "/swap/swapfile";
+    size = 20 * 1024;
+  }];
 }

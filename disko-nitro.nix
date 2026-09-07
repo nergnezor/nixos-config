@@ -49,6 +49,15 @@
                   mountpoint = "/snapshots";
                   mountOptions = [ "compress=zstd" ];
                 };
+                # Its own subvolume, not a file under @root: a btrfs
+                # swapfile must be nodatacow and uncompressed, which can't
+                # be set per-file on a subvolume that's already
+                # compress=zstd (@root above) -- nodatacow here instead,
+                # scoped to just this subvolume.
+                "@swap" = {
+                  mountpoint = "/swap";
+                  mountOptions = [ "noatime" "nodatacow" ];
+                };
               };
             };
           };
