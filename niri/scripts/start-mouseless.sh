@@ -34,6 +34,12 @@ fi
 # Wayland compositor + flatpak session helper need a moment after login.
 sleep 5
 
+# Default webview+dmabuf SIGSEGVs in libX11-xcb on this machine (Intel Arc
+# A750 + niri + xwayland-satellite's DISPLAY=:0): crash loop ~4s after
+# license check, exit 139. Official workaround flag — keeps the webview
+# overlay, just turns off WebKit's DMA-BUF path. cairo also works but loses
+# highlight_animation / dots / dashed grids / always_show_subgrid.
 exec "$flatpak_bin" run \
     --branch=stable --arch=x86_64 --command=mouseless-wrapper \
-    net.sonuscape.mouseless
+    net.sonuscape.mouseless \
+    --use-dmabuf false
