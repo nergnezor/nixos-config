@@ -17,7 +17,7 @@
   # media driver for hardware video decode/encode, standard recommendation
   # for modern Intel GPUs (both iHD and legacy i965 variants, harmless to
   # include both).
-  hardware.graphics.extraPackages = with pkgs; [ intel-media-driver vaapiIntel ];
+  hardware.graphics.extraPackages = with pkgs; [ intel-media-driver intel-vaapi-driver ];
 
   # Whole-disk install (2026-09-07) — Ubuntu is gone, disko-nitro.nix
   # partitions the entire nvme0n1 for NixOS alone. No /mnt/ubuntu, no bind
