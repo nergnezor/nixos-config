@@ -1,19 +1,15 @@
 {
-  description = "erik's niri evaluation NixOS config (dual-boot alongside Ubuntu, own partition/ESP)";
+  description = "erik's niri NixOS config (whole-disk on both hp-envy and nitro)";
 
   inputs = {
     # A PINNED unstable revision, not a release branch and not a floating
     # branch either.
     #
-    # Why unstable: this system shares one home directory with an Ubuntu
-    # 26.04 install, so anything that reads config or profile data from it
-    # has to understand what Ubuntu's (newer) build writes. niri made that
-    # concrete -- 25.05 ships niri 25.08, which can't parse the 26.04 config
-    # schema (recent-windows, gestures/hot-corners, config-notification,
-    # overview/workspace-shadow) and silently fell back to defaults: the
-    # "failed to read niri config" on first boot. ghostty had the same shape
-    # of gap (1.1.3 vs Ubuntu's 1.3.1). Version parity is a functional
-    # requirement here, not a preference.
+    # Why unstable: originally chosen so niri/ghostty would version-match an
+    # Ubuntu install that shared this home directory (see git history before
+    # 2026-09-07) -- both machines are whole-disk NixOS now, so that
+    # constraint no longer applies. Kept on unstable regardless for
+    # up-to-date niri/noctalia rather than switching to a release branch.
     #
     # Why pinned: a floating nixos-unstable is what broke an earlier install
     # attempt outright (`libdisplay-info_0_2` removed before every internal
