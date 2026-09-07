@@ -47,9 +47,17 @@
       url = "github:Gerg-L/spicetify-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Whole-disk partitioning for nitro (disko-nitro.nix) -- also imported
+    # as a NixOS module so its fileSystems/boot config end up in the built
+    # system, not just used standalone via `nix run github:...disko`.
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, ... }:
+  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, disko, ... }:
     let
       homeModule = {
         home-manager.useGlobalPkgs = true;
@@ -65,7 +73,7 @@
       # split per-host once nitro stopped being a throwaway USB comparison,
       # since a shared file meant either host's `nixos-generate-config`
       # would silently overwrite the other's UUIDs.
-      mkHost = { hostModule }: nixpkgs.lib.nixosSystem {
+      mkHost = { hostModule, extraModules ? [ ] }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
           ./configuration.nix
@@ -75,7 +83,7 @@
           # Binds programs.noctalia.package to THIS flake's package output
           # (its own nixpkgs), not an overlay on ours — see configuration.nix.
           noctalia-shell.nixosModules.default
-        ];
+        ] ++ extraModules;
       };
     in
     {
@@ -89,6 +97,12 @@
       # hp-envy's nixos-eval/nixos-hp mismatch above.
       nixosConfigurations.nixos-nitro = mkHost {
         hostModule = ./hosts/nitro.nix;
+        # disko's NixOS module turns disko-nitro.nix's disko.devices into
+        # real fileSystems/boot.loader entries -- without this the build
+        # fails ("fileSystems option does not specify your root file
+        # system") because hardware-configuration-nitro.nix is generated
+        # with --no-filesystems on the assumption disko covers it.
+        extraModules = [ disko.nixosModules.disko ./disko-nitro.nix ];
       };
     };
 }
