@@ -66,6 +66,9 @@ in
     # claude-code: confirmed via `nix eval` that it exists as a real
     # package on nixos-25.05 (previously flagged unverified, now checked).
     claude-code
+    cursor-cli    # ships the `cursor-agent` binary, not `cursor` -- confirmed
+                  # via a direct `nix build` + `--version` check (unfree,
+                  # already allowed by nixpkgs.config.allowUnfree above)
   ]);
   # noctalia is installed by programs.noctalia in configuration.nix (NixOS
   # module, systemd user unit in /etc), not here — a home.packages entry

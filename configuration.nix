@@ -326,6 +326,14 @@ in
     wants = [ "graphical-session.target" ];
     after = [ "graphical-session.target" "niri.service" ];
     wantedBy = [ "graphical-session.target" ];
+    # NixOS's default systemd --user unit PATH only has coreutils/findutils/
+    # grep/sed/systemd (see the Environment=PATH= line `systemctl --user cat
+    # mouseless` shows) -- no bash. start-mouseless.sh's `#!/usr/bin/env
+    # bash` shebang then fails with exit 127 ("bash: not found") before the
+    # script's own error handling ever runs, and its `command -v flatpak`
+    # check silently comes up empty too. Confirmed on the nitro install
+    # (2026-09-07): both were missing and mouseless crash-looped.
+    path = [ pkgs.bash pkgs.flatpak ];
     serviceConfig = {
       Type = "exec";
       ExecStart = "%h/.config/niri/scripts/start-mouseless.sh";
