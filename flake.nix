@@ -82,5 +82,11 @@
       nixosConfigurations.nixos-eval = mkHost {
         hostModule = ./hosts/hp-envy.nix;
       };
+      # The Nitro, whole-disk (2026-09-07) -- Ubuntu replaced entirely, see
+      # disko-nitro.nix. Named after hosts/nitro.nix's own hostName, unlike
+      # hp-envy's nixos-eval/nixos-hp mismatch above.
+      nixosConfigurations.nixos-nitro = mkHost {
+        hostModule = ./hosts/nitro.nix;
+      };
     };
 }

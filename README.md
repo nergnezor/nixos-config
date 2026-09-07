@@ -48,7 +48,8 @@ exist as far as the build is concerned. `rebuild.sh` warns about this.
   turns a symlink back into a plain file on the first tweak. So: change things
   in the GUI, then `sync.sh pull` and commit.
 - **`$HOME` dotfiles — copies** (`./home/sync.sh {pull|push|diff}`):
-  `.bashrc`, `.profile`, `.gitconfig`, `~/.config/ghostty/config`. Not
+  `.bashrc`, `.profile`, `.gitconfig` (per-host, see `home/sync.sh`),
+  `~/.config/kitty/kitty.conf`. Not
   home-manager: each of these already exists as a real file in `$HOME`, and
   home-manager aborts the *entire* activation rather than overwrite one —
   the failure that once left the profile with no packages at all.
@@ -81,7 +82,7 @@ what a new machine still needs by hand.
   refers to their widgets, but `plugins/`, `plugin-cache/`,
   `community-palettes/`, `community-templates/` and `state.toml` are machine
   state, not config. The generated theme files (`~/.config/gtk-3.0/noctalia.css`,
-  btop, ghostty, lazygit, qt5ct/qt6ct, the VS Code theme) are regenerated from
+  btop, kitty, lazygit, qt5ct/qt6ct, the VS Code theme) are regenerated from
   `[theme.templates]`.
 - **The wallpaper.** `settings.toml` points every output at
   `~/Pictures/hyperlink-dimension-al-7680x4320.jpg` (5.5 MB), which lives in
@@ -95,6 +96,10 @@ what a new machine still needs by hand.
   content. Point Steam at an existing library after logging in.
 - **WiVRn, Sunshine, open-tv, Heroic** (flatpaks) — real parts of the desktop,
   never carried over.
+- **AstroNvim.** `~/.config/nvim` is `home.nix`'s `mkOutOfStoreSymlink` to
+  `~/astronvim`, but the editor config itself lives in its own repo
+  (`github:nergnezor/astronvim`), not here — clone it separately (see
+  "Bringing up a new machine" below).
 
 ## Bringing up a new machine
 
@@ -105,7 +110,9 @@ what a new machine still needs by hand.
    `flake.nix`, plus the host→attr mapping in `rebuild.sh` (it only knows
    `nixos-hp` → `nixos-eval`).
 4. `git add` all of it before building.
-5. `mv ~/.config/niri ~/.config/niri.pre-symlink` before the first rebuild —
+5. `git clone https://github.com/nergnezor/astronvim ~/astronvim`, then
+   `mv ~/.config/niri ~/.config/niri.pre-symlink` and
+   `mv ~/.config/nvim ~/.config/nvim.pre-symlink` before the first rebuild —
    home-manager will not overwrite a real directory, and aborts the whole
    activation if it finds one.
 6. `nixos-rebuild switch --flake .#<name>`.

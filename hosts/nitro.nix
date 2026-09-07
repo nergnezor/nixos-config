@@ -10,19 +10,8 @@
   # include both).
   hardware.graphics.extraPackages = with pkgs; [ intel-media-driver vaapiIntel ];
 
-  # Same idea as hosts/hp-envy.nix, this machine's own Ubuntu partition —
-  # confirmed via `lsblk`/`id` over SSH (erik-Nitro-N50-640), 2026-09-03:
-  # Ubuntu 25.10, single ext4 partition (no separate /home), uid 1000
-  # (already the default in configuration.nix, matches without an override).
-  fileSystems."/mnt/ubuntu" = {
-    device = "/dev/disk/by-uuid/c37c0388-5e1b-4064-aa07-dc723e9271e4"; # nvme0n1p2
-    fsType = "ext4";
-    options = [ "rw" "nofail" ];
-  };
-  fileSystems."/home/erik" = {
-    device = "/mnt/ubuntu/home/erik";
-    fsType = "none"; # ignored by `mount` for a bind mount, but this nixpkgs
-                      # revision requires the option to have some value
-    options = [ "bind" "nofail" ];
-  };
+  # Whole-disk install (2026-09-07) — Ubuntu is gone, disko-nitro.nix
+  # partitions the entire nvme0n1 for NixOS alone. No /mnt/ubuntu, no bind
+  # mount: unlike hp-envy's history, this /home was never shared with
+  # another OS, so there is no inherited layout to work around.
 }

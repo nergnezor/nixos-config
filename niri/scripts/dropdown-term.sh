@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-WINFILE="/tmp/ghostty-dropdown.winid"
+WINFILE="/tmp/kitty-dropdown.winid"
 
 # Cleanup stale tracking
 if [ -f "$WINFILE" ]; then
@@ -14,7 +14,7 @@ else
 fi
 
 if [ -z "$WIN_ID" ]; then
-    ghostty --gtk-single-instance=false &
+    kitty &
     GPID=$!
 
     WIN_ID=""

@@ -8,13 +8,33 @@ in
   home.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
 
   home.packages = (with pkgs; [
-    ghostty       # dropdown-term.sh spawns this specifically
+    kitty         # dropdown-term.sh spawns this specifically -- replaced
+                  # ghostty (2026-09-07): erik switched terminals, and
+                  # kitty's cursor_trail is the "flygande pekare" effect
+                  # home/kitty/kitty.conf enables. ghostty's minimal config
+                  # (home/ghostty/config) was itself a rebuild-from-scratch
+                  # after the corruption incident -- see PARTITION-RUNBOOK.md
+                  # -- so nothing but that reconstructed config is lost here.
     # alacritty
     # fuzzel
     # grim
     # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
     vscode
+    # AstroNvim (github:nergnezor/astronvim, its own repo -- not vendored
+    # here, see the xdg.configFile."nvim" symlink below) needs a C compiler
+    # for treesitter parsers, ripgrep/fd for telescope, and node for the
+    # LSPs the community packs pull in. Confirmed against what's actually
+    # on Ubuntu right now (`which`), not guessed from AstroNvim's docs --
+    # python was NOT needed, none of the enabled community packs
+    # (lua/rust/dart) call for pynvim.
+    neovim
+    neovide
+    ripgrep
+    fd
+    gcc
+    gnumake
+    nodejs_22
     # discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
     # the trimmed set. Spotify itself now comes from programs.spicetify
@@ -30,8 +50,12 @@ in
     # tmux moved to programs.tmux below -- that module installs the package
     # itself, and the resurrect/continuum plugins have to be declared next
     # to it anyway.
-    nerd-fonts.jetbrains-mono # VS Code/ghostty had no monospace font on this
-                              # NixOS install; Ubuntu had one system-wide
+    nerd-fonts.jetbrains-mono # VS Code/kitty had no monospace font on this
+                              # NixOS install; Ubuntu had one system-wide.
+                              # kitty.conf also names it explicitly
+                              # (JetBrainsMono Nerd Font) so the glyphs
+                              # AstroNvim's UI depends on (icons, separators)
+                              # actually render.
     # cliphist
     wl-clipboard  # Claude Code shells out to `wl-paste` to read an image off
                   # the clipboard; without it Ctrl+V in the CLI finds nothing
@@ -75,6 +99,25 @@ in
   #   mv ~/.config/niri ~/.config/niri.pre-symlink
   xdg.configFile."niri".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/niri";
+
+  # ~/.config/nvim -- AstroNvim, but tracked as its OWN repo
+  # (github:nergnezor/astronvim), not vendored inside nixos-config. This
+  # just declares the same plain symlink erik already has on Ubuntu
+  # (`~/.config/nvim -> ~/astronvim`), so a rebuild recreates it rather
+  # than leaving a fresh machine with no editor config at all.
+  #
+  # mkOutOfStoreSymlink again, and for the same reason as niri: AstroNvim
+  # only reads its lua config at startup, and lazy-lock.json (which DOES
+  # get rewritten, by lazy.nvim on plugin updates) belongs in astronvim's
+  # own git history, not copied through the nix store on every edit.
+  #
+  # **Before the first rebuild on a machine that already has a real
+  # ~/.config/nvim**, clone astronvim and move the old one aside -- same
+  # collision class as niri and tmux above:
+  #   git clone https://github.com/nergnezor/astronvim ~/astronvim
+  #   mv ~/.config/nvim ~/.config/nvim.pre-symlink
+  xdg.configFile."nvim".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/astronvim";
 
   # programs.git stays undeclared: ~/.gitconfig came back from the rescue
   # and is the working copy. Same reasoning as the niri config had before

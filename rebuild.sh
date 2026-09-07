@@ -33,6 +33,7 @@ attr="${NIXOS_ATTR:-}"
 if [ -z "$attr" ]; then
   case "$(hostname)" in
     nixos-hp) attr="nixos-eval" ;;
+    nixos-nitro) attr="nixos-nitro" ;;
     *) echo "no flake output mapped for host '$(hostname)' -- set NIXOS_ATTR=..." >&2
        echo "available: $(nix flake show --json 2>/dev/null | jq -r '.nixosConfigurations|keys|join(\", \")' 2>/dev/null || echo '(see flake.nix)')" >&2
        exit 1 ;;

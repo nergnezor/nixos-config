@@ -22,12 +22,22 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
 
+# gitconfig is per-HOST, not one shared file: nixos-hp uses erik's personal
+# identity, nixos-nitro uses nergnezor/uxstream (2026-09-07 -- erik wants
+# this machine to authenticate as work). A single shared home/gitconfig
+# can't hold both, since `pull` copies live -> repo and whichever host ran
+# it last would silently overwrite the other's identity the next time
+# either machine's rebuild.sh runs. Suffixing by hostname keeps them apart;
+# add a new "gitconfig.<hostname>" file for any future machine that needs
+# its own identity, same as hosts/<machine>.nix.
+gitconfig_rel="gitconfig.$(hostname)"
+
 # repo-relative path : live path
 files=(
   "bashrc:$HOME/.bashrc"
   "profile:$HOME/.profile"
-  "gitconfig:$HOME/.gitconfig"
-  "ghostty/config:$cfg/ghostty/config"
+  "$gitconfig_rel:$HOME/.gitconfig"
+  "kitty/kitty.conf:$cfg/kitty/kitty.conf"
 )
 # Deliberately NOT synced:
 #   ~/.ssh/*                     keys, and config names a real host:port --
@@ -39,11 +49,15 @@ files=(
 #                                would be a second source of truth for the
 #                                same files, and `push` would stomp whatever
 #                                Settings Sync had just written
-#   ~/.config/ghostty/config.ghostty, themes/*, and every other generated
-#                                theme file (gtk, btop, lazygit, qt, vscode)
-#                                -- noctalia writes those from
-#                                [theme.templates], see noctalia/sync.sh
+#   ~/.config/kitty/{current-theme,dank-theme,dank-tabs}.conf, themes/*, and
+#                                every other generated theme file (gtk,
+#                                btop, lazygit, qt, vscode) -- noctalia
+#                                writes those from [theme.templates], see
+#                                noctalia/sync.sh
 #   ~/.local/state/noctalia/*    noctalia/sync.sh owns that one
+#   ~/astronvim                  its own repo (github:nergnezor/astronvim),
+#                                not this one -- home.nix only symlinks
+#                                ~/.config/nvim to it
 
 # ~/.gitconfig's gh credential helper is written by `gh auth login` as an
 # absolute /nix/store path, which is pinned to one gh build and means
@@ -55,8 +69,8 @@ scrub_gitconfig() {
 
 scrubbed() { # <repo-relative> <live path>
   case "$1" in
-    gitconfig) scrub_gitconfig "$2" ;;
-    *)         cat "$2" ;;
+    gitconfig.*) scrub_gitconfig "$2" ;;
+    *)           cat "$2" ;;
   esac
 }
 

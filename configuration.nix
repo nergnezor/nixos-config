@@ -69,15 +69,17 @@ in
   boot.loader.timeout = 3;
   boot.loader.efi.efiSysMountPoint = "/boot"; # nvme0n1p2 (label NIXBOOT) on
     # the internal disk; also matches disko-usb.nix's ESP mountpoint.
-  # This ESP was created for NixOS alone and never held Ubuntu's GRUB. The
-  # hp-envy is now NixOS-only, so there is no boot menu to choose between
-  # them any more; nitro is still dual-boot (see hosts/nitro.nix).
+  # This ESP was created for NixOS alone and never held Ubuntu's GRUB.
+  # Both hp-envy and nitro (2026-09-07, disko-nitro.nix) are now NixOS-only
+  # whole-disk installs, so there is no boot menu to choose between two OSes
+  # on either machine.
 
-  # Per-host: networking.hostName, GPU driver, and how /home is provided.
-  # hp-envy has a dedicated home partition; nitro still shares Ubuntu's
-  # (see hosts/nitro.nix). Both use `nofail`, so a config accidentally built
-  # for the wrong host degrades to a normal empty local home instead of a
-  # broken boot.
+  # Per-host: networking.hostName and GPU driver (see hosts/*.nix). /home is
+  # a btrfs subvolume on both machines now -- hp-envy has it on its own
+  # partition (PARTITION-RUNBOOK.md), nitro's is a subvolume of the single
+  # whole-disk partition (disko-nitro.nix). Both use `nofail` where
+  # relevant, so a config accidentally built for the wrong host degrades to
+  # a normal empty local home instead of a broken boot.
 
   networking.networkmanager.enable = true;
 
