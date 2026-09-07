@@ -409,8 +409,7 @@ screen_time_enabled = true
     direction = "down_left"
 
 [theme]
-builtin = "Noctalia"
-community_palette = "Atuel"
+community_palette = "Shien"
 mode = "dark"
 source = "community"
 wallpaper_scheme = "m3-content"
