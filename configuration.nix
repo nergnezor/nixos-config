@@ -190,6 +190,9 @@ in
     group = "erik";
     extraGroups = [ "wheel" "networkmanager" "video" "input" ];
     shell = pkgs.bash;
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOYvTkSE04r0vmgzpjdsDCfATF63c8ucQASQbl6/xjae erik.rosengren@uxstream.com"
+    ];
   };
 
   hardware.graphics.enable = true; # GPU-specific extras (nvidia, intel-media-driver) are per-host
