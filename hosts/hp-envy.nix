@@ -130,5 +130,8 @@
     user = "erik";
     workDir = "/home/erik/actions-runner/_work";
     serviceOverrides.ProtectHome = false;
+    # actions/checkout runs with lfs:true; the service's PATH (built from
+    # this list, not the interactive shell's) otherwise has no git-lfs.
+    extraPackages = [ pkgs.git-lfs ];
   };
 }
