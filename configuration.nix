@@ -93,6 +93,23 @@ in
     };
   };
 
+  # Builds the flake's current pin daily and stages it as a new boot entry,
+  # but does not switch or reboot into it -- a bad generation waits at the
+  # systemd-boot menu for a manual pick next time this machine reboots,
+  # rather than taking over a running session unattended. Tracks whatever
+  # nixpkgs revision flake.lock already pins; bumping that revision is
+  # still a deliberate, separate step (see flake.nix), not something this
+  # does on its own.
+  system.autoUpgrade = {
+    enable = true;
+    flake = "git+https://github.com/nergnezor/nixos-config";
+    flags = [ "--refresh" ];
+    dates = "daily";
+    randomizedDelaySec = "45min";
+    operation = "boot";
+    allowReboot = false;
+  };
+
   # Lets the phone reach this machine over SSH without port-forwarding or
   # DDNS on the router: tailscaled joins it to a private WireGuard mesh with
   # the other devices on the same Tailscale account, so it's reachable at a
