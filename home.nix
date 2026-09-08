@@ -1,4 +1,4 @@
-{ config, pkgs, spicetify-nix, ... }:
+{ config, lib, pkgs, spicetify-nix, ... }:
 let
   spicePkgs = spicetify-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
 in
@@ -57,6 +57,11 @@ in
                               # (JetBrainsMono Nerd Font) so the glyphs
                               # AstroNvim's UI depends on (icons, separators)
                               # actually render.
+    nerd-fonts.fira-code      # Neovide guifont in astronvim
+                              # (lua/plugins/astrocore.lua:
+                              # `FiraCode_Nerd_Font:h10`). JetBrains covers
+                              # kitty/VS Code; this one is what the GUI
+                              # editor asks for by name.
     # cliphist
     wl-clipboard  # Claude Code shells out to `wl-paste` to read an image off
                   # the clipboard; without it Ctrl+V in the CLI finds nothing
@@ -115,13 +120,25 @@ in
   # get rewritten, by lazy.nvim on plugin updates) belongs in astronvim's
   # own git history, not copied through the nix store on every edit.
   #
-  # **Before the first rebuild on a machine that already has a real
-  # ~/.config/nvim**, clone astronvim and move the old one aside -- same
-  # collision class as niri and tmux above:
-  #   git clone https://github.com/nergnezor/astronvim ~/astronvim
+  # Fresh machines get ~/astronvim via home.activation.cloneAstronvim
+  # below. **Before the first rebuild on a machine that already has a
+  # real ~/.config/nvim**, move the old one aside -- same collision class
+  # as niri and tmux above:
   #   mv ~/.config/nvim ~/.config/nvim.pre-symlink
   xdg.configFile."nvim".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/astronvim";
+
+  # Clone the AstroNvim config repo on first activation if missing. Kept
+  # out of the nix store on purpose (writable lazy-lock.json, own git
+  # history); this only ensures the symlink target exists after a fresh
+  # install so Neovide/nvim are not left pointing at nothing.
+  home.activation.cloneAstronvim = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    if [ ! -e "${config.home.homeDirectory}/astronvim" ]; then
+      $DRY_RUN_CMD ${pkgs.git}/bin/git clone \
+        https://github.com/nergnezor/astronvim \
+        "${config.home.homeDirectory}/astronvim"
+    fi
+  '';
 
   # programs.git stays undeclared: ~/.gitconfig came back from the rescue
   # and is the working copy. Same reasoning as the niri config had before
