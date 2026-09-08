@@ -27,6 +27,7 @@ in
     # LSPs, and unzip for Mason zip installs (stylua, etc.).
     neovim
     neovide
+    openocd       # optional DAP backend for embedded debugging
     ripgrep
     fd
     gcc
