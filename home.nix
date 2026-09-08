@@ -233,11 +233,11 @@ in
   };
 
   # Qt apps (qdirstat, etc.) otherwise ignore Noctalia's orphaned
-  # qt5ct/qt6ct color files and fall back to a light style. "gnome"
+  # qt5ct/qt6ct color files and fall back to a light style. "adwaita"
   # follows the gsettings color-scheme above.
   qt = {
     enable = true;
-    platformTheme.name = "gnome";
+    platformTheme.name = "adwaita";
     style.name = "adwaita-dark";
   };
 
