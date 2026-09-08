@@ -73,6 +73,9 @@ in
     cursor-cli    # ships the `cursor-agent` binary, not `cursor` -- confirmed
                   # via a direct `nix build` + `--version` check (unfree,
                   # already allowed by nixpkgs.config.allowUnfree above)
+    github-copilot-cli # `npm i -g @github/copilot` fails on NixOS: npm
+                       # tries to mkdir into the immutable nodejs store path.
+                       # Use the nixpkgs package instead (provides `copilot`).
   ]);
   # noctalia is installed by programs.noctalia in configuration.nix (NixOS
   # module, systemd user unit in /etc), not here — a home.packages entry
@@ -207,8 +210,42 @@ in
     ];
   };
 
+  # Noctalia's gtk3/gtk4 templates only inject palette CSS into gtk.css.
+  # That does not flip GTK3 Adwaita to its dark variant — and the file
+  # chooser from xdg-desktop-portal-gtk (programs.niri.useNautilus =
+  # false) is classic GTK3, so it stayed light while the shell was dark.
+  # settings.ini + dconf prefer-dark is what actually switches it.
+  # gtk.css / noctalia.css are left alone for Noctalia to keep owning.
+  gtk = {
+    enable = true;
+    gtk3.extraConfig = {
+      gtk-application-prefer-dark-theme = 1;
+    };
+    gtk4.extraConfig = {
+      gtk-application-prefer-dark-theme = 1;
+    };
+  };
+
+  dconf.settings = {
+    "org/gnome/desktop/interface" = {
+      color-scheme = "prefer-dark";
+    };
+  };
+
+  # Qt apps (qdirstat, etc.) otherwise ignore Noctalia's orphaned
+  # qt5ct/qt6ct color files and fall back to a light style. "gnome"
+  # follows the gsettings color-scheme above.
+  qt = {
+    enable = true;
+    platformTheme.name = "gnome";
+    style.name = "adwaita-dark";
+  };
+
   home.sessionVariables = {
     XDG_CURRENT_DESKTOP = "niri";
+    # Belt-and-suspenders for GTK3 apps that skip settings.ini; niri's
+    # environment block also sets this so dbus-activated portals see it.
+    GTK_THEME = "Adwaita:dark";
   };
 
   # No theme/extensions picked here -- Marketplace is the in-app browser for

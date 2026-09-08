@@ -165,6 +165,10 @@ environment {
                // without this, X11-only apps (steam) fail with "Unable to
                // open a connection to X" since niri's env block is what
                // pushes vars into the systemd/dbus activation environment.
+  // Portal file-chooser (xdg-desktop-portal-gtk) inherits this activation
+  // env; without it the GTK3 dialog stays Adwaita-light even when the
+  // shell + dconf prefer-dark. Mirrors home.sessionVariables.GTK_THEME.
+  GTK_THEME "Adwaita:dark"
 }
 hotkey-overlay {
     skip-at-startup
