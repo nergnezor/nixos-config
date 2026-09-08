@@ -103,7 +103,9 @@ in
   system.autoUpgrade = {
     enable = true;
     flake = "git+https://github.com/nergnezor/nixos-config";
-    flags = [ "--refresh" ];
+    # Flake builds honour flake.lock; --upgrade only updates nix-channels
+    # and is a no-op (with a warning) for flakes.
+    upgrade = false;
     dates = "daily";
     randomizedDelaySec = "45min";
     operation = "boot";
@@ -377,6 +379,8 @@ in
     ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*Controller Touchpad*", ENV{LIBINPUT_IGNORE_DEVICE}="1", ENV{ID_INPUT_MOUSE}="0", ENV{ID_INPUT_TOUCHPAD}="0"
   '';
   systemd.tmpfiles.rules = [
+    # Copilot CLI and some toolchains hardcode /bin/bash, which NixOS does not ship by default.
+    "L+ /bin/bash - - - - /run/current-system/sw/bin/bash"
     "z /dev/uinput       0660 erik erik - -"
     "z /dev/input/event* 0660 erik erik - -"
   ];

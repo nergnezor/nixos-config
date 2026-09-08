@@ -300,11 +300,11 @@ widget_order = [
     [lockscreen_widgets.widget."lockscreen-login-box@DP-3"]
     box_height = 196.0
     box_width = 810.0
-    cx = 1670.0001220703125
-    cy = 1695.9998779296875
+    cx = 1600.479248046875
+    cy = 1625.5589599609375
     output = "DP-3"
-    placement_height = 1878.0
-    placement_width = 3339.0
+    placement_height = 1800.0
+    placement_width = 3200.0
     rotation = 0.0
     type = "login_box"
 
@@ -327,11 +327,11 @@ widget_order = [
     [lockscreen_widgets.widget."lockscreen-login-box@DP-4"]
     box_height = 196.0
     box_width = 810.0
-    cx = 491.0
-    cy = 1562.9998779296875
+    cx = 469.5
+    cy = 1495.822265625
     output = "DP-4"
-    placement_height = 1745.0
-    placement_width = 982.0
+    placement_height = 1670.0
+    placement_width = 939.0
     rotation = 0.0
     type = "login_box"
 
@@ -378,6 +378,12 @@ widget_order = [
         show_unlock_hint = true
         show_weather = true
 
+[plugin_settings."avivbintangaringga/nix-monitor"]
+update_command = "nrbu"
+
+[plugin_settings."nzlov/daily-wallpaper"]
+source = "nasa"
+
 [plugins]
 enabled = [
     "noctalia/bongocat",
@@ -413,10 +419,10 @@ screen_time_enabled = true
     direction = "down_left"
 
 [theme]
-builtin = "Noctalia"
-community_palette = "Atuel"
+builtin = "Rosé Pine"
+community_palette = "Rose Pine Moon"
 mode = "dark"
-source = "community"
+source = "builtin"
 wallpaper_scheme = "m3-content"
 
     [theme.templates]
@@ -427,10 +433,10 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-08.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-08.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -439,10 +445,10 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-08.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-08.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"

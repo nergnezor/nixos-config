@@ -4,11 +4,13 @@
 #   ./rebuild.sh                 sync, then nixos-rebuild switch
 #   ./rebuild.sh test            sync, then nixos-rebuild test (no boot entry)
 #   ./rebuild.sh boot|build      the other nixos-rebuild actions
+#   ./rebuild.sh --update        bump nixpkgs in flake.lock first (deliberate)
 #   ./rebuild.sh --commit        ...and commit the synced config, if it built
 #   ./rebuild.sh --push          ...and push (implies --commit)
 #
 # Commit/push happen AFTER a successful rebuild on purpose -- a config that
-# doesn't build shouldn't land in history.
+# doesn't build shouldn't land in history. Flake updates are opt-in for the
+# same reason: a normal rebuild should not silently drag in a new nixpkgs.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,12 +19,14 @@ cd "$repo"
 action="switch"
 do_commit=0
 do_push=0
+do_update=0
 for arg in "$@"; do
   case "$arg" in
     switch|test|boot|build|dry-activate) action="$arg" ;;
+    --update|-u)                         do_update=1 ;;
     --commit|-c)                         do_commit=1 ;;
     --push|-p)                           do_commit=1; do_push=1 ;;
-    *) echo "usage: ${0##*/} [switch|test|boot|build|dry-activate] [--commit] [--push]" >&2; exit 2 ;;
+    *) echo "usage: ${0##*/} [switch|test|boot|build|dry-activate] [--update] [--commit] [--push]" >&2; exit 2 ;;
   esac
 done
 
@@ -57,6 +61,11 @@ if [ -n "$untracked" ]; then
 fi
 
 git status --short || true
+
+if [ "$do_update" = 1 ]; then
+  echo "==> nix flake update nixpkgs"
+  nix flake update nixpkgs
+fi
 
 echo "==> nixos-rebuild $action --flake .#$attr"
 sudo nixos-rebuild "$action" --flake ".#$attr"

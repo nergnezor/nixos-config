@@ -2,21 +2,19 @@
   description = "erik's niri NixOS config (whole-disk on both hp-envy and nitro)";
 
   inputs = {
-    # A PINNED unstable revision, not a release branch and not a floating
-    # branch either.
+    # Floating nixos-unstable (not a release branch). Locked by flake.lock;
+    # bump deliberately with `nix flake update nixpkgs` + a rebuild to check.
     #
-    # Why unstable: originally chosen so niri/ghostty would version-match an
-    # Ubuntu install that shared this home directory (see git history before
-    # 2026-09-07) -- both machines are whole-disk NixOS now, so that
-    # constraint no longer applies. Kept on unstable regardless for
-    # up-to-date niri/noctalia rather than switching to a release branch.
+    # Why unstable: originally so niri/ghostty would version-match an Ubuntu
+    # install that shared this home directory (see git history before
+    # 2026-09-07) -- both machines are whole-disk NixOS now. Kept on unstable
+    # for up-to-date niri/noctalia rather than switching to a release branch.
     #
-    # Why pinned: a floating nixos-unstable is what broke an earlier install
-    # attempt outright (`libdisplay-info_0_2` removed before every internal
-    # caller was updated). This exact revision is verified working -- it's
-    # the one that produced niri 26.04 as a cached binary. Bump it
-    # deliberately, with a rebuild to check, rather than drifting.
-    nixpkgs.url = "github:NixOS/nixpkgs/3ed67ec0a4d3c7ab4ae1f04f8ee8df07bfa506a2";
+    # Was previously pinned to an exact rev after a floating nixos-unstable
+    # broke an install (`libdisplay-info_0_2` removed mid-channel). Floating
+    # again now that the machines are past that install window; flake.lock
+    # still freezes the resolved rev until you update it on purpose.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     home-manager = {
       # master is the branch meant to pair with unstable. Pairing it with a
       # release branch is what produced the earlier hard eval error
