@@ -203,11 +203,12 @@ in
   # broke systemd-tmpfiles on the first boot — the /dev/uinput rules below
   # name it: "Failed to resolve group 'erik': No such process".
   users.groups.erik.gid = 1000;
+  users.groups.plugdev = {};
   users.users.erik = {
     isNormalUser = true;
     uid = 1000;
     group = "erik";
-    extraGroups = [ "wheel" "networkmanager" "video" "input" ];
+    extraGroups = [ "wheel" "networkmanager" "video" "input" "plugdev" ];
     shell = pkgs.bash;
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOYvTkSE04r0vmgzpjdsDCfATF63c8ucQASQbl6/xjae erik.rosengren@uxstream.com"
@@ -377,6 +378,8 @@ in
     ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Mouseless-Virtual-Mouse", ENV{ID_INPUT_JOYSTICK}="0", ENV{ID_INPUT_MOUSE}="1"
     ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="js*", ATTRS{name}=="Mouseless-Virtual-Mouse", MODE="0000", GROUP="root"
     ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*Controller Touchpad*", ENV{LIBINPUT_IGNORE_DEVICE}="1", ENV{ID_INPUT_MOUSE}="0", ENV{ID_INPUT_TOUCHPAD}="0"
+    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0483", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+    KERNEL=="hidraw*", ATTRS{idVendor}=="0483", MODE="0660", GROUP="plugdev", TAG+="uaccess"
   '';
   systemd.tmpfiles.rules = [
     # Copilot CLI and some toolchains hardcode /bin/bash, which NixOS does not ship by default.
