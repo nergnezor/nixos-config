@@ -23,17 +23,15 @@ in
     vscode
     # AstroNvim (github:nergnezor/astronvim, its own repo -- not vendored
     # here, see the xdg.configFile."nvim" symlink below) needs a C compiler
-    # for treesitter parsers, ripgrep/fd for telescope, and node for the
-    # LSPs the community packs pull in. Confirmed against what's actually
-    # on Ubuntu right now (`which`), not guessed from AstroNvim's docs --
-    # python was NOT needed, none of the enabled community packs
-    # (lua/rust/dart) call for pynvim.
+    # for treesitter parsers, ripgrep/fd for telescope/snacks, node for
+    # LSPs, and unzip for Mason zip installs (stylua, etc.).
     neovim
     neovide
     ripgrep
     fd
     gcc
     gnumake
+    unzip
     nodejs_22
     # discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
