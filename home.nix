@@ -32,6 +32,7 @@ in
     gcc
     gnumake
     unzip
+    wget          # Mason's cpptools downloader shells out to wget
     nodejs_22
     # discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
