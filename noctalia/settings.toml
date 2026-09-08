@@ -194,21 +194,24 @@ behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
 
     [idle.behavior.lock]
     action = "lock"
-    enabled = false
-    timeout = 600.0
+    enabled = true
+    timeout = 300.0
 
     [idle.behavior.lock-and-suspend]
     action = "lock_and_suspend"
-    enabled = true
+    enabled = false
     timeout = 9000.0
 
     [idle.behavior.screen-off]
     action = "screen_off"
     enabled = true
-    timeout = 660.0
+    timeout = 7200.0
 
 [location]
 auto_locate = true
+
+[lockscreen]
+blurred_desktop = true
 
 [lockscreen_widgets]
 enabled = false
@@ -311,7 +314,8 @@ enabled = [
     "avivbintangaringga/nix-monitor",
     "tordex/nvtop",
     "davemhammer/tailscale",
-    "dunarand/tmux-provider"
+    "dunarand/tmux-provider",
+    "nzlov/daily-wallpaper"
 ]
 
 [shell]
@@ -348,16 +352,22 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-2]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+
+    [wallpaper.monitors.DP-3]
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
+
+    [wallpaper.monitors.DP-4]
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-08.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
