@@ -317,7 +317,12 @@ in
   };
 
   # nix-ld gör att NixOS kan köra vanliga dynamiskt länkade Linux-binärer
+  # (vcpkg's arm-none-eabi-gdb, Mason LSPs, etc.). Default library set is
+  # merged with this list — ncurses is what arm-none-eabi-gdb needs and is
+  # not in the module default (DAP then fails with "Unable to start
+  # debugging" / missing libncursesw.so.6).
   programs.nix-ld.enable = true;
+  programs.nix-ld.libraries = with pkgs; [ ncurses ];
 
   # mouseless's own user unit. Ubuntu's copy of this sat in
   # ~/.config/systemd/user, was hand-restored after the rescue, and was

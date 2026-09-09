@@ -1,13 +1,24 @@
 { config, lib, pkgs, spicetify-nix, ... }:
 let
   spicePkgs = spicetify-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
+  # Low-latency USB camera viewer. mpv + v4l2 beats cheese/guvcview for
+  # latency; the camera on this machine tops out at 30 fps (YUYV only), so
+  # "fast" here means minimal buffering, not inventing frames the sensor
+  # cannot deliver. Rotation is a property (video-rotate), not a re-encode.
+  usbcam = pkgs.writeShellApplication {
+    name = "usbcam";
+    runtimeInputs = with pkgs; [ mpv v4l-utils ];
+    text = builtins.readFile ./scripts/usbcam.sh;
+  };
 in
 {
   home.username = "erik";
   home.homeDirectory = "/home/erik";
   home.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
 
-  home.packages = (with pkgs; [
+  home.packages = [
+    usbcam
+  ] ++ (with pkgs; [
     kitty         # dropdown-term.sh spawns this specifically -- replaced
                   # ghostty (2026-09-07): erik switched terminals, and
                   # kitty's cursor_trail is the "flygande pekare" effect
@@ -35,11 +46,13 @@ in
     unzip
     wget          # Mason's cpptools downloader shells out to wget
     nodejs_22
-    # discord, thunderbird, mpv, vlc, gimp stay dropped -- erik only wanted
+    # discord, thunderbird, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
-    # the trimmed set. Spotify itself now comes from programs.spicetify
-    # below, not this list -- the spicetify-nix module installs its own
-    # patched build and warns against also listing pkgs.spotify here.
+    # the trimmed set. mpv is pulled in only as a runtimeInput of usbcam
+    # above, not as a general media player here. Spotify itself now comes
+    # from programs.spicetify below, not this list -- the spicetify-nix
+    # module installs its own patched build and warns against also listing
+    # pkgs.spotify here.
     git           # was pulled in via programs.git before; that module's gone
                   # now that .gitconfig comes from the shared real home
     lazygit

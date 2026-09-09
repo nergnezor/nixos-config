@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Sync the live config into this repo, then rebuild NixOS from it.
+# Pull remote, sync the live config into this repo, then rebuild NixOS from it.
 #
-#   ./rebuild.sh                 sync, then nixos-rebuild switch
-#   ./rebuild.sh test            sync, then nixos-rebuild test (no boot entry)
+#   ./rebuild.sh                 pull, sync, then nixos-rebuild switch
+#   ./rebuild.sh test            pull, sync, then nixos-rebuild test (no boot entry)
 #   ./rebuild.sh boot|build      the other nixos-rebuild actions
 #   ./rebuild.sh --update        bump nixpkgs in flake.lock first (deliberate)
 #   ./rebuild.sh --commit        ...and commit the synced config, if it built
@@ -11,6 +11,8 @@
 # Commit/push happen AFTER a successful rebuild on purpose -- a config that
 # doesn't build shouldn't land in history. Flake updates are opt-in for the
 # same reason: a normal rebuild should not silently drag in a new nixpkgs.
+# git pull runs first so another machine's pushed config is in place before
+# the live sync overlays machine-local state on top.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +45,9 @@ if [ -z "$attr" ]; then
        exit 1 ;;
   esac
 fi
+
+echo "==> git pull"
+git pull --ff-only
 
 echo "==> syncing live config into $repo"
 ./noctalia/sync.sh pull
