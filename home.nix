@@ -39,6 +39,7 @@ in
     neovim
     neovide
     openocd       # optional DAP backend for embedded debugging
+    probe-rs-tools # flashes STM32U5 (OpenOCD HLA cannot program this chip)
     ripgrep
     fd
     gcc
