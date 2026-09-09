@@ -321,6 +321,7 @@ in
   # merged with this list — ncurses is what arm-none-eabi-gdb needs and is
   # not in the module default (DAP then fails with "Unable to start
   # debugging" / missing libncursesw.so.6).
+  # openocd/probe-rs: see uxstream-tools.nix (imported from home.nix).
   programs.nix-ld.enable = true;
   programs.nix-ld.libraries = with pkgs; [ ncurses ];
 

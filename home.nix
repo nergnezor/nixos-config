@@ -1,6 +1,7 @@
 { config, lib, pkgs, spicetify-nix, ... }:
 let
   spicePkgs = spicetify-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
+  uxstreamTools = import ./uxstream-tools.nix { inherit pkgs; };
   # Low-latency USB camera viewer. mpv + v4l2 beats cheese/guvcview for
   # latency; the camera on this machine tops out at 30 fps (YUYV only), so
   # "fast" here means minimal buffering, not inventing frames the sensor
@@ -18,7 +19,9 @@ in
 
   home.packages = [
     usbcam
-  ] ++ (with pkgs; [
+  ]
+  ++ uxstreamTools.packages
+  ++ (with pkgs; [
     kitty         # dropdown-term.sh spawns this specifically -- replaced
                   # ghostty (2026-09-07): erik switched terminals, and
                   # kitty's cursor_trail is the "flygande pekare" effect
@@ -38,8 +41,6 @@ in
     # LSPs, and unzip for Mason zip installs (stylua, etc.).
     neovim
     neovide
-    openocd       # optional DAP backend for embedded debugging
-    probe-rs-tools # flashes STM32U5 (OpenOCD HLA cannot program this chip)
     ripgrep
     fd
     gcc
