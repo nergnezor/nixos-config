@@ -20,6 +20,7 @@
   packages = with pkgs; [
     openocd
     probe-rs-tools
+    picocom # UART console (eyebuds USART1 @ 2 Mbaud: picocom -b 2000000 /dev/ttyACM0)
     jdk17
     android-tools # adb / fastboot without depending on ~/Android/Sdk being on PATH
     llvmPackages.libclang # bindgen for rust_lwip when cargo-ndk builds the JNI lib

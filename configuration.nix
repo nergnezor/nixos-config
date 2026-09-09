@@ -211,7 +211,7 @@ in
     isNormalUser = true;
     uid = 1000;
     group = "erik";
-    extraGroups = [ "wheel" "networkmanager" "video" "input" "plugdev" ];
+    extraGroups = [ "wheel" "networkmanager" "video" "input" "plugdev" "dialout" ];
     shell = pkgs.bash;
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOYvTkSE04r0vmgzpjdsDCfATF63c8ucQASQbl6/xjae erik.rosengren@uxstream.com"
