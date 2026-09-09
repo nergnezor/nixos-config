@@ -96,8 +96,8 @@ in
     github-copilot-cli # `npm i -g @github/copilot` fails on NixOS: npm
                        # tries to mkdir into the immutable nodejs store path.
                        # Use the nixpkgs package instead (provides `copilot`).
-    gemini-cli-bin     # Google Gemini CLI (`gemini`). -bin is newer than
-                       # pkgs.gemini-cli on this pin (0.58 vs 0.47).
+    antigravity-ide    # Google Antigravity (`antigravity-ide`); replaces
+                       # Gemini CLI. Unfree; allowUnfree already set.
   ]);
 
   # Shows up in noctalia/fuzzel/etc. as "USB Camera"; always starts rotated
