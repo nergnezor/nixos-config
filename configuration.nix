@@ -16,6 +16,9 @@ let
 in
 {
   nixpkgs.config.allowUnfree = true; # vivaldi, vscode, claude-code
+  # So `nix-build` / androidenv compositions can fetch the SDK without an
+  # interactive license prompt (optional; day-to-day builds use ~/Android/Sdk).
+  nixpkgs.config.android_sdk.accept_license = true;
   # noctalia-shell.overlays.default was tried and reverted: an overlay
   # builds against THIS nixpkgs, and the meson build wanted a
   # wayland-protocols staging file this pin didn't have.

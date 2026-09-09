@@ -13,3 +13,4 @@ alias nrb='~/nixos-config/rebuild.sh'
 alias nrbu='~/nixos-config/rebuild.sh --update'
 alias nrbc='~/nixos-config/rebuild.sh --commit'
 alias nrbp='~/nixos-config/rebuild.sh --push'
+. "$HOME/.cargo/env"

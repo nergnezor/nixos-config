@@ -1,7 +1,10 @@
 { config, lib, pkgs, spicetify-nix, ... }:
 let
   spicePkgs = spicetify-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
-  uxstreamTools = import ./uxstream-tools.nix { inherit pkgs; };
+  uxstreamTools = import ./uxstream-tools.nix {
+    inherit pkgs;
+    homeDirectory = config.home.homeDirectory;
+  };
   # Low-latency USB camera viewer. mpv + v4l2 beats cheese/guvcview for
   # latency; the camera on this machine tops out at 30 fps (YUYV only), so
   # "fast" here means minimal buffering, not inventing frames the sensor
@@ -277,7 +280,7 @@ in
     # Belt-and-suspenders for GTK3 apps that skip settings.ini; niri's
     # environment block also sets this so dbus-activated portals see it.
     GTK_THEME = "Adwaita:dark";
-  };
+  } // uxstreamTools.sessionVariables;
 
   # No theme/extensions picked here -- Marketplace is the in-app browser for
   # both, so pick visually from inside Spotify rather than guessing here.
