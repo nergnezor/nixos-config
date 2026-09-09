@@ -94,6 +94,20 @@ in
                        # tries to mkdir into the immutable nodejs store path.
                        # Use the nixpkgs package instead (provides `copilot`).
   ]);
+
+  # Shows up in noctalia/fuzzel/etc. as "USB Camera"; always starts rotated
+  # 270° (the mount orientation on this desk). CLI `usbcam` stays unrotated
+  # by default so -r still means something when run by hand.
+  xdg.desktopEntries.usbcam = {
+    name = "USB Camera";
+    genericName = "Camera";
+    comment = "Low-latency USB camera (rotated 270°)";
+    exec = "${lib.getExe usbcam} -r 270";
+    icon = "camera-web";
+    categories = [ "AudioVideo" "Video" "Photography" ];
+    terminal = false;
+  };
+
   # noctalia is installed by programs.noctalia in configuration.nix (NixOS
   # module, systemd user unit in /etc), not here — a home.packages entry
   # only put the binary in the profile; Ubuntu's shared-home unit still
