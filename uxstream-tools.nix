@@ -13,8 +13,8 @@
 # extras there). Do not put the full SDK in the nix store — it is read-only
 # and assembleDebug fails when AGP wants another build-tools package.
 #
-# Rust/cargo-ndk stay on rustup (~/.cargo), not nix — avoids fighting the
-# toolchain used for aarch64-linux-android.
+# Rust/cargo now comes from nix (home.packages: rustc, cargo, rust-analyzer).
+# cargo-ndk for Android builds also installs from nix when needed.
 { pkgs, homeDirectory }:
 {
   packages = with pkgs; [
@@ -23,6 +23,7 @@
     picocom # UART console (eyebuds USART1 @ 2 Mbaud: picocom -b 2000000 /dev/ttyACM0)
     jdk17
     android-tools # adb / fastboot without depending on ~/Android/Sdk being on PATH
+    cargo-ndk # Android NDK build tool for Rust/cargo
     llvmPackages.libclang # bindgen for rust_lwip when cargo-ndk builds the JNI lib
   ];
 

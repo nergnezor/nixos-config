@@ -48,6 +48,9 @@ in
     fd
     gcc
     gnumake
+    rustc
+    cargo
+    rust-analyzer
     unzip
     wget          # Mason's cpptools downloader shells out to wget
     nodejs_22
