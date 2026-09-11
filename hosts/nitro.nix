@@ -62,6 +62,14 @@
     # build-android.yml's "Ensure Zen storage server is running" step
     # backgrounds zenserver with setsid (util-linux) so it survives past
     # the step that launches it -- also missing from this minimal PATH.
-    extraPackages = [ pkgs.git-lfs pkgs.util-linux ];
+    #
+    # That same step polls zenserver with curl, redirected to /dev/null so
+    # "connection refused" retries stay quiet -- which also silently
+    # swallows "curl: command not found" when curl itself isn't on PATH.
+    # Confirmed by hand: zenserver came up and answered instantly on
+    # localhost:8558 from outside the service's sandbox the whole time the
+    # step spent failing, so this (not a slow/stuck server) was the actual
+    # cause of every "ERROR: Zen server failed to start" above.
+    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl ];
   };
 }
