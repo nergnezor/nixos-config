@@ -180,6 +180,14 @@ in
     fi
   '';
 
+  # AngelBeach's build-android.yml resolves JAVA_HOME by trying the repo
+  # variable, then /usr/lib/jvm/java-17-openjdk-amd64, then $HOME/jdk17 --
+  # none of which exist on a fresh NixOS runner. This symlink satisfies the
+  # last fallback so the self-hosted runner on this machine doesn't need
+  # its own hand-provisioned JDK to match a path hardcoded for other
+  # runners (see the workflow's "Resolve JAVA_HOME" step comment).
+  home.file."jdk17".source = pkgs.jdk17;
+
   # programs.git stays undeclared: ~/.gitconfig came back from the rescue
   # and is the working copy. Same reasoning as the niri config had before
   # this commit — adopt it into the repo deliberately if you want it

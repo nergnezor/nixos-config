@@ -59,6 +59,9 @@
     serviceOverrides.ProtectHome = false;
     # actions/checkout runs with lfs:true; the service's PATH (built from
     # this list, not the interactive shell's) otherwise has no git-lfs.
-    extraPackages = [ pkgs.git-lfs ];
+    # build-android.yml's "Ensure Zen storage server is running" step
+    # backgrounds zenserver with setsid (util-linux) so it survives past
+    # the step that launches it -- also missing from this minimal PATH.
+    extraPackages = [ pkgs.git-lfs pkgs.util-linux ];
   };
 }
