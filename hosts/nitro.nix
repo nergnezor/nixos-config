@@ -70,6 +70,16 @@
     # localhost:8558 from outside the service's sandbox the whole time the
     # step spent failing, so this (not a slow/stuck server) was the actual
     # cause of every "ERROR: Zen server failed to start" above.
-    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl ];
+    # "Disable the editor-only UnrealMCP plugin for packaging" edits
+    # BeachVolleyball.uproject with a small python3 script.
+    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl pkgs.python3 ];
+    # RunUAT/UnrealBuildTool are .NET, and the engine's bundled self-contained
+    # runtime aborts with "Couldn't find a valid ICU package" on NixOS (no
+    # libicu at the path .NET's globalization code expects) -- hit for real
+    # doing the initial engine build by hand (Setup.sh's GitDependencies) and
+    # pre-empted here for the same reason before Package-for-Android needs it.
+    extraEnvironment = {
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+    };
   };
 }
