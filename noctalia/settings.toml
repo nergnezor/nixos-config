@@ -225,10 +225,11 @@ behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
 auto_locate = true
 
 [lockscreen]
+blur_intensity = 0.21999999508261681
 blurred_desktop = true
 
 [lockscreen_widgets]
-enabled = false
+enabled = true
 schema_version = 2
 widget_order = [
     "lockscreen-login-box@DP-3",
@@ -400,6 +401,7 @@ enabled = [
 
 [shell]
 lang = "sv"
+password_style = "random"
 screen_time_enabled = true
 
     [shell.animation]
@@ -431,10 +433,10 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-09.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-09.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -443,10 +445,10 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-09.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-09.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
