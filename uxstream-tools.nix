@@ -25,6 +25,24 @@
     android-tools # adb / fastboot without depending on ~/Android/Sdk being on PATH
     cargo-ndk # Android NDK build tool for Rust/cargo
     llvmPackages.libclang # bindgen for rust_lwip when cargo-ndk builds the JNI lib
+    pkg-config
+    dbus.dev # dbus-1.pc + headers for libdbus-sys (companion_router BLE deps)
+    systemd.dev # libudev.pc + headers for libudev-sys (hw-benchmark USB/device detection)
+    # Matches the Linux deps installed by .github/workflows/build-linux-router.yml
+    # (apt: libgstreamer*-dev, gstreamer1.0-plugins-*, libgstrtspserver-1.0-dev,
+    # libges-1.0-dev, libxkbcommon-dev, libinput-dev) so `cargo build`/`cargo test`
+    # for router/linux works locally the same as in CI.
+    gst_all_1.gstreamer
+    gst_all_1.gst-plugins-base
+    gst_all_1.gst-plugins-good
+    gst_all_1.gst-plugins-bad
+    gst_all_1.gst-plugins-ugly
+    gst_all_1.gst-libav
+    gst_all_1.gst-rtsp-server
+    gst_all_1.gst-editing-services
+    libxkbcommon
+    libinput.out # libinput's default outputsToInstall is just the CLI ("bin"); need the .so
+    glib.dev # glib-2.0.pc, transitively required by gstreamer-1.0.pc
   ];
 
   sessionVariables = {
@@ -32,5 +50,16 @@
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
     ANDROID_HOME = "${homeDirectory}/Android/Sdk";
     ANDROID_SDK_ROOT = "${homeDirectory}/Android/Sdk";
+    # Home-manager packages don't wire up pkg-config search paths the way
+    # nix-shell buildInputs do -- point it at the profile explicitly.
+    PKG_CONFIG_PATH = "${homeDirectory}/.nix-profile/lib/pkgconfig:${homeDirectory}/.nix-profile/share/pkgconfig";
+    # Some -sys crates' .pc files (e.g. xkbcommon, libinput) list only "-llib"
+    # with no "-L", relying on a standard linker search path that the profile
+    # isn't on -- point the linker at it directly.
+    LIBRARY_PATH = "${homeDirectory}/.nix-profile/lib";
+    # bindgen invokes libclang directly, bypassing the gcc wrapper that
+    # normally points NixOS builds at glibc's headers -- without this,
+    # bindgen can't find things like endian.h (needed by rust_lwip).
+    BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${pkgs.glibc.dev}/include";
   };
 }

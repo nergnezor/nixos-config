@@ -14,3 +14,23 @@ alias nrbu='~/nixos-config/rebuild.sh --update'
 alias nrbc='~/nixos-config/rebuild.sh --commit'
 alias nrbp='~/nixos-config/rebuild.sh --push'
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# nix profile packages (e.g. dbus.dev) don't wire up pkg-config automatically
+# like nix-shell buildInputs do -- point pkg-config at the profile explicitly.
+export PKG_CONFIG_PATH="$HOME/.nix-profile/lib/pkgconfig:$HOME/.nix-profile/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+# bindgen (used by some crates, e.g. lwip-sys) needs libclang.so; nix profile's
+# libclang.lib output lands in ~/.nix-profile/lib but bindgen won't find it
+# without this pointer.
+export LIBCLANG_PATH="$HOME/.nix-profile/lib"
+
+# bindgen invokes libclang directly, bypassing the gcc wrapper that normally
+# points NixOS builds at glibc's headers -- without this, bindgen can't find
+# things like endian.h. Path must match the glibc the system gcc actually
+# uses (check with: echo | gcc -E -Wp,-v -).
+export BINDGEN_EXTRA_CLANG_ARGS="-isystem /nix/store/qwi863qp79xkdm2yw3xzjh73dpg9qh67-glibc-2.42-84-dev/include"
+
+# Some -sys crates' .pc files (e.g. xkbcommon, libinput) list only "-llib"
+# with no "-L", relying on a standard linker search path the profile isn't
+# on -- point the linker at it directly.
+export LIBRARY_PATH="$HOME/.nix-profile/lib"
