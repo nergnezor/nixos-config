@@ -57,6 +57,16 @@
     extraLabels = [ "ue5" ];
     user = "erik";
     serviceOverrides.ProtectHome = false;
+    # Default workDir falls back to the systemd RuntimeDirectory, which
+    # lives on /run -- a tmpfs capped at boot.runSize (25% of RAM here,
+    # ~7.8G) regardless of how much real disk is free. Confirmed by hand:
+    # a full Android package run got all the way to the final
+    # ueBuildUniversalAPKSRelease step before Gradle's bundletool died with
+    # "No space left on device" against a `df` showing 1.7T free on /home
+    # -- /run itself was the thing that had filled up. hp-envy.nix hit the
+    # same class of problem for a different reason (this same option's doc
+    # comment) and already points workDir at real disk; do the same here.
+    workDir = "/home/erik/actions-runner/_work";
     # actions/checkout runs with lfs:true; the service's PATH (built from
     # this list, not the interactive shell's) otherwise has no git-lfs.
     # build-android.yml's "Ensure Zen storage server is running" step
@@ -72,7 +82,12 @@
     # cause of every "ERROR: Zen server failed to start" above.
     # "Disable the editor-only UnrealMCP plugin for packaging" edits
     # BeachVolleyball.uproject with a small python3 script.
-    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl pkgs.python3 ];
+    #
+    # python3Packages.pip: publish-play-internal's "Install uploader
+    # dependencies" step runs `pip install --user --break-system-packages
+    # ...` to get the Play upload script's google-api dependencies -- nix's
+    # python3 (unlike Debian/Ubuntu's) doesn't bundle a pip binary at all.
+    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl pkgs.python3 pkgs.python3Packages.pip ];
     # RunUAT/UnrealBuildTool are .NET, and the engine's bundled self-contained
     # runtime aborts with "Couldn't find a valid ICU package" on NixOS (no
     # libicu at the path .NET's globalization code expects) -- hit for real

@@ -132,6 +132,95 @@
     serviceOverrides.ProtectHome = false;
     # actions/checkout runs with lfs:true; the service's PATH (built from
     # this list, not the interactive shell's) otherwise has no git-lfs.
-    extraPackages = [ pkgs.git-lfs ];
+    # Rest of this list and extraEnvironment ported from nitro.nix
+    # (2026-09-12) after a long live-debugging session got AngelBeach's
+    # Android build working there -- every one of these was hit for real on
+    # that machine, in this order, each only discovered by getting past the
+    # previous one:
+    #
+    #   - util-linux (setsid): "Ensure Zen storage server is running"
+    #     backgrounds zenserver with setsid so it survives past the step
+    #     that launches it.
+    #   - curl: that same step polls zenserver's health endpoint with curl,
+    #     redirected to /dev/null so "connection refused" retries stay
+    #     quiet -- which also silently swallows "curl: command not found"
+    #     when curl itself isn't on PATH. Confirmed by hand on nitro: the
+    #     server was actually up and answering the whole time the step
+    #     spent failing.
+    #   - python3: "Disable the editor-only UnrealMCP plugin for packaging"
+    #     edits BeachVolleyball.uproject with a small python3 script.
+    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl pkgs.python3 ];
+    # RunUAT/UnrealBuildTool are .NET, and the engine's bundled
+    # self-contained runtime aborts with "Couldn't find a valid ICU
+    # package" on NixOS (no libicu at the path .NET's globalization code
+    # expects) -- hit on nitro building the engine by hand (Setup.sh's
+    # GitDependencies), and needed again here for RunUAT/Cook at CI time.
+    #
+    # UnrealEditor-Cmd (the engine's own compiled ELF binary, used by the
+    # Cook step) dynamically links against a normal desktop-Linux library
+    # set NixOS doesn't provide at the FHS paths it expects -- glib first
+    # (libglib-2.0.so.0), then libnss3.so once glib was fixed (CEF/Chromium,
+    # which UnrealEditor bundles for its web-browser widget and pulls in
+    # even for a headless Cook), then libgbm.so.1 (a separate package from
+    # mesa's default output) once CEF's own deps were satisfied. This adds
+    # CEF's whole usual Linux runtime dependency set up front instead of
+    # one library at a time -- the standard list Playwright/Puppeteer/
+    # Electron need on NixOS for the same reason (bundled Chromium expects
+    # an FHS system). Unused entries cost nothing; another 15-90min rebuild
+    # for each one individually (nitro's actual experience) is the real
+    # expense.
+    extraEnvironment = {
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
+        glib
+        nss
+        nspr
+        atk
+        at-spi2-atk
+        at-spi2-core
+        cups
+        dbus
+        libdrm
+        gtk3
+        pango
+        cairo
+        gdk-pixbuf
+        alsa-lib
+        expat
+        mesa
+        libgbm
+        systemd # libudev.so.1
+        libxkbcommon
+        libx11
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
+        libxcb
+        libxtst
+        libxi
+        libxscrnsaver
+        libxshmfence
+        libGL # libglvnd -- also carries libEGL.so/libGLX.so/libOpenGL.so
+        vulkan-loader
+        wayland
+      ]);
+    };
+    # Nix-config parity with nitro.nix stops here: the engine itself
+    # (~/UnrealEngine-Angelscript, ~160G, cloned + built by hand) is not
+    # tracked by either host's config, and hp-envy's copy was lost in the
+    # disk corruption described above -- it needs cloning and building from
+    # scratch again (`git clone --branch angelscript-master
+    # git@github.com:Hazelight/UnrealEngine-Angelscript.git`, then
+    # Setup.sh, GenerateProjectFiles.sh, `make UnrealEditor` with
+    # DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 set) before this runner can
+    # actually build anything. Likewise the Android SDK under ~/Android/Sdk
+    # needs the matching NDK (27.2.12479018), platforms;android-36 and
+    # build-tools;36.0.0 installed via sdkmanager, and a real (non-nix-
+    # wrapped) cmdline-tools/latest -- nitro's had a broken nix-wrapped
+    # sdkmanager whose launcher script hardcoded ANDROID_HOME to a
+    # read-only /nix/store path, so it may be worth checking hp-envy's for
+    # the same fault before assuming its sdkmanager works.
   };
 }
