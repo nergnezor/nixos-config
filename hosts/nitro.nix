@@ -87,7 +87,57 @@
     # libraries: libglib-2.0.so.0: cannot open shared object file".
     extraEnvironment = {
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
-      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.glib ];
+      # glib fixed "libglib-2.0.so.0" (confirmed). The very next attempt
+      # then failed the same way on "libnss3.so" -- CEF/Chromium territory,
+      # which UnrealEditor bundles for its web-browser widget and pulls in
+      # even for a headless Cook. Given how expensive each of these
+      # discover-one-then-full-rebuild round trips is (see the
+      # RuntimeDirectory-wipe comment below), this adds CEF's whole usual
+      # Linux runtime dependency set up front instead of one library at a
+      # time -- the standard list Playwright/Puppeteer/Electron need on
+      # NixOS for the same reason (bundled Chromium expects an FHS system).
+      # Unused entries cost nothing; another 15-90min rebuild for each one
+      # individually is the real expense here.
+      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
+        glib
+        nss
+        nspr
+        atk
+        at-spi2-atk
+        at-spi2-core
+        cups
+        dbus
+        libdrm
+        gtk3
+        pango
+        cairo
+        gdk-pixbuf
+        alsa-lib
+        expat
+        mesa
+        systemd # libudev.so.1
+        libxkbcommon
+        libx11
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
+        libxcb
+        libxtst
+        libxi
+        libxscrnsaver
+      ]);
     };
+    # Careful before editing this block again: the runner's $HOME (and so the
+    # AngelBeach checkout, and Intermediate/Build under it) lives under
+    # systemd's RuntimeDirectory (/run/github-runner/angelbeach-ue5), which
+    # `nixos-rebuild switch` wipes on the service restart it does to apply
+    # any change here. Confirmed by hand 2026-09-12: a from-scratch ~90min
+    # engine+game recompile that had just succeeded got thrown away by the
+    # very next switch (only adding LD_LIBRARY_PATH above), forcing a full
+    # second ~90min recompile before Cook could even be retried. Batch any
+    # further extraPackages/extraEnvironment changes instead of iterating
+    # one missing dependency at a time.
   };
 }
