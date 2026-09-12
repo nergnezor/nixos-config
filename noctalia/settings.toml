@@ -433,10 +433,10 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-12.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-12.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -445,10 +445,10 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-12.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-11.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-12.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"

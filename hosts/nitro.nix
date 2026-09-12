@@ -78,8 +78,16 @@
     # libicu at the path .NET's globalization code expects) -- hit for real
     # doing the initial engine build by hand (Setup.sh's GitDependencies) and
     # pre-empted here for the same reason before Package-for-Android needs it.
+    # UnrealEditor-Cmd (the engine's own compiled ELF binary, used by the
+    # Cook step) dynamically links against glib -- a normal desktop-Linux
+    # assumption that doesn't hold on NixOS, which has no FHS /usr/lib for
+    # it to find libglib-2.0.so.0 in. Confirmed by hand: "Package for
+    # Android" got all the way through a from-scratch engine+game compile
+    # (1h33m) before Cook failed instantly with "error while loading shared
+    # libraries: libglib-2.0.so.0: cannot open shared object file".
     extraEnvironment = {
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.glib ];
     };
   };
 }
