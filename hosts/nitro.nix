@@ -115,6 +115,9 @@
         alsa-lib
         expat
         mesa
+        libgbm # mesa's "out" output doesn't carry libgbm.so.1, a separate
+               # package does -- confirmed as the very next missing lib
+               # after nss3, once CEF's own deps above were satisfied.
         systemd # libudev.so.1
         libxkbcommon
         libx11
@@ -127,6 +130,10 @@
         libxtst
         libxi
         libxscrnsaver
+        libxshmfence
+        libGL # libglvnd -- also carries libEGL.so/libGLX.so/libOpenGL.so
+        vulkan-loader
+        wayland
       ]);
     };
     # Careful before editing this block again: the runner's $HOME (and so the
