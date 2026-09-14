@@ -1,0 +1,90 @@
+﻿Log file open, 09/12/26 21:37:34
+LogInit: Running DelayedAutoRegister Phase StartOfEnginePreInit
+LogInit: Display: Running engine for game: BeachVolleyball
+LogCore: UTS: Unreal Trace Server launched successfully
+LogTrace: Initializing trace...
+LogCore: Display: Requested channels: 'cpu,gpu,frame,log,bookmark,screenshot,region'
+LogCore: No trace connection. Tracing to in-memory cache.
+LogTrace: Display: Control listening on port 1985
+LogTrace: Finished trace initialization.
+LogCsvProfiler: Display: Metadata set : platform="Linux"
+LogCsvProfiler: Display: Metadata set : config="Development"
+LogCsvProfiler: Display: Metadata set : buildversion="UE5-CL-0"
+LogCsvProfiler: Display: Metadata set : engineversion="5.8.2-0+UE5"
+LogCsvProfiler: Display: Metadata set : enginereleaseversion="5.8.2"
+LogCsvProfiler: Display: Metadata set : os="NixOS 26.11 (Zokor) 6.18.50"
+LogCsvProfiler: Display: Metadata set : cpu="GenuineIntel|12th Gen Intel(R) Core(TM) i5-12400F"
+LogCsvProfiler: Display: Metadata set : pgoenabled="0"
+LogCsvProfiler: Display: Metadata set : pgoprofilingenabled="0"
+LogCsvProfiler: Display: Metadata set : ltoenabled="0"
+LogCsvProfiler: Display: Metadata set : asan="0"
+LogCsvProfiler: Display: Metadata set : mergedmodules="0"
+LogCsvProfiler: Display: Metadata set : compacttset="0"
+LogCsvProfiler: Display: Metadata set : commandline="" /home/erik/nixos-config/BeachVolleyball.uproject /Game/CourtLevel?game=/Script/Angelscript.BeachVolleyballGameMode -game -nullrhi -nosplash -unattended -asdebugport=59999 -abslog=/home/erik/nixos-config/Saved/Logs/Defence.log""
+LogCsvProfiler: Display: Metadata set : loginid="7f3ef1fb9da44f07acef91f4f6cf3ce0-000003e8"
+LogCsvProfiler: Display: Metadata set : llm="0"
+LogInit: Display: Project file not found: /home/erik/nixos-config/BeachVolleyball.uproject
+LogInit: Display: 	Attempting to find via project info helper.
+LogModuleManager: Skipping out-of-date modules in manifest '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/UnrealEditor.modules' (BuildId 4552a4b9-33b2-43aa-926d-952306fe9250 != 24cb2aac-1c2f-48bf-be64-903437090643):
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/libUnrealEditor-uLangCore.so'.
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/libUnrealEditor-uLangJSON.so'.
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/libUnrealEditor-uLangUE.so'.
+LogModuleManager: Skipping out-of-date modules in manifest '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/LinuxArm64/UnrealEditor.modules' (BuildId 4552a4b9-33b2-43aa-926d-952306fe9250 != 24cb2aac-1c2f-48bf-be64-903437090643):
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/LinuxArm64/libUnrealEditor-LinuxArm64TargetPlatform.so'.
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/LinuxArm64/libUnrealEditor-LinuxArm64TargetPlatformControls.so'.
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/LinuxArm64/libUnrealEditor-LinuxArm64TargetPlatformSettings.so'.
+LogModuleManager: Skipping out-of-date modules in manifest '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NoRedist/UnrealEditor.modules' (BuildId 4552a4b9-33b2-43aa-926d-952306fe9250 != 24cb2aac-1c2f-48bf-be64-903437090643):
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NoRedist/libUnrealEditor-ChaosSpatialPartitions.so'.
+LogModuleManager: InternalLoadLibrary: 'StorageServerClient' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-StorageServerClient.so')
+LogModuleManager: InternalLoadLibrary: 'CookOnTheFly' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-CookOnTheFly.so')
+LogModuleManager: InternalLoadLibrary: 'StreamingFile' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-StreamingFile.so')
+LogModuleManager: InternalLoadLibrary: 'NetworkFile' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-NetworkFile.so')
+LogModuleManager: InternalLoadLibrary: 'PakFile' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-PakFile.so')
+LogModuleManager: InternalLoadLibrary: 'RSA' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-RSA.so')
+LogModuleManager: InternalLoadLibrary: 'SandboxFile' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-SandboxFile.so')
+LogCsvProfiler: Display: Metadata set : zenstreaming="0"
+LogInit: Running DelayedAutoRegister Phase FileSystemReady
+LogProjectManager: Error: Failed to open descriptor file ../../../../nixos-config/BeachVolleyball.uproject
+Message dialog closed, result: Ok, title: Message, text: Failed to open descriptor file ../../../../nixos-config/BeachVolleyball.uproject
+LogInit: Warning: Could not find a valid project file, the engine will exit now.
+LogInit: Running DelayedAutoRegister Phase TaskGraphSystemReady
+LogStats: Stats thread started at 0.098002
+LogInit: Running DelayedAutoRegister Phase StatSystemReady
+LogModuleManager: Skipping out-of-date modules in manifest '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NoRedist/UnrealEditor.modules' (BuildId 4552a4b9-33b2-43aa-926d-952306fe9250 != 24cb2aac-1c2f-48bf-be64-903437090643):
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NoRedist/libUnrealEditor-ChaosSpatialPartitions.so'.
+LogModuleManager: Skipping out-of-date modules in manifest '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/UnrealEditor.modules' (BuildId 4552a4b9-33b2-43aa-926d-952306fe9250 != 24cb2aac-1c2f-48bf-be64-903437090643):
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/libUnrealEditor-uLangCore.so'.
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/libUnrealEditor-uLangJSON.so'.
+LogModuleManager:     Skipping module '/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/NotForLicensees/libUnrealEditor-uLangUE.so'.
+LogModuleManager: InternalLoadLibrary: 'CoreUObject' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-CoreUObject.so')
+LogCsvProfiler: Display: Metadata set : systemresolution.resx="1280"
+LogCsvProfiler: Display: Metadata set : systemresolution.resy="720"
+LogModuleManager: InternalLoadLibrary: 'Engine' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-Engine.so')
+LogModuleManager: InternalLoadLibrary: 'UniversalObjectLocator' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-UniversalObjectLocator.so')
+LogModuleManager: InternalLoadLibrary: 'Renderer' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-Renderer.so')
+LogModuleManager: InternalLoadLibrary: 'AnimGraphRuntime' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-AnimGraphRuntime.so')
+LogModuleManager: InternalLoadLibrary: 'OpenGLDrv' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-OpenGLDrv.so')
+LogModuleManager: InternalLoadLibrary: 'SlateRHIRenderer' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-SlateRHIRenderer.so')
+LogModuleManager: InternalLoadLibrary: 'Landscape' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-Landscape.so')
+LogModuleManager: InternalLoadLibrary: 'RHICore' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-RHICore.so')
+LogModuleManager: InternalLoadLibrary: 'RenderCore' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-RenderCore.so')
+LogModuleManager: InternalLoadLibrary: 'TextureCompressor' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-TextureCompressor.so')
+LogModuleManager: InternalLoadLibrary: 'OpenColorIOWrapper' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-OpenColorIOWrapper.so')
+LogModuleManager: InternalLoadLibrary: 'Virtualization' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-Virtualization.so')
+LogModuleManager: InternalLoadLibrary: 'MessageLog' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-MessageLog.so')
+LogModuleManager: InternalLoadLibrary: 'AudioEditor' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-AudioEditor.so')
+LogModuleManager: InternalLoadLibrary: 'PropertyEditor' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-PropertyEditor.so')
+LogModuleManager: InternalLoadLibrary: 'AudioExtensions' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-AudioExtensions.so')
+LogModuleManager: InternalLoadLibrary: 'SignalProcessing' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-SignalProcessing.so')
+LogModuleManager: InternalLoadLibrary: 'AudioMixerCore' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-AudioMixerCore.so')
+LogModuleManager: InternalLoadLibrary: 'AnimationModifiers' ('/home/erik/UnrealEngine-Angelscript/Engine/Binaries/Linux/libUnrealEditor-AnimationModifiers.so')
+LogICUInternationalization: ICU TimeZone Detection - Raw Offset: +1:00, Platform Override: ''
+LogInit: Session CrashGUID >====================================================
+         Session CrashGUID >   UECC-Linux-01A097200B67726EB032D1BB025B9421
+         Session CrashGUID >====================================================
+LogCore: Engine exit requested (reason: EngineExit() was called)
+LogAsyncCompilation: Display: MemorySharingInfo: UsedMemory=4147MiB, MaxMemoryAvailable=52416MiB
+LogExit: Preparing to exit.
+LogPakFile: Destroying PakPlatformFile
+LogExit: Exiting.
+Log file closed, 09/12/26 21:37:34
