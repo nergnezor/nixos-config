@@ -4,3 +4,9 @@ result-*
 
 # Claude Code local scratch (worktrees, etc.) -- not part of the config
 .claude/
+
+# Stray Unreal Engine Saved/ output (e.g. Saved/Logs/Defence.log, committed
+# 2026-09-14 by rebuild.sh's `git add -A` after a game/editor process was
+# run with this repo as its cwd instead of the actual project checkout) --
+# never intentionally part of this config.
+Saved/
