@@ -5,7 +5,7 @@
   # shared hardware-configuration.nix meant nitro's own
   # `nixos-generate-config` would silently overwrite the HP's UUIDs the
   # next time either machine ran `rebuild.sh --push`.
-  imports = [ ../hardware-configuration-hp-envy.nix ];
+  imports = [ ../hardware-configuration-hp-envy.nix ./angelbeach-runner.nix ];
 
   networking.hostName = "nixos-hp";
 
@@ -97,130 +97,52 @@
   # option list with order-dependent behaviour.
   fileSystems."/boot".options = lib.mkForce [ "fmask=0077" "dmask=0077" ];
 
-  # AngelBeach's self-hosted CI runner. It used to run as the Ubuntu install's
-  # own `actions.runner.*.service` (installed by the upstream `svc.sh`,
-  # outside this repo entirely) against `~/actions-runner`, registered by
-  # `scripts/setup-runner.sh`. That Ubuntu install is gone (see the /home
-  # comment above), and the same disk corruption that wiped niri's config.kdl
-  # also hit `~/actions-runner/.runner` and `.credentials` -- both are now
-  # garbage bytes, not JSON, with no working backup (`.runner_migrated`
-  # survived for `.runner` but there is no equivalent for `.credentials`).
-  # So there is neither a service to start it nor a valid registration for it
-  # to use even if there were. This declares the service NixOS never had.
+  # AngelBeach's self-hosted CI runner — shared config in
+  # hosts/angelbeach-runner.nix (imported above). It used to run as the
+  # Ubuntu install's own `actions.runner.*.service` (installed by the
+  # upstream `svc.sh`, outside this repo entirely) against
+  # `~/actions-runner`, registered by `scripts/setup-runner.sh`. That Ubuntu
+  # install is gone (see the /home comment above), and the same disk
+  # corruption that wiped niri's config.kdl also hit
+  # `~/actions-runner/.runner` and `.credentials` -- both are now garbage
+  # bytes, not JSON, with no working backup (`.runner_migrated` survived for
+  # `.runner` but there is no equivalent for `.credentials`). So there was
+  # neither a service to start it nor a valid registration for it to use
+  # even if there were. This declares the service NixOS never had.
   #
-  # tokenFile is a classic PAT (repo scope) dropped outside git, e.g.:
+  # tokenFile (set in the shared file) is a classic PAT (repo scope) dropped
+  # outside git, e.g.:
   #   echo -n 'ghp_...' | sudo tee /etc/github-runner-token >/dev/null
   #   sudo chmod 600 /etc/github-runner-token
   # A PAT (not a 1-hour registration token) is what lets the service
   # re-register itself on every restart without manual intervention.
   #
   # `name` matches the existing (now offline) GitHub Actions runner entry so
-  # `replace` reclaims it instead of leaving a dead duplicate; `extraLabels`
-  # supplies the `ue5` label every workflow's `runs-on:` requires alongside
-  # the auto-added `self-hosted`/`Linux`/`X64`. `workDir` reuses the old
-  # runner's checkout path so incremental builds keep their cache across job
-  # runs (it is only wiped on a service restart, not between jobs).
-  services.github-runners.angelbeach-ue5 = {
-    enable = true;
-    url = "https://github.com/nergnezor/AngelBeach";
-    name = "erik-HP-ENVY-TE01-1xxx-ue5";
-    tokenFile = "/etc/github-runner-token";
-    replace = true;
-    extraLabels = [ "ue5" ];
-    user = "erik";
-    workDir = "/home/erik/actions-runner/_work";
-    serviceOverrides.ProtectHome = false;
-    # actions/checkout runs with lfs:true; the service's PATH (built from
-    # this list, not the interactive shell's) otherwise has no git-lfs.
-    # Rest of this list and extraEnvironment ported from nitro.nix
-    # (2026-09-12) after a long live-debugging session got AngelBeach's
-    # Android build working there -- every one of these was hit for real on
-    # that machine, in this order, each only discovered by getting past the
-    # previous one:
-    #
-    #   - util-linux (setsid): "Ensure Zen storage server is running"
-    #     backgrounds zenserver with setsid so it survives past the step
-    #     that launches it.
-    #   - curl: that same step polls zenserver's health endpoint with curl,
-    #     redirected to /dev/null so "connection refused" retries stay
-    #     quiet -- which also silently swallows "curl: command not found"
-    #     when curl itself isn't on PATH. Confirmed by hand on nitro: the
-    #     server was actually up and answering the whole time the step
-    #     spent failing.
-    #   - python3: "Disable the editor-only UnrealMCP plugin for packaging"
-    #     edits BeachVolleyball.uproject with a small python3 script.
-    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl pkgs.python3 ];
-    # RunUAT/UnrealBuildTool are .NET, and the engine's bundled
-    # self-contained runtime aborts with "Couldn't find a valid ICU
-    # package" on NixOS (no libicu at the path .NET's globalization code
-    # expects) -- hit on nitro building the engine by hand (Setup.sh's
-    # GitDependencies), and needed again here for RunUAT/Cook at CI time.
-    #
-    # UnrealEditor-Cmd (the engine's own compiled ELF binary, used by the
-    # Cook step) dynamically links against a normal desktop-Linux library
-    # set NixOS doesn't provide at the FHS paths it expects -- glib first
-    # (libglib-2.0.so.0), then libnss3.so once glib was fixed (CEF/Chromium,
-    # which UnrealEditor bundles for its web-browser widget and pulls in
-    # even for a headless Cook), then libgbm.so.1 (a separate package from
-    # mesa's default output) once CEF's own deps were satisfied. This adds
-    # CEF's whole usual Linux runtime dependency set up front instead of
-    # one library at a time -- the standard list Playwright/Puppeteer/
-    # Electron need on NixOS for the same reason (bundled Chromium expects
-    # an FHS system). Unused entries cost nothing; another 15-90min rebuild
-    # for each one individually (nitro's actual experience) is the real
-    # expense.
-    extraEnvironment = {
-      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
-      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
-        glib
-        nss
-        nspr
-        atk
-        at-spi2-atk
-        at-spi2-core
-        cups
-        dbus
-        libdrm
-        gtk3
-        pango
-        cairo
-        gdk-pixbuf
-        alsa-lib
-        expat
-        mesa
-        libgbm
-        systemd # libudev.so.1
-        libxkbcommon
-        libx11
-        libxcomposite
-        libxdamage
-        libxext
-        libxfixes
-        libxrandr
-        libxcb
-        libxtst
-        libxi
-        libxscrnsaver
-        libxshmfence
-        libGL # libglvnd -- also carries libEGL.so/libGLX.so/libOpenGL.so
-        vulkan-loader
-        wayland
-      ]);
-    };
-    # Nix-config parity with nitro.nix stops here: the engine itself
-    # (~/UnrealEngine-Angelscript, ~160G, cloned + built by hand) is not
-    # tracked by either host's config, and hp-envy's copy was lost in the
-    # disk corruption described above -- it needs cloning and building from
-    # scratch again (`git clone --branch angelscript-master
-    # git@github.com:Hazelight/UnrealEngine-Angelscript.git`, then
-    # Setup.sh, GenerateProjectFiles.sh, `make UnrealEditor` with
-    # DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 set) before this runner can
-    # actually build anything. Likewise the Android SDK under ~/Android/Sdk
-    # needs the matching NDK (27.2.12479018), platforms;android-36 and
-    # build-tools;36.0.0 installed via sdkmanager, and a real (non-nix-
-    # wrapped) cmdline-tools/latest -- nitro's had a broken nix-wrapped
-    # sdkmanager whose launcher script hardcoded ANDROID_HOME to a
-    # read-only /nix/store path, so it may be worth checking hp-envy's for
-    # the same fault before assuming its sdkmanager works.
-  };
+  # `replace` reclaims it instead of leaving a dead duplicate.
+  services.github-runners.angelbeach-ue5.name = "erik-HP-ENVY-TE01-1xxx-ue5";
+  # Disabled (2026-09-12): nitro is the primary AngelBeach build machine, and
+  # GitHub Actions has no priority between two self-hosted runners sharing
+  # the `ue5` label -- whichever is idle first grabs the job. Keeping this
+  # one off is what actually enforces "nitro first" rather than just hoping.
+  # Flip to `true`, `nixos-rebuild switch`, and this re-registers itself
+  # (the `replace = true` above) whenever hp-envy is needed for overflow or
+  # nitro is down -- the tokenFile/extraPackages/extraEnvironment setup in
+  # hosts/angelbeach-runner.nix stays ready the whole time either way.
+  services.github-runners.angelbeach-ue5.enable = false;
+
+  # Nix-config parity with nitro.nix stops at hosts/angelbeach-runner.nix:
+  # the engine itself (~/UnrealEngine-Angelscript, ~160G, cloned + built by
+  # hand) is not tracked by either host's config, and hp-envy's copy was
+  # lost in the disk corruption described above -- it needs cloning and
+  # building from scratch again (`git clone --branch angelscript-master
+  # git@github.com:Hazelight/UnrealEngine-Angelscript.git`, then
+  # Setup.sh, GenerateProjectFiles.sh, `make UnrealEditor` with
+  # DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 set) before this runner can
+  # actually build anything. Likewise the Android SDK under ~/Android/Sdk
+  # needs the matching NDK (27.2.12479018), platforms;android-36 and
+  # build-tools;36.0.0 installed via sdkmanager, and a real (non-nix-
+  # wrapped) cmdline-tools/latest -- nitro's had a broken nix-wrapped
+  # sdkmanager whose launcher script hardcoded ANDROID_HOME to a
+  # read-only /nix/store path, so it may be worth checking hp-envy's for
+  # the same fault before assuming its sdkmanager works.
 }

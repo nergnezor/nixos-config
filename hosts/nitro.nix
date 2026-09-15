@@ -7,7 +7,7 @@
   # import from configuration.nix: two hosts can't share one
   # hardware-configuration.nix without one's `nixos-generate-config`
   # silently overwriting the other's UUIDs.
-  imports = [ ../hardware-configuration-nitro.nix ];
+  imports = [ ../hardware-configuration-nitro.nix ./angelbeach-runner.nix ];
 
   networking.hostName = "nixos-nitro";
 
@@ -34,132 +34,24 @@
     size = 20 * 1024;
   }];
 
-  # AngelBeach's self-hosted CI runner — same story as hosts/hp-envy.nix's
-  # copy of this block: nitro used to run the runner as an Ubuntu
-  # `actions.runner.*.service` against `~/actions-runner`; today's whole-disk
-  # NixOS reinstall (see the swap comment above) took that OS, and with it
-  # the service, with it. `replace = true` reclaims the existing (now
+  # AngelBeach's self-hosted CI runner — shared config in
+  # hosts/angelbeach-runner.nix (imported above). nitro used to run the
+  # runner as an Ubuntu `actions.runner.*.service` against
+  # `~/actions-runner`; today's whole-disk NixOS reinstall (see the swap
+  # comment above) took that OS, and with it the service, with it.
+  # `replace = true` (set in the shared file) reclaims the existing (now
   # offline) GitHub Actions runner entry rather than leaving a dead
   # duplicate. See hosts/hp-envy.nix for the tokenFile setup steps.
-  #
-  # serviceOverrides.ProtectHome = false for the same reason as hp-envy.nix:
-  # the module's default hardening hides all of /home, which breaks
-  # build-linux.yml's lookup of `$HOME/UnrealEngine-Angelscript` and (if a
-  # workDir is ever pointed under /home here too) the CHDIR into it — see
-  # the hp-envy.nix comment for the exact failure this caused there
-  # (2026-09-07).
-  services.github-runners.angelbeach-ue5 = {
-    enable = true;
-    url = "https://github.com/nergnezor/AngelBeach";
-    name = "erik-Nitro-N50-640";
-    tokenFile = "/etc/github-runner-token";
-    replace = true;
-    extraLabels = [ "ue5" ];
-    user = "erik";
-    serviceOverrides.ProtectHome = false;
-    # Default workDir falls back to the systemd RuntimeDirectory, which
-    # lives on /run -- a tmpfs capped at boot.runSize (25% of RAM here,
-    # ~7.8G) regardless of how much real disk is free. Confirmed by hand:
-    # a full Android package run got all the way to the final
-    # ueBuildUniversalAPKSRelease step before Gradle's bundletool died with
-    # "No space left on device" against a `df` showing 1.7T free on /home
-    # -- /run itself was the thing that had filled up. hp-envy.nix hit the
-    # same class of problem for a different reason (this same option's doc
-    # comment) and already points workDir at real disk; do the same here.
-    workDir = "/home/erik/actions-runner/_work";
-    # actions/checkout runs with lfs:true; the service's PATH (built from
-    # this list, not the interactive shell's) otherwise has no git-lfs.
-    # build-android.yml's "Ensure Zen storage server is running" step
-    # backgrounds zenserver with setsid (util-linux) so it survives past
-    # the step that launches it -- also missing from this minimal PATH.
-    #
-    # That same step polls zenserver with curl, redirected to /dev/null so
-    # "connection refused" retries stay quiet -- which also silently
-    # swallows "curl: command not found" when curl itself isn't on PATH.
-    # Confirmed by hand: zenserver came up and answered instantly on
-    # localhost:8558 from outside the service's sandbox the whole time the
-    # step spent failing, so this (not a slow/stuck server) was the actual
-    # cause of every "ERROR: Zen server failed to start" above.
-    # "Disable the editor-only UnrealMCP plugin for packaging" edits
-    # BeachVolleyball.uproject with a small python3 script.
-    #
-    # python3Packages.pip: publish-play-internal's "Install uploader
-    # dependencies" step runs `pip install --user --break-system-packages
-    # ...` to get the Play upload script's google-api dependencies -- nix's
-    # python3 (unlike Debian/Ubuntu's) doesn't bundle a pip binary at all.
-    extraPackages = [ pkgs.git-lfs pkgs.util-linux pkgs.curl pkgs.python3 pkgs.python3Packages.pip ];
-    # RunUAT/UnrealBuildTool are .NET, and the engine's bundled self-contained
-    # runtime aborts with "Couldn't find a valid ICU package" on NixOS (no
-    # libicu at the path .NET's globalization code expects) -- hit for real
-    # doing the initial engine build by hand (Setup.sh's GitDependencies) and
-    # pre-empted here for the same reason before Package-for-Android needs it.
-    # UnrealEditor-Cmd (the engine's own compiled ELF binary, used by the
-    # Cook step) dynamically links against glib -- a normal desktop-Linux
-    # assumption that doesn't hold on NixOS, which has no FHS /usr/lib for
-    # it to find libglib-2.0.so.0 in. Confirmed by hand: "Package for
-    # Android" got all the way through a from-scratch engine+game compile
-    # (1h33m) before Cook failed instantly with "error while loading shared
-    # libraries: libglib-2.0.so.0: cannot open shared object file".
-    extraEnvironment = {
-      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
-      # glib fixed "libglib-2.0.so.0" (confirmed). The very next attempt
-      # then failed the same way on "libnss3.so" -- CEF/Chromium territory,
-      # which UnrealEditor bundles for its web-browser widget and pulls in
-      # even for a headless Cook. Given how expensive each of these
-      # discover-one-then-full-rebuild round trips is (see the
-      # RuntimeDirectory-wipe comment below), this adds CEF's whole usual
-      # Linux runtime dependency set up front instead of one library at a
-      # time -- the standard list Playwright/Puppeteer/Electron need on
-      # NixOS for the same reason (bundled Chromium expects an FHS system).
-      # Unused entries cost nothing; another 15-90min rebuild for each one
-      # individually is the real expense here.
-      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
-        glib
-        nss
-        nspr
-        atk
-        at-spi2-atk
-        at-spi2-core
-        cups
-        dbus
-        libdrm
-        gtk3
-        pango
-        cairo
-        gdk-pixbuf
-        alsa-lib
-        expat
-        mesa
-        libgbm # mesa's "out" output doesn't carry libgbm.so.1, a separate
-               # package does -- confirmed as the very next missing lib
-               # after nss3, once CEF's own deps above were satisfied.
-        systemd # libudev.so.1
-        libxkbcommon
-        libx11
-        libxcomposite
-        libxdamage
-        libxext
-        libxfixes
-        libxrandr
-        libxcb
-        libxtst
-        libxi
-        libxscrnsaver
-        libxshmfence
-        libGL # libglvnd -- also carries libEGL.so/libGLX.so/libOpenGL.so
-        vulkan-loader
-        wayland
-      ]);
-    };
-    # Careful before editing this block again: the runner's $HOME (and so the
-    # AngelBeach checkout, and Intermediate/Build under it) lives under
-    # systemd's RuntimeDirectory (/run/github-runner/angelbeach-ue5), which
-    # `nixos-rebuild switch` wipes on the service restart it does to apply
-    # any change here. Confirmed by hand 2026-09-12: a from-scratch ~90min
-    # engine+game recompile that had just succeeded got thrown away by the
-    # very next switch (only adding LD_LIBRARY_PATH above), forcing a full
-    # second ~90min recompile before Cook could even be retried. Batch any
-    # further extraPackages/extraEnvironment changes instead of iterating
-    # one missing dependency at a time.
-  };
+  services.github-runners.angelbeach-ue5.name = "erik-Nitro-N50-640";
+
+  # Careful before editing hosts/angelbeach-runner.nix: the runner's $HOME
+  # (and so the AngelBeach checkout, and Intermediate/Build under it) lives
+  # under systemd's RuntimeDirectory (/run/github-runner/angelbeach-ue5),
+  # which `nixos-rebuild switch` wipes on the service restart it does to
+  # apply any change there. Confirmed by hand 2026-09-12: a from-scratch
+  # ~90min engine+game recompile that had just succeeded got thrown away by
+  # the very next switch (only adding LD_LIBRARY_PATH), forcing a full
+  # second ~90min recompile before Cook could even be retried. Batch any
+  # further extraPackages/extraEnvironment changes instead of iterating one
+  # missing dependency at a time.
 }
