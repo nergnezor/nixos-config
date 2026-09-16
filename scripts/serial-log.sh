@@ -10,4 +10,4 @@ if [ -z "$PORT" ]; then
     exit 1
 fi
 LOGFILE="$LOGDIR/$(date +%Y%m%d-%H%M%S)-$(basename "$PORT").log"
-exec kitty --title "picocom $PORT @ 2M" picocom -b 2000000 --logfile "$LOGFILE" "$PORT"
+exec kitty --title "picocom $PORT @ 2M" picocom -b 2000000 --imap crcrlf --logfile "$LOGFILE" "$PORT"
