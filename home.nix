@@ -125,7 +125,7 @@ in
   xdg.desktopEntries.serial-log = {
     name = "Serial Log (2M)";
     genericName = "Serial console";
-    comment = "picocom @ 2000000 baud, logs to ~/serial-logs";
+    comment = "picocom @ 2000000 baud, logs to /tmp/serial-logs";
     exec = "${lib.getExe serialLog}";
     icon = "utilities-terminal";
     categories = [ "Development" "Utility" ];

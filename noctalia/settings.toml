@@ -21,6 +21,7 @@ end = [
     "session",
     "bar"
 ]
+radius = 80
 start = [
     "launcher",
     "wallpaper",
@@ -202,6 +203,9 @@ widget_order = [
         network_speed_compact = true
         stat = "net_tx"
         stat2 = "net_rx"
+
+[dock]
+radius = 80
 
 [idle]
 behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
@@ -400,6 +404,7 @@ enabled = [
 ]
 
 [shell]
+corner_radius_scale = 2.0
 lang = "sv"
 password_style = "random"
 screen_time_enabled = true
@@ -412,6 +417,7 @@ screen_time_enabled = true
 
     [shell.screen_corners]
     enabled = true
+    size = 100
 
     [shell.screenshot]
     directory = "/home/erik/Pictures/Screenshots"

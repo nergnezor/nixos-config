@@ -1,5 +1,5 @@
-# Open a terminal running picocom at 2 Mbaud on the first serial port, logging to ~/serial-logs
-LOGDIR="$HOME/serial-logs"
+# Open a terminal running picocom at 2 Mbaud on the first serial port, logging to /tmp/serial-logs
+LOGDIR="/tmp/serial-logs"
 mkdir -p "$LOGDIR"
 PORT=""
 for p in /dev/ttyACM* /dev/ttyUSB*; do
