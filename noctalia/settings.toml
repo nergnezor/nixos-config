@@ -6,35 +6,19 @@ enabled = true
 tint_intensity = 0.669999985024333
 
 [bar.default]
-center = [ "clock", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "weather" ]
-end = [
-    "media",
-    "tray",
-    "notifications",
-    "clipboard",
-    "network",
-    "bluetooth",
-    "volume",
-    "brightness",
-    "battery",
-    "control-center",
-    "session",
-    "bar"
-]
-radius = 80
-start = [
-    "launcher",
-    "wallpaper",
-    "workspaces",
-    "active_window",
-    "audio_visualizer",
-    "cat",
-    "launcher_2",
-    "pulse",
-    "widget",
-    "nix-monitor",
-    "status"
-]
+background_opacity = 0.4999999888241291
+capsule = true
+capsule_opacity = 0.29999999329447746
+capsule_radius = 10
+capsule_thickness = 0.99999998137354851
+center = [ "clock", "audio_visualizer", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "spacer_2", "weather" ]
+concave_edge_corners = false
+radius = 10
+start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status" ]
+thickness = 20
+
+    [bar.default.monitor.DP-1]
+    enabled = false
 
 [calendar]
 enabled = true
@@ -414,7 +398,7 @@ screen_time_enabled = true
 
     [shell.screen_corners]
     enabled = true
-    size = 100
+    size = 20
 
     [shell.screenshot]
     directory = "/home/erik/Pictures/Screenshots"
@@ -460,21 +444,8 @@ fill_mode = "center"
 [widget.bar]
 type = "raycursive/niri-displays:bar"
 
-[widget.cat]
-audio_spectrum = true
-rave_mode = true
-tappy_mode = true
-type = "noctalia/bongocat:cat"
-
-[widget.launcher_2]
-capsule = true
-type = "alexander/game-launcher:launcher"
-
 [widget.nix-monitor]
 type = "avivbintangaringga/nix-monitor:nix-monitor"
-
-[widget.pulse]
-type = "lowcache/claude-companion:pulse"
 
 [widget.spacer_2]
 type = "spacer"
