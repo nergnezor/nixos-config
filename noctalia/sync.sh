@@ -26,19 +26,30 @@ live_file="${XDG_STATE_HOME:-$HOME/.local/state}/noctalia/settings.toml"
 # OAuth credentials live outside settings.toml anyway, so a restored machine
 # has to link the calendar in the GUI regardless. Applied on both `pull` and
 # `diff`, so a linked account locally does not show up as a permanent diff.
+#
+# It also drops the `timeout` key inside each [idle.behavior.*] table (the
+# action/enabled keys stay tracked). nitro and hp are meant to idle out on
+# different schedules -- tracking one shared value meant a pull on one
+# machine followed by a push on the other silently overwrote its timeout
+# with the other machine's. Same deal as the calendar account: set it again
+# in Noctalia's settings panel after a push.
 scrub() {
   awk '
-    /^[[:space:]]*\[calendar\.account\./ { skip = 1; next }
-    /^[[:space:]]*\[/                      { skip = 0 }
-    skip && /^[[:space:]]*$/                { next }
-    !skip
+    /^[[:space:]]*\[/ {
+      skip    = ($0 ~ /^[[:space:]]*\[calendar\.account\./)
+      in_idle = ($0 ~ /^[[:space:]]*\[idle\.behavior\./)
+    }
+    skip && /^[[:space:]]*$/                        { next }
+    skip                                             { next }
+    in_idle && /^[[:space:]]*timeout[[:space:]]*=/   { next }
+    { print }
   ' "$1"
 }
 
 case "${1:-}" in
   pull)
     scrub "$live_file" > "$repo_file"
-    echo "pulled  $live_file -> $repo_file (calendar account scrubbed)"
+    echo "pulled  $live_file -> $repo_file (calendar account + idle timeout scrubbed)"
     git -C "$(dirname "$repo_file")" diff --stat -- "$repo_file"
     ;;
   push)
@@ -51,8 +62,8 @@ case "${1:-}" in
     [ -e "$live_file" ] && cp "$live_file" "$live_file.bak-$(date +%Y%m%d%H%M%S)"
     cp "$repo_file" "$live_file"
     echo "pushed  $repo_file -> $live_file"
-    echo "note: the calendar account is not in the tracked copy -- link it"
-    echo "      again in noctalia's settings if you used one."
+    echo "note: the calendar account and idle timeout are not in the tracked"
+    echo "      copy -- set them again in noctalia's settings if needed."
     ;;
   diff)
     diff -u "$repo_file" <(scrub "$live_file") && echo "identical"
