@@ -14,6 +14,12 @@ let
     runtimeInputs = with pkgs; [ mpv v4l-utils ];
     text = builtins.readFile ./scripts/usbcam.sh;
   };
+  # Serial console at 2 Mbaud with a timestamped log, launched from the app launcher.
+  serialLog = pkgs.writeShellApplication {
+    name = "serial-log";
+    runtimeInputs = with pkgs; [ kitty picocom libnotify ];
+    text = builtins.readFile ./scripts/serial-log.sh;
+  };
 in
 {
   home.username = "erik";
@@ -113,6 +119,16 @@ in
     exec = "${lib.getExe usbcam} -r 270";
     icon = "camera-web";
     categories = [ "AudioVideo" "Video" "Photography" ];
+    terminal = false;
+  };
+
+  xdg.desktopEntries.serial-log = {
+    name = "Serial Log (2M)";
+    genericName = "Serial console";
+    comment = "picocom @ 2000000 baud, logs to ~/serial-logs";
+    exec = "${lib.getExe serialLog}";
+    icon = "utilities-terminal";
+    categories = [ "Development" "Utility" ];
     terminal = false;
   };
 

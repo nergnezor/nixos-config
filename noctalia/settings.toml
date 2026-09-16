@@ -417,12 +417,13 @@ screen_time_enabled = true
     directory = "/home/erik/Pictures/Screenshots"
 
     [shell.shadow]
-    alpha = 0.79999998211860657
+    alpha = 0.78999998234212399
     direction = "down_left"
 
 [theme]
 builtin = "Catppuccin"
-community_palette = "Everdeer"
+community_palette = "Tokyo Night Moon"
+source = "community"
 wallpaper_scheme = "m3-content"
 
     [theme.templates]
@@ -433,10 +434,10 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-14.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-16.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-14.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-16.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -445,10 +446,10 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-14.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-16.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-14.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-16.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
