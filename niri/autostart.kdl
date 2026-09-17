@@ -1,6 +1,8 @@
 // spawn-sh-at-startup "wl-paste --watch cliphist store &"
 
 spawn-sh-at-startup "~/.config/niri/scripts/vertical-monitor-stack.sh &"
+// Recenters the Mod+T terminal when it is moved to another monitor
+spawn-sh-at-startup "~/.config/niri/scripts/dropdown-term.sh follow &"
 
 // spawn-at-startup "spotify"
 // spawn-at-startup "code"
