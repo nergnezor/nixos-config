@@ -115,4 +115,5 @@ mpv \
   --video-rotate="$ROTATE" \
   --input-conf="$INPUT_CONF" \
   --no-osc \
+  --stop-screensaver=no \
   "${DEMUXER_ARGS[@]}"

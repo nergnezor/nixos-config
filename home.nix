@@ -14,6 +14,12 @@ let
     runtimeInputs = with pkgs; [ mpv v4l-utils ];
     text = builtins.readFile ./scripts/usbcam.sh;
   };
+  # Same camera as a network stream, see the usage line at the top of the script.
+  usbcamStream = pkgs.writeShellApplication {
+    name = "usbcam-stream";
+    runtimeInputs = with pkgs; [ ffmpeg ];
+    text = builtins.readFile ./scripts/usbcam-stream.sh;
+  };
   # Serial console at 2 Mbaud with a timestamped log, launched from the app launcher.
   serialLog = pkgs.writeShellApplication {
     name = "serial-log";
@@ -28,6 +34,7 @@ in
 
   home.packages = [
     usbcam
+    usbcamStream
   ]
   ++ uxstreamTools.packages
   ++ (with pkgs; [
