@@ -21,10 +21,10 @@ hide_window() {
     niri msg action set-window-width --id "$1" 1
     niri msg action set-window-height --id "$1" 1
     niri msg action move-floating-window --id "$1" -x "$((X + WIDTH / 2))" -y "$((Y + HEIGHT / 2))"
-    niri msg action focus-window-previous
-    # Without a previous window the invisible point would keep focus and swallow keybinds
+    # Focus the tiling layer on this output so the invisible point is no longer the workspace's active window
+    niri msg action switch-focus-between-floating-and-tiling
     if [ "$(niri msg -j focused-window 2>/dev/null | jq -r .id)" = "$1" ]; then
-        niri msg action switch-focus-between-floating-and-tiling
+        niri msg action focus-window-previous
     fi
 }
 
@@ -45,21 +45,31 @@ show_window() {
     niri msg action focus-window --id "$1"
 }
 
-# Recenter the window on the output it currently sits on, as a point if it is hidden
+# Recenter on the output the window now sits on: collapse to a point and grow back, or just move the point if hidden
 recenter_window() {
     INFO=$(niri msg -j windows 2>/dev/null | jq -r --argjson id "$1" '.[] | select(.id == $id) | "\(.workspace_id) \(.layout.tile_size[0])"')
     read -r WS_ID SIZE <<< "$INFO"
     OUTPUT=$(niri msg -j workspaces 2>/dev/null | jq -r --argjson ws "$WS_ID" '.[] | select(.id == $ws) | .output')
     read -r X Y <<< "$(target_pos "$OUTPUT")"
-    if [ "${SIZE%.*}" -lt 2 ]; then
-        niri msg action move-floating-window --id "$1" -x "$((X + WIDTH / 2))" -y "$((Y + HEIGHT / 2))"
-    else
+    niri msg action set-window-width --id "$1" 1
+    niri msg action set-window-height --id "$1" 1
+    niri msg action move-floating-window --id "$1" -x "$((X + WIDTH / 2))" -y "$((Y + HEIGHT / 2))"
+    if [ "${SIZE%.*}" -ge 2 ]; then
+        niri msg action set-window-width --id "$1" "$WIDTH"
+        niri msg action set-window-height --id "$1" "$HEIGHT"
         niri msg action move-floating-window --id "$1" -x "$X" -y "$Y"
+    fi
+    # niri may still be placing the window after the monitor move, so settle it once more
+    sleep 0.3
+    if [ "${SIZE%.*}" -ge 2 ]; then
+        niri msg action move-floating-window --id "$1" -x "$X" -y "$Y"
+    else
+        niri msg action move-floating-window --id "$1" -x "$((X + WIDTH / 2))" -y "$((Y + HEIGHT / 2))"
     fi
 }
 
 if [ "${1:-}" = "follow" ]; then
-    LAST_WS=""
+    LAST_WS=$(niri msg -j windows 2>/dev/null | jq -r --argjson id "$(cat "$WINFILE" 2>/dev/null || echo 0)" '.[] | select(.id == $id) | .workspace_id')
     niri msg -j event-stream | while read -r EVENT; do
         WIN_ID=$(cat "$WINFILE" 2>/dev/null) || continue
         WS_ID=$(jq -r --argjson id "$WIN_ID" '.WindowOpenedOrChanged.window | select(.id == $id) | .workspace_id // empty' <<< "$EVENT")
