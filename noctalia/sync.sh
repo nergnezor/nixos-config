@@ -27,12 +27,14 @@ live_file="${XDG_STATE_HOME:-$HOME/.local/state}/noctalia/settings.toml"
 # has to link the calendar in the GUI regardless. Applied on both `pull` and
 # `diff`, so a linked account locally does not show up as a permanent diff.
 #
-# It also drops the `timeout` key inside each [idle.behavior.*] table (the
-# action/enabled keys stay tracked). nitro and hp are meant to idle out on
-# different schedules -- tracking one shared value meant a pull on one
-# machine followed by a push on the other silently overwrote its timeout
-# with the other machine's. Same deal as the calendar account: set it again
-# in Noctalia's settings panel after a push.
+# It also drops the `timeout` and `enabled` keys inside each
+# [idle.behavior.*] table (the `action` key stays tracked). nitro is erik's
+# work laptop and hp is not, so they're meant to idle out on different
+# schedules AND have different behaviors enabled (e.g. lock on nitro, not on
+# hp) -- tracking those as one shared value meant a pull on one machine
+# followed by a push (or a later pull-and-commit) on the other silently
+# overwrote its setting with the other machine's. Same deal as the calendar
+# account: set these again in Noctalia's settings panel after a push.
 scrub() {
   awk '
     /^[[:space:]]*\[/ {
@@ -42,6 +44,7 @@ scrub() {
     skip && /^[[:space:]]*$/                        { next }
     skip                                             { next }
     in_idle && /^[[:space:]]*timeout[[:space:]]*=/   { next }
+    in_idle && /^[[:space:]]*enabled[[:space:]]*=/   { next }
     { print }
   ' "$1"
 }
