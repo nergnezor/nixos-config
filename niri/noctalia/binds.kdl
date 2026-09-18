@@ -1,14 +1,14 @@
 binds {
-    Ctrl+Alt+Delete hotkey-overlay-title="Task Manager" { spawn "noctalia" "msg" "panel-toggle" "processlist"; }
-    Mod+Alt+L hotkey-overlay-title="Lock Screen" { spawn "noctalia" "msg" "screen-lock"; }
+    Ctrl+Alt+Delete hotkey-overlay-title="Task Manager" { spawn "plasma-systemmonitor"; }
+    Mod+Alt+L hotkey-overlay-title="Lock Screen" { spawn "noctalia" "msg" "session" "lock"; }
     Mod+Comma hotkey-overlay-title="Settings" { spawn "noctalia" "msg" "settings-toggle"; }
-    Mod+M hotkey-overlay-title="Task Manager" { spawn "noctalia" "msg" "panel-toggle" "processlist"; }
-    Mod+N hotkey-overlay-title="Notification Center" { spawn "noctalia" "msg" "panel-toggle" "notifications"; }
+    Mod+M hotkey-overlay-title="Task Manager" { spawn "plasma-systemmonitor"; }
+    Mod+N hotkey-overlay-title="Notification Center" { spawn "noctalia" "msg" "panel-toggle" "control-center" "notifications"; }
     Mod+Shift+N hotkey-overlay-title="Notepad" { spawn "noctalia" "msg" "panel-toggle" "notepad"; }
     Mod+Space hotkey-overlay-title="Application Launcher" { spawn "noctalia" "msg" "panel-toggle" "launcher"; }
     Mod+V hotkey-overlay-title="Clipboard Manager" { spawn "noctalia" "msg" "panel-toggle" "clipboard"; }
     Mod+Y hotkey-overlay-title="Browse Wallpapers" { spawn "noctalia" "msg" "wallpaper-random"; }
-    Super+X hotkey-overlay-title="Power Menu: Toggle" { spawn "noctalia" "msg" "panel-toggle" "powermenu"; }
+    Super+X hotkey-overlay-title="Power Menu: Toggle" { spawn "noctalia" "msg" "panel-toggle" "session"; }
     XF86AudioLowerVolume allow-when-locked=true { spawn "noctalia" "msg" "volume-down" "3"; }
     XF86AudioMicMute allow-when-locked=true { spawn "noctalia" "msg" "mic-mute"; }
     XF86AudioMute allow-when-locked=true { spawn "noctalia" "msg" "volume-mute"; }
@@ -121,7 +121,7 @@ binds {
     Ctrl+XF86Launch1 { screenshot-screen; }
     Print { screenshot; }
     Super+Shift+S { screenshot; }
-    Mod+Shift+E { quit; }
+    Mod+Shift+E hotkey-overlay-title="Log Out" { spawn "noctalia" "msg" "session" "logout"; }
     Mod+T hotkey-overlay-title="Open Terminal" { spawn "bash" "/home/erik/.config/niri/scripts/dropdown-term.sh"; }
     Mod+D repeat=false { toggle-overview; }
     Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }

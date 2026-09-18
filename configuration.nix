@@ -140,6 +140,31 @@ in
   # detects a touchscreen -- relevant since this session gets used from a
   # phone RDP client, not just a desktop one.
   services.desktopManager.plasma6.enable = true;
+  # Plasma is only here as the xrdp session, so drop its bundled apps.
+  # Left in: kwin-x11 (the X11 session), plasma-keyboard/qtvirtualkeyboard
+  # (touch input from the phone) and the qttools/kconfig/qtbase helpers.
+  environment.plasma6.excludePackages = with pkgs.kdePackages; [
+    ark
+    aurorae
+    baloo-widgets
+    discover
+    dolphin
+    dolphin-plugins
+    elisa
+    ffmpegthumbs
+    gwenview
+    kate
+    khelpcenter
+    konsole
+    krdp
+    ktexteditor
+    okular
+    plasma-browser-integration
+    plasma-workspace-wallpapers
+    qrca
+    spectacle
+    union
+  ];
   services.xrdp = {
     enable = true;
     # A wrapper rather than startplasma-x11 straight, purely so the scaling

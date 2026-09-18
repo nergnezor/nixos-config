@@ -325,3 +325,9 @@ include "noctalia/outputs.kdl"
 include "noctalia/cursor.kdl"
 
 include "noctalia.kdl"
+
+// Matches noctalia panels: radiusXl 12 * corner_radius_scale 2.0 (noctalia/settings.toml)
+window-rule {
+    geometry-corner-radius 24
+    clip-to-geometry true
+}
