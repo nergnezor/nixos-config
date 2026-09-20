@@ -26,6 +26,19 @@ let
     runtimeInputs = with pkgs; [ kitty picocom libnotify ];
     text = builtins.readFile ./scripts/serial-log.sh;
   };
+  # @cloudcli-ai/cloudcli (cloudcli.ai) isn't in nixpkgs -- it's an npm
+  # package, self-hosted web UI for Claude Code/Cursor/Codex sessions
+  # (listens on localhost:3001, reads ~/.claude). `npm install -g` fails on
+  # NixOS the same way github-copilot-cli's did above: npm tries to mkdir
+  # into the read-only nodejs store path. `npx` avoids that -- it caches
+  # under ~/.npm instead -- so wrap it rather than installing globally.
+  # `--yes` skips npx's install-confirmation prompt; `@latest` because this
+  # package has no nixpkgs entry pinning a version for us.
+  cloudcli = pkgs.writeShellApplication {
+    name = "cloudcli";
+    runtimeInputs = with pkgs; [ nodejs_22 ];
+    text = ''exec npx --yes @cloudcli-ai/cloudcli@latest "$@"'';
+  };
 in
 {
   home.username = "erik";
@@ -35,6 +48,7 @@ in
   home.packages = [
     usbcam
     usbcamStream
+    cloudcli
   ]
   ++ uxstreamTools.packages
   ++ (with pkgs; [
