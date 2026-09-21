@@ -115,6 +115,11 @@ in
                        # Use the nixpkgs package instead (provides `copilot`).
     antigravity-ide    # Google Antigravity (`antigravity-ide`); replaces
                        # Gemini CLI. Unfree; allowUnfree already set.
+    opencode           # Single terminal coding agent that talks to many
+                       # model providers (Anthropic, OpenAI, Google, local,
+                       # ...) through one CLI/TUI, configured per-provider --
+                       # unlike the entries above, which are each locked to
+                       # one vendor's own CLI.
   ]);
 
   # Shows up in noctalia/fuzzel/etc. as "USB Camera"; always starts rotated
