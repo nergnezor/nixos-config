@@ -1,0 +1,17 @@
+# Local plugin source for noctalia. Registered once with:
+#   noctalia msg plugins source add local path ~/nixos-config/niri/noctalia/plugins
+# Plugins load straight from this directory and hot-reload on save.
+
+[[plugin]]
+id = "erik/stlink"
+name = "ST-Link"
+version = "0.1.0"
+updated_at = 1789948800
+added_at = 1789948800
+author = "erik"
+license = "MIT"
+icon = "cpu"
+description = "Halt, resume and reset the MCU behind an ST-Link via openocd."
+deprecated = false
+plugin_api = 10
+tags = ["embedded", "utility", "bar", "panel", "service"]

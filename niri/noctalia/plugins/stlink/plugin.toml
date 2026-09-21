@@ -1,0 +1,106 @@
+# Halt/resume/reset the MCU on an ST-Link from the bar, using one-shot openocd runs.
+
+id = "erik/stlink"
+name = "ST-Link"
+version = "0.1.0"
+plugin_api = 10
+author = "erik"
+license = "MIT"
+dependencies = ["openocd", "pgrep", "cat"]
+tags = ["embedded", "utility", "bar", "panel", "service"]
+icon = "cpu"
+description = "Halt, resume and reset the MCU behind an ST-Link via openocd."
+
+[[setting]]
+key = "refresh_interval"
+type = "int"
+label_key = "settings.refresh_interval.label"
+description_key = "settings.refresh_interval.description"
+default = 5
+min = 1
+max = 120
+
+[[setting]]
+key = "interface_cfg"
+type = "string"
+label_key = "settings.interface_cfg.label"
+description_key = "settings.interface_cfg.description"
+default = "interface/stlink.cfg"
+
+[[setting]]
+key = "target_cfg"
+type = "string"
+label_key = "settings.target_cfg.label"
+description_key = "settings.target_cfg.description"
+default = "target/stm32u5x.cfg"
+
+[[setting]]
+key = "target_name"
+type = "string"
+label_key = "settings.target_name.label"
+description_key = "settings.target_name.description"
+default = "stm32u5x.cpu"
+
+[[setting]]
+key = "camera_desktop"
+type = "string"
+label_key = "settings.camera_desktop.label"
+description_key = "settings.camera_desktop.description"
+default = "usbcam"
+
+[[setting]]
+key = "camera_match"
+type = "string"
+label_key = "settings.camera_match.label"
+description_key = "settings.camera_match.description"
+default = "title=usbcam"
+advanced = true
+
+[[setting]]
+key = "serial_desktop"
+type = "string"
+label_key = "settings.serial_desktop.label"
+description_key = "settings.serial_desktop.description"
+default = "serial-log"
+
+[[setting]]
+key = "serial_match"
+type = "string"
+label_key = "settings.serial_match.label"
+description_key = "settings.serial_match.description"
+default = "picocom"
+advanced = true
+
+[[setting]]
+key = "openocd_bin"
+type = "string"
+label_key = "settings.openocd_bin.label"
+description_key = "settings.openocd_bin.description"
+default = "openocd"
+advanced = true
+
+[[widget]]
+id = "status"
+entry = "widget.luau"
+
+  [[widget.setting]]
+  key = "show_label"
+  type = "bool"
+  label_key = "settings.show_label.label"
+  description_key = "settings.show_label.description"
+  default = true
+
+[[panel]]
+id = "control"
+entry = "panel.luau"
+width = 340
+height = 240
+placement = "floating"
+position = "center"
+open_near_click = true
+keyboard_focus = "exclusive"
+dismiss_on_outside_click = true
+
+[[service]]
+id = "service"
+entry = "service.luau"

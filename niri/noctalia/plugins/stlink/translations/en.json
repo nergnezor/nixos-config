@@ -1,0 +1,81 @@
+{
+  "title": "ST-Link",
+  "state": {
+    "running": "Running",
+    "halted": "Halted",
+    "reset": "In reset",
+    "debug-running": "Running",
+    "unknown": "Unknown",
+    "busy": "Working…",
+    "no_probe": "No ST-Link",
+    "debugger": "Held by {name}"
+  },
+  "actions": {
+    "halt": "Halt",
+    "resume": "Resume",
+    "reset": "Reset",
+    "reset_halt": "Reset + halt",
+    "camera": "Camera",
+    "serial": "Serial log"
+  },
+  "panel": {
+    "updated": "Updated {time}"
+  },
+  "result": {
+    "halted": "MCU halted",
+    "resumed": "MCU resumed",
+    "reset": "MCU reset and running",
+    "reset_halted": "MCU reset and halted",
+    "busy": "Previous command still running",
+    "no_probe": "No ST-Link connected",
+    "debugger": "Probe is held by {name}",
+    "no_target": "Could not talk to the target",
+    "failed": "Failed: {error}",
+    "camera_started": "Camera started",
+    "camera_stopped": "Camera stopped",
+    "serial_started": "Serial log started",
+    "serial_stopped": "Serial log stopped"
+  },
+  "settings": {
+    "refresh_interval": {
+      "label": "Refresh interval (s)",
+      "description": "How often openocd is asked for the MCU state. Each poll briefly attaches to the probe."
+    },
+    "interface_cfg": {
+      "label": "Interface config",
+      "description": "openocd -f interface file, e.g. interface/stlink.cfg"
+    },
+    "target_cfg": {
+      "label": "Target config",
+      "description": "openocd -f target file, e.g. target/stm32u5x.cfg"
+    },
+    "target_name": {
+      "label": "Target name",
+      "description": "openocd target used for curstate, e.g. stm32u5x.cpu"
+    },
+    "camera_desktop": {
+      "label": "Camera desktop entry",
+      "description": "Desktop file id launched by the Camera button, e.g. usbcam"
+    },
+    "camera_match": {
+      "label": "Camera process match",
+      "description": "pgrep -f pattern that identifies the running camera app."
+    },
+    "serial_desktop": {
+      "label": "Serial log desktop entry",
+      "description": "Desktop file id launched by the Serial log button, e.g. serial-log"
+    },
+    "serial_match": {
+      "label": "Serial log process name",
+      "description": "Exact process name (pgrep -x) that identifies the running serial logger."
+    },
+    "openocd_bin": {
+      "label": "openocd binary",
+      "description": "Path or name of the openocd executable."
+    },
+    "show_label": {
+      "label": "Show state text",
+      "description": "Show Running/Halted next to the icon in the bar."
+    }
+  }
+}

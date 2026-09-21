@@ -1,0 +1,81 @@
+{
+  "title": "ST-Link",
+  "state": {
+    "running": "Kör",
+    "halted": "Stoppad",
+    "reset": "I reset",
+    "debug-running": "Kör",
+    "unknown": "Okänd",
+    "busy": "Arbetar…",
+    "no_probe": "Ingen ST-Link",
+    "debugger": "Upptagen av {name}"
+  },
+  "actions": {
+    "halt": "Stoppa",
+    "resume": "Starta",
+    "reset": "Reset",
+    "reset_halt": "Reset + stopp",
+    "camera": "Kamera",
+    "serial": "Serielogg"
+  },
+  "panel": {
+    "updated": "Uppdaterad {time}"
+  },
+  "result": {
+    "halted": "MCU stoppad",
+    "resumed": "MCU startad",
+    "reset": "MCU resettad och kör",
+    "reset_halted": "MCU resettad och stoppad",
+    "busy": "Föregående kommando kör fortfarande",
+    "no_probe": "Ingen ST-Link ansluten",
+    "debugger": "Proben används av {name}",
+    "no_target": "Kunde inte nå targeten",
+    "failed": "Misslyckades: {error}",
+    "camera_started": "Kameran startad",
+    "camera_stopped": "Kameran stoppad",
+    "serial_started": "Serieloggen startad",
+    "serial_stopped": "Serieloggen stoppad"
+  },
+  "settings": {
+    "refresh_interval": {
+      "label": "Uppdateringsintervall (s)",
+      "description": "Hur ofta openocd frågar efter MCU-tillstånd. Varje poll kopplar kort upp mot proben."
+    },
+    "interface_cfg": {
+      "label": "Interface-konfig",
+      "description": "openocd -f interface-fil, t.ex. interface/stlink.cfg"
+    },
+    "target_cfg": {
+      "label": "Target-konfig",
+      "description": "openocd -f target-fil, t.ex. target/stm32u5x.cfg"
+    },
+    "target_name": {
+      "label": "Target-namn",
+      "description": "openocd-target som används för curstate, t.ex. stm32u5x.cpu"
+    },
+    "camera_desktop": {
+      "label": "Kamerans desktop-fil",
+      "description": "Desktop-id som Kamera-knappen startar, t.ex. usbcam"
+    },
+    "camera_match": {
+      "label": "Kamerans processmönster",
+      "description": "pgrep -f-mönster som känner igen den körande kameraappen."
+    },
+    "serial_desktop": {
+      "label": "Serieloggens desktop-fil",
+      "description": "Desktop-id som Serielogg-knappen startar, t.ex. serial-log"
+    },
+    "serial_match": {
+      "label": "Serieloggens processnamn",
+      "description": "Exakt processnamn (pgrep -x) som känner igen den körande serieloggern."
+    },
+    "openocd_bin": {
+      "label": "openocd-binär",
+      "description": "Sökväg eller namn på openocd."
+    },
+    "show_label": {
+      "label": "Visa tillståndstext",
+      "description": "Visa Kör/Stoppad bredvid ikonen i baren."
+    }
+  }
+}
