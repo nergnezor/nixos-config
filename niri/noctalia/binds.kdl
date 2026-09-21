@@ -1,8 +1,8 @@
 binds {
-    Ctrl+Alt+Delete hotkey-overlay-title="Task Manager" { spawn "plasma-systemmonitor"; }
+    Ctrl+Alt+Delete hotkey-overlay-title="Task Manager" { spawn "kitty" "--class" "btm" "btm"; }
     Mod+Alt+L hotkey-overlay-title="Lock Screen" { spawn "noctalia" "msg" "session" "lock"; }
     Mod+Comma hotkey-overlay-title="Settings" { spawn "noctalia" "msg" "settings-toggle"; }
-    Mod+M hotkey-overlay-title="Task Manager" { spawn "plasma-systemmonitor"; }
+    Mod+M hotkey-overlay-title="Task Manager" { spawn "kitty" "--class" "btm" "btm"; }
     Mod+N hotkey-overlay-title="Notification Center" { spawn "noctalia" "msg" "panel-toggle" "control-center" "notifications"; }
     Mod+Shift+N hotkey-overlay-title="Notepad" { spawn "noctalia" "msg" "panel-toggle" "notepad"; }
     Mod+Space hotkey-overlay-title="Application Launcher" { spawn "noctalia" "msg" "panel-toggle" "launcher"; }

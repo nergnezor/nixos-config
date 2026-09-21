@@ -51,6 +51,7 @@ in
     # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
     vscode
+    bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
     # AstroNvim (github:nergnezor/astronvim, its own repo -- not vendored
     # here, see the xdg.configFile."nvim" symlink below) needs a C compiler
     # for treesitter parsers, ripgrep/fd for telescope/snacks, node for
