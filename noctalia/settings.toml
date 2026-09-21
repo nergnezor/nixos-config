@@ -14,10 +14,13 @@ capsule_thickness = 0.99999998137354851
 center = [ "clock", "audio_visualizer", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "spacer_2", "weather" ]
 concave_edge_corners = false
 radius = 10
-start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status" ]
+start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink" ]
 thickness = 20
 
     [bar.default.monitor.DP-1]
+    enabled = false
+
+    [bar.default.monitor.DP-4]
     enabled = false
 
 [calendar]
@@ -196,15 +199,12 @@ behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
 
     [idle.behavior.lock]
     action = "lock"
-    enabled = true
 
     [idle.behavior.lock-and-suspend]
     action = "lock_and_suspend"
-    enabled = false
 
     [idle.behavior.screen-off]
     action = "screen_off"
-    enabled = true
 
 [location]
 auto_locate = true
@@ -381,17 +381,30 @@ enabled = [
     "tordex/nvtop",
     "davemhammer/tailscale",
     "dunarand/tmux-provider",
-    "nzlov/daily-wallpaper"
+    "nzlov/daily-wallpaper",
+    "erik/stlink"
 ]
+
+    [[plugins.source]]
+    kind = "git"
+    location = "https://github.com/noctalia-dev/official-plugins"
+    name = "official"
+
+    [[plugins.source]]
+    kind = "git"
+    location = "https://github.com/noctalia-dev/community-plugins"
+    name = "community"
+
+    [[plugins.source]]
+    kind = "path"
+    location = "/home/erik/nixos-config/niri/noctalia/plugins"
+    name = "local"
 
 [shell]
 corner_radius_scale = 2.0
 lang = "sv"
 password_style = "random"
 screen_time_enabled = true
-
-    [shell.animation]
-    speed = 2.0000000298023224
 
     [shell.panel]
     transparency_mode = "glass"
@@ -421,10 +434,10 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-18.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-18.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -433,10 +446,10 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-18.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-18.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -452,6 +465,9 @@ type = "spacer"
 
 [widget.status]
 type = "davemhammer/tailscale:status"
+
+[widget.stlink]
+type = "erik/stlink:status"
 
 [widget.widget]
 type = "tphilippot/git_companion:widget"
