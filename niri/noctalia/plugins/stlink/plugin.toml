@@ -3,7 +3,7 @@
 id = "erik/stlink"
 name = "ST-Link"
 version = "0.1.0"
-plugin_api = 10
+plugin_api = 13
 author = "erik"
 license = "MIT"
 dependencies = ["openocd", "pgrep", "cat"]
@@ -100,6 +100,7 @@ position = "center"
 open_near_click = true
 keyboard_focus = "exclusive"
 dismiss_on_outside_click = true
+capture_keys = ["s", "r", "h", "k", "l"]
 
 [[service]]
 id = "service"
