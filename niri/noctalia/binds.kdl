@@ -3,7 +3,7 @@ binds {
     Mod+Alt+L hotkey-overlay-title="Lock Screen" { spawn "noctalia" "msg" "session" "lock"; }
     Mod+Comma hotkey-overlay-title="Settings" { spawn "noctalia" "msg" "settings-toggle"; }
     Mod+M hotkey-overlay-title="Task Manager" { spawn "kitty" "--class" "btm" "btm"; }
-    Mod+Shift+M hotkey-overlay-title="MCU: Halt/Resume" { spawn "noctalia" "msg" "plugin" "erik/stlink:service" "all" "toggle"; }
+    Mod+S hotkey-overlay-title="ST-Link Panel" { spawn "noctalia" "msg" "panel-toggle" "erik/stlink:control"; }
     Mod+N hotkey-overlay-title="Notification Center" { spawn "noctalia" "msg" "panel-toggle" "control-center" "notifications"; }
     Mod+Shift+N hotkey-overlay-title="Notepad" { spawn "noctalia" "msg" "panel-toggle" "notepad"; }
     Mod+Space hotkey-overlay-title="Application Launcher" { spawn "noctalia" "msg" "panel-toggle" "launcher"; }

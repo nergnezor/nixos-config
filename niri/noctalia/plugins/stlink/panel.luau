@@ -28,6 +28,11 @@ local function send(action)
   noctalia.state.set(COMMAND_KEY, { action = action, requestId = `panel-{requestId}` })
 end
 
+-- Button label with its keyboard shortcut, matching the chords handled in onKey.
+local function keyed(key, label)
+  return `[{key}] {label}`
+end
+
 local function statusText()
   if snapshot.probe == "" then
     return tr("state.no_probe")
@@ -76,21 +81,21 @@ local function render()
     }),
     ui.row({ gap = 6 }, {
       ui.button({
-        text = halted and tr("actions.resume") or tr("actions.halt"),
+        text = keyed("S", halted and tr("actions.resume") or tr("actions.halt")),
         glyph = halted and "player-play" or "player-pause",
         variant = "primary",
         enabled = ready,
         onClick = "onToggle",
       }),
       ui.button({
-        text = tr("actions.reset"),
+        text = keyed("R", tr("actions.reset")),
         glyph = "reload",
         variant = "outline",
         enabled = ready,
         onClick = "onReset",
       }),
       ui.button({
-        text = tr("actions.reset_halt"),
+        text = keyed("H", tr("actions.reset_halt")),
         glyph = "player-skip-back",
         variant = "outline",
         enabled = ready,
@@ -99,13 +104,13 @@ local function render()
     }),
     ui.row({ gap = 6 }, {
       ui.button({
-        text = tr("actions.camera"),
+        text = keyed("K", tr("actions.camera")),
         glyph = snapshot.cameraRunning and "camera-off" or "camera",
         variant = snapshot.cameraRunning and "primary" or "outline",
         onClick = "onCamera",
       }),
       ui.button({
-        text = tr("actions.serial"),
+        text = keyed("L", tr("actions.serial")),
         glyph = snapshot.serialRunning and "terminal-2" or "terminal",
         variant = snapshot.serialRunning and "primary" or "outline",
         onClick = "onSerial",
@@ -155,3 +160,21 @@ function onReset() send("reset") end
 function onResetHalt() send("reset_halt") end
 function onCamera() send("toggle_camera") end
 function onSerial() send("toggle_serial") end
+
+local KEY_ACTIONS = {
+  s = "toggle",
+  r = "reset",
+  h = "reset_halt",
+  k = "toggle_camera",
+  l = "toggle_serial",
+}
+
+function onKey(chord, pressed)
+  if not pressed then
+    return
+  end
+  local action = KEY_ACTIONS[string.lower(tostring(chord))]
+  if action then
+    send(action)
+  end
+end
