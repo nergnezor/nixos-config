@@ -104,6 +104,7 @@ EOF
 mpv \
   "av://v4l2:${DEVICE}" \
   --title="usbcam ${DEVICE}" \
+  --wayland-app-id=usbcam \
   --profile=low-latency \
   --untimed \
   --no-cache \
