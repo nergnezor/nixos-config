@@ -44,7 +44,7 @@ OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is c
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
 OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
-RANGE_ROWS = 18 # fields the range table has room to be useful about
+RANGE_ROWS = 24 # fields the range table has room to be useful about
 NUM_COLUMN = 52 # width of one number column in the table strip
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
@@ -846,15 +846,35 @@ class Window(Adw.ApplicationWindow):
                                   polarity_of(text, unit), unit, key, module)
             fields_out.append({"series": series, "label": text, "unit": unit})
             at = num.end()
+        # How often this line arrives, so a stream that reports steady numbers still shows up.
+        rate_series = f"{key}#rate"
+        self.graph.add_series(rate_series, SERIES_COLORS[self.next_color % len(SERIES_COLORS)],
+                              f"{(fields_out[0]['label'] if fields_out else message)[:18]} rate", 0, "/s",
+                              key, module)
+        self.next_color += 1
+        fields_out.append({"series": rate_series, "label": "rate", "unit": "/s"})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
         while len(ranges) < len(fields_out):
             ranges.append([None, None])
-        return {"fields": fields_out, "n": 0, "ranges": ranges, "key": key, "module": module,
-                "message": message, "numeric": bool(fields_out)}
+        return {"fields": fields_out, "n": 0, "ranges": ranges, "key": key, "module": module, "last_ts": None,
+                "message": message, "numeric": len(fields_out) > 1, "rate": None}
 
     def _update_row(self, state, fields):
         ts, level, module, location, message = fields
         state["n"] += 1
+        now = ts_seconds(ts)
+        previous, state["last_ts"] = state.get("last_ts"), now
+        rate_field = state["fields"][-1]
+        if previous is not None and 0 < now - previous < 60:
+            # Smoothed, because the jitter between two log lines says nothing on its own.
+            rate = 1 / (now - previous)
+            state["rate"] = rate if state.get("rate") is None else state["rate"] * 0.7 + rate * 0.3
+            rate = state["rate"]
+            rng = state["ranges"][-1]
+            rng[0] = rate if rng[0] is None else min(rng[0], rate)
+            rng[1] = rate if rng[1] is None else max(rng[1], rate)
+            lo, hi = rng
+            self.graph.push(rate_field["series"], (rate - lo) / (hi - lo) if hi > lo else 0.5, rate, lo, hi)
         if not state["numeric"]:
             return
         for i, (field, num, rng) in enumerate(zip(state["fields"], NUMBERS.finditer(message), state["ranges"])):
@@ -908,8 +928,9 @@ class Window(Adw.ApplicationWindow):
                 continue # gone quiet, and its line has already slid off the chart
             scale = max(abs(series["hi"]), abs(series["lo"]), 1e-9)
             spread = (series["hi"] - series["lo"]) / scale
-            if spread < 0.02:
-                continue # near enough constant to be noise in a table
+            # A rate line earns its place only when the line's pace really changes.
+            if spread < (0.35 if series["key"].endswith("#rate") else 0.005):
+                continue
             recent = now - series["flag"] < OUTLIER_TTL
             scored.append((spread + (10 if recent else 0), series))
         # Round-robin over the log lines they came from, so one chatty message cannot fill the
