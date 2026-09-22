@@ -34,15 +34,15 @@ DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) 
 # Remembered between runs: camera rotation and size, mutes, raw/pretty view.
 SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
-    "running": "Kör", "halted": "Stoppad", "reset": "I reset",
-    "debug-running": "Kör", "unknown": "Okänd",
+    "running": "Running", "halted": "Halted", "reset": "In reset",
+    "debug-running": "Running", "unknown": "Unknown",
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
-EXTREME_MARKS = 4 # lines that get their worst and best value named on the chart
+LABEL_WIDTH = 230 # right-hand strip the chart keeps for its labels
 MIN_SPAN = 60 # seconds the chart covers even when the session is younger
 WORST_MARKS = 6 # how many "worst value" labels the chart carries at once
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
@@ -125,27 +125,49 @@ SERIES_COLORS = ["#61afef", "#98c379", "#e5c07b", "#e06c75", "#c678dd", "#56b6c2
 
 
 class MultiGraph(Gtk.DrawingArea):
-    """Every tracked field in one chart: x is the session, y is each field's own 0…1 range."""
+    """Every tracked field in one chart, each line labelled where it ends.
 
-    def __init__(self, height=200, points=400):
-        super().__init__(content_height=height, hexpand=True)
+    x is the session (a minute at minimum), y is each field's own 0…1 range. The labels carry
+    the name, the current value and the range seen, so the chart needs no legend beside it.
+    """
+
+    def __init__(self, height=200, points=400, on_click=None):
+        super().__init__(content_height=height, hexpand=True, vexpand=True)
         self.points = points
-        self.series = {} # key -> {"t": [...], "v": [...], "color": str, "n": int}
+        self.on_click = on_click
+        self.series = {}
         self.t0 = None
-        # Redrawn every frame: the curve then slides with the clock instead of only when a
-        # sample lands, which is what makes slow fields look smooth.
+        self.label_hits = [] # (y0, y1, series key) for clicks
+        self.now = self.span = 0
+        # Redrawn every frame: the curve slides with the clock instead of only when a sample lands.
         self.add_tick_callback(lambda *_: (self.queue_draw(), GLib.SOURCE_CONTINUE)[1])
+        click = Gtk.GestureClick()
+        click.connect("released", self._on_released)
+        self.add_controller(click)
 
-    def add_series(self, key, color, label, polarity):
+    def _on_released(self, _gesture, _n, x, y):
+        if self.on_click and x > self.get_width() - LABEL_WIDTH:
+            for y0, y1, key in self.label_hits:
+                if y0 <= y <= y1:
+                    self.on_click(key)
+                    return
+
+    def add_series(self, key, color, label, polarity, unit, pattern):
         self.series[key] = {"t": [], "v": [], "color": color, "label": label, "polarity": polarity,
-                            "worst": None, "best": None} # (badness, value, time, level) each
+                            "unit": unit, "pattern": pattern, "value": None, "lo": None, "hi": None,
+                            "worst": None, "best": None, "flag": 0.0}
 
-    def drop_series(self, key):
-        self.series.pop(key, None)
+    def drop_pattern(self, pattern):
+        for key in [k for k, s in self.series.items() if s["pattern"] == pattern]:
+            del self.series[key]
         if not self.series:
             self.t0 = None
 
-    def push(self, key, level, value):
+    def flag(self, key):
+        if key in self.series:
+            self.series[key]["flag"] = time.time()
+
+    def push(self, key, level, value, lo, hi):
         series = self.series.get(key)
         if series is None:
             return
@@ -159,99 +181,91 @@ class MultiGraph(Gtk.DrawingArea):
             series["worst"] = sample
         if series["best"] is None or badness < series["best"][0]:
             series["best"] = sample
+        series["value"], series["lo"], series["hi"] = value, lo, hi
         self.t0 = now if self.t0 is None else self.t0
         series["t"].append(now)
         series["v"].append(min(1.0, max(0.0, level)))
         if len(series["v"]) > self.points: # halve the resolution, keep the whole session
             series["t"] = series["t"][1::2]
             series["v"] = [(a + b) / 2 for a, b in zip(series["v"][::2], series["v"][1::2])]
-        self.queue_draw()
+
+    def _x(self, t, w):
+        """Time to x. The session starts at the left edge and grows right until it fills the width."""
+        return 1 + (t - self.t0) / self.span * (w - 2)
 
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
         cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
+        plot = max(w - LABEL_WIDTH, 40)
         cr.set_source_rgba(1, 1, 1, 0.04)
-        cr.rectangle(0, 0, w, h)
+        cr.rectangle(0, 0, plot, h)
         cr.fill()
         cr.set_source_rgba(1, 1, 1, 0.07)
         cr.set_line_width(1)
         for i in range(1, 4): # quarter lines, something for the eye to measure against
             cr.move_to(0, h * i / 4)
-            cr.line_to(w, h * i / 4)
+            cr.line_to(plot, h * i / 4)
         cr.stroke()
+        self.label_hits = []
         if self.t0 is None:
             return
-        now = time.time()
-        span = max(now - self.t0, MIN_SPAN) # never cram a few seconds across the whole width
-        self.now, self.span = now, span
-        for series in self.series.values():
+        self.now = time.time()
+        self.span = max(self.now - self.t0, MIN_SPAN)
+
+        placed = []
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.set_font_size(11)
+        for key, series in self.series.items():
             if len(series["v"]) < 2:
                 continue
-            cr.set_source_rgb(*(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
-            cr.set_line_width(1.4)
-            points = [(self._x(t, w), h - 2 - v * (h - 4)) for t, v in zip(series["t"], series["v"])]
-            spline(cr, [p for p in points if p[0] > -w])
-            cr.stroke()
-        self._draw_extremes(cr, w, h, span)
-
-    def _x(self, t, w):
-        """Time to x, with now at the right edge."""
-        return w - 1 - (self.now - t) / self.span * (w - 2)
-
-    def _draw_extremes(self, cr, w, h, span):
-        """Name and value at each line's worst and best sample, the most extreme lines first."""
-        ranked = sorted((s for s in self.series.values() if s["worst"] and len(s["v"]) > 4),
-                        reverse=True, key=lambda s: s["worst"][0])
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(11)
-        taken = []
-        for series in ranked[:EXTREME_MARKS]:
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
-            for kind in ("worst", "best"):
-                _, value, when, level = series[kind]
-                x = self._x(when, w)
-                y = h - 2 - level * (h - 4)
-                text = f"{series['label']} {value:g}"
-                tw = cr.text_extents(text).width
-                tx = x + 7 if x + 7 + tw < w else x - 7 - tw
-                ty = min(h - 3, max(11, y - 5))
-                while any(abs(ty - oy) < 12 and abs(tx - ox) < tw for ox, oy in taken) and ty < h - 3:
-                    ty += 12 # nudge down rather than write on top of another mark
-                taken.append((tx, ty))
-                cr.set_source_rgb(*rgb)
-                cr.arc(x, y, 2.5, 0, 6.2832)
-                cr.fill() if kind == "worst" else cr.stroke() # worst filled, best hollow
-                cr.move_to(tx, ty)
-                cr.set_source_rgba(*rgb, 1 if kind == "worst" else 0.65)
-                cr.show_text(text)
-        self._draw_worst(cr, w, h, span)
+            points = [(self._x(t, plot), h - 2 - v * (h - 4)) for t, v in zip(series["t"], series["v"])]
+            points = [p for p in points if p[0] > -plot]
+            cr.set_source_rgb(*rgb)
+            cr.set_line_width(1.4)
+            spline(cr, points)
+            cr.stroke()
+            for kind, fill in (("worst", True), ("best", False)):
+                mark = series[kind]
+                if mark and len(series["v"]) > 4:
+                    cr.arc(self._x(mark[2], plot), h - 2 - mark[3] * (h - 4), 2.5, 0, 6.2832)
+                    cr.fill() if fill else cr.stroke()
+            placed.append((points[-1][1], key, series, rgb))
 
-    def _draw_worst(self, cr, w, h, span):
-        """Name and value of each line's worst sample, the few worst ones first."""
-        marks = [(s["worst"][0], s) for s in self.series.values()
-                 if s["worst"] is not None and len(s["v"]) > 4]
-        marks.sort(reverse=True, key=lambda m: m[0])
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(11)
-        taken = []
-        for _, series in marks[:WORST_MARKS]:
-            _, value, when, level = series["worst"]
-            x = (when - self.t0) / span * (w - 2) + 1
-            y = h - 2 - level * (h - 4)
-            text = f"{series['label']} {value:g}"
-            tw = cr.text_extents(text).width
-            tx = x + 6 if x + 6 + tw < w else x - 6 - tw
-            ty = min(h - 3, max(11, y - 5))
-            while any(abs(ty - other) < 12 and abs(tx - ox) < tw for ox, other in taken):
-                ty += 12 # nudge down rather than write on top of another mark
-                if ty > h - 3:
-                    break
-            taken.append((tx, ty))
-            cr.set_source_rgb(*(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
-            cr.arc(x, y, 2.5, 0, 6.2832)
-            cr.fill()
-            cr.move_to(tx, ty)
+        # Direct labelling: each label starts at its line's height, then they are pushed apart
+        # just enough not to overlap, keeping their order.
+        placed.sort()
+        spacing = 24 # room for the name and the range line under it
+        y = spacing
+        for i, entry in enumerate(placed):
+            y = max(entry[0], y)
+            placed[i] = (y, *entry[1:])
+            y += spacing
+        overflow = placed[-1][0] - (h - 4) if placed else 0
+        if overflow > 0:
+            shift = 0
+            for i in range(len(placed) - 1, -1, -1):
+                shift = max(shift, placed[i][0] - (h - 4) - (len(placed) - 1 - i) * 0)
+                placed[i] = (min(placed[i][0], h - 4 - (len(placed) - 1 - i) * spacing), *placed[i][1:])
+
+        for y, key, series, rgb in placed:
+            unit = f" {series['unit']}" if series["unit"] else ""
+            text = f"{'▲ ' if time.time() - series['flag'] < 10 else ''}{series['label']} {series['value']:g}{unit}"
+            cr.set_source_rgb(*rgb)
+            cr.move_to(plot + 6, y + 4)
             cr.show_text(text)
+            if series["lo"] is not None and series["hi"] > series["lo"]:
+                cr.set_source_rgba(*rgb, 0.55)
+                cr.set_font_size(9)
+                cr.move_to(plot + 6, y + 13)
+                cr.show_text(f"{series['lo']:g} – {series['hi']:g}")
+                cr.set_font_size(11)
+            cr.set_source_rgba(*rgb, 0.4) # a leader line back to where the curve ends
+            cr.set_line_width(1)
+            cr.move_to(plot, series["v"] and h - 2 - series["v"][-1] * (h - 4))
+            cr.line_to(plot + 4, y + 1)
+            cr.stroke()
+            self.label_hits.append((y - 6, y + 16, key))
 
 
 def ts_seconds(ts):
@@ -323,21 +337,21 @@ class SerialReader(threading.Thread):
         while True:
             ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
             if not ports:
-                self._emit("(ingen serieport)\n", status="Ingen port")
+                self._emit("(no serial port)\n", status="No port")
                 time.sleep(1)
                 continue
             self.port = ports[0]
             try:
                 self._pump()
             except (serial.SerialException, OSError) as exc:
-                self._emit(f"(port borta: {exc})\n", status="Frånkopplad")
+                self._emit(f"(port gone: {exc})\n", status="Disconnected")
                 time.sleep(1)
 
     def _pump(self):
         self.logdir.mkdir(parents=True, exist_ok=True)
         logfile = self.logdir / f"{datetime.now():%Y%m%d-%H%M%S}-{Path(self.port).name}.log"
         with serial.Serial(self.port, self.baud, timeout=0.2) as ser, logfile.open("ab") as log:
-            self._emit(f"(ansluten {self.port} @ {self.baud}, logg {logfile})\n", status=f"{self.port} @ {self.baud}")
+            self._emit(f"(connected {self.port} @ {self.baud}, log {logfile})\n", status=f"{self.port} @ {self.baud}")
             while True:
                 data = ser.read(4096)
                 if data:
@@ -407,31 +421,22 @@ class Window(Adw.ApplicationWindow):
         self.mute_box = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=8,
                                     row_spacing=0, column_spacing=2, margin_start=6, margin_end=6)
         self.mute_box.set_visible(False)
-        # Live table: one row per repeating message pattern, numbers drawn as value + min/max bar.
-        # One cell per numeric field, packed in columns: the repeated prose collapses into a label.
-        self.table = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["telemetry"],
-                                 min_children_per_line=1, max_children_per_line=2, homogeneous=True,
-                                 row_spacing=0, column_spacing=6, margin_start=6, margin_end=6, margin_bottom=2)
         css = Gtk.CssProvider()
-        css.load_from_string(""".telemetry > flowboxchild { padding: 0; min-height: 0; }
-            .telemetry label { padding: 0; font-size: 0.85em; }""")
+        css.load_from_string(".telemetry { padding: 1px 6px; min-height: 0; }")
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self.rows = {}   # pattern -> row state
-        self.seen = {}   # pattern -> occurrences before promotion to the table
+        self.rows = {}   # pattern -> series state
+        self.seen = {}   # pattern -> occurrences before it earns a place on the chart
         self.ranges = self.settings.get("ranges", {}) # pattern -> [[min, max], ...], kept between runs
         self.stats = {} # (pattern, field) -> [n, mean, m2, last_warning] for spotting outliers
         # Shared time axis: every graph spans the same session, so one line says it for all of them.
         self.axis = Gtk.Label(xalign=1, css_classes=["dim-label", "caption"], margin_end=8)
         self.session_start = None
-        self.graph = MultiGraph()
+        self.graph = MultiGraph(on_click=self._mute_series)
         self.next_color = 0
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
         top.append(self.graph)
         top.append(self.axis)
-        # Wrapped so the flow gets the window width to wrap against, with no height cap of its own:
-        # every metric stays visible and the log takes what is left.
-        top.append(self.table) # no height cap of its own: every metric stays visible
         top.append(scroller)
         self._rebuild_mute_chips()
         # Follow mode: new lines glide the view to the end, but only while it already sits there.
@@ -459,11 +464,11 @@ class Window(Adw.ApplicationWindow):
         bottom.append(self.picture)
 
         row1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.btn_toggle = self._button(row1, "[S] Stoppa", "media-playback-pause-symbolic", lambda *_: send("toggle"))
+        self.btn_toggle = self._button(row1, "[S] Halt", "media-playback-pause-symbolic", lambda *_: send("toggle"))
         self._button(row1, "[R] Reset", "view-refresh-symbolic", lambda *_: send("reset"))
-        self._button(row1, "[H] Reset + stopp", "media-skip-backward-symbolic", lambda *_: send("reset_halt"))
+        self._button(row1, "[H] Reset + halt", "media-skip-backward-symbolic", lambda *_: send("reset_halt"))
         row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        self._button(row1, "[Q] Rotera kamera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
+        self._button(row1, "[Q] Rotate camera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
         labels = [f"{w}×{h} @ {fps} fps" for (size, fps) in self.modes for (w, h) in [size.split("x")]]
         self.size_combo = Gtk.DropDown.new_from_strings(labels)
         sizes = [size for size, _ in self.modes]
@@ -474,15 +479,15 @@ class Window(Adw.ApplicationWindow):
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        row2.append(Gtk.Label(label="Bygge", xalign=0, css_classes=["dim-label", "caption"]))
+        row2.append(Gtk.Label(label="Build", xalign=0, css_classes=["dim-label", "caption"]))
         self.btn_type = self._button(row2, "[D] Debug", "bug-symbolic", lambda *_: self.toggle_type())
         self.btn_env = self._button(row2, "[E] Staging", "emblem-system-symbolic", lambda *_: self.toggle_env())
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        self.btn_build = self._button(row2, "[B] Bygg", "applications-engineering-symbolic", lambda *_: self.build("build"))
-        self.btn_flash = self._button(row2, "[F] Flasha", "drive-harddisk-symbolic", lambda *_: self.build("flash"))
-        self.btn_both = self._button(row2, "[A] Bygg + flasha", "media-playlist-consecutive-symbolic",
+        self.btn_build = self._button(row2, "[B] Build", "applications-engineering-symbolic", lambda *_: self.build("build"))
+        self.btn_flash = self._button(row2, "[F] Flash", "drive-harddisk-symbolic", lambda *_: self.build("flash"))
+        self.btn_both = self._button(row2, "[A] Build + flash", "media-playlist-consecutive-symbolic",
                                      lambda *_: self.build("both"), css="suggested-action")
-        self._button(row2, "[O] Logg", "text-x-generic-symbolic", lambda *_: send("open_log"))
+        self._button(row2, "[O] Log", "text-x-generic-symbolic", lambda *_: send("open_log"))
         controls.append(row2)
 
         self.job_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=24, css_classes=["dim-label", "caption"])
@@ -631,7 +636,7 @@ class Window(Adw.ApplicationWindow):
                 mean = sum(gaps) / len(gaps)
                 # Spread of the intervals: small means the line arrives on a steady beat.
                 spread = (max(gaps) - min(gaps)) / mean if mean else 0
-                badge += f" {1 / mean:.1f}/s {'jämnt' if spread < 0.25 else f'±{spread:.0%}'}"
+                badge += f" {1 / mean:.1f}/s {'steady' if spread < 0.25 else f'±{spread:.0%}'}"
             parts.append((badge, self._style("#e5c07b", bold=True)))
         parts.append(("  " + location, self._style("#5c6370", scale=0.8)))
         for text, tag in parts:
@@ -650,16 +655,16 @@ class Window(Adw.ApplicationWindow):
             self.mute_box.remove(child)
         for pattern in sorted(self.muted):
             label = pattern if len(pattern) <= 28 else pattern[:27] + "…"
-            chip = Gtk.Button(label=label, tooltip_text=f"{pattern}\nklicka för att avmuta",
+            chip = Gtk.Button(label=label, tooltip_text=f"{pattern}\nclick to unmute",
                               css_classes=["flat", "caption", "telemetry"])
             chip.connect("clicked", lambda _b, pat=pattern: self.unmute(pat))
             self.mute_box.append(chip)
         self.mute_box.set_visible(bool(self.muted))
 
     def _set_muted(self, muted):
-        for key in muted - self.muted:
-            for cell in self.rows.get(key, {}).get("cells", []):
-                self.graph.drop_series(cell["series"])
+        for pattern in muted - self.muted:
+            self.graph.drop_pattern(pattern)
+            self.rows.pop(pattern, None)
         self.muted = muted
         save_settings(muted=sorted(muted))
         self._rebuild_mute_chips()
@@ -687,7 +692,7 @@ class Window(Adw.ApplicationWindow):
     # --- live table ---------------------------------------------------------
 
     def _to_table(self, raw):
-        """Route a repeating telemetry line to its table row. Returns False for log lines."""
+        """Route a repeating telemetry line to the chart. Returns False for lines the log keeps."""
         plain = ANSI.sub("", raw)
         m = LOG_LINE.match(plain.rstrip("\r\n"))
         if not m or m.group(2).upper() in ("WARN", "WARNING", "ERROR", "FATAL"):
@@ -704,100 +709,44 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def _make_row(self, key, raw, fields):
+        """Register one series per numeric field. The chart labels them, so no widgets here."""
         ts, level, module, location, message = fields
-        color = self._module_color(raw, module)
-        cells = []
-        pos = 0
+        color_of = self._module_color(raw, module)
+        fields_out = []
+        pos = ""
         unit = ""
-        for num in NUMBERS.finditer(message):
-            box = Gtk.Box(spacing=4)
-            tag = Gtk.Label(css_classes=["monospace"], xalign=0, tooltip_text=location)
-            tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
-            text = field_label(message[pos:num.start()], unit)
-            label = Gtk.Label(label=text, xalign=0, hexpand=True, width_chars=8, max_width_chars=22,
-                              ellipsize=3, css_classes=["dim-label"]) # 3 = Pango.EllipsizeMode.END
-            value = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=9)
-            polarity = polarity_of(text, field_unit(message[num.end():]))
-            series = f"{key}#{len(cells)}"
+        at = 0
+        for i, num in enumerate(NUMBERS.finditer(message)):
+            text = field_label(message[at:num.start()], unit)
+            unit = field_unit(message[num.end():])
+            series = f"{key}#{i}"
             color = SERIES_COLORS[self.next_color % len(SERIES_COLORS)]
             self.next_color += 1
-            self.graph.add_series(series, color, f"{module} {text}".strip(), polarity)
-            bar = Gtk.DrawingArea(content_width=10, content_height=10, valign=Gtk.Align.CENTER)
-            bar.set_draw_func(lambda _a, cr, _w, _h, c=color: (
-                cr.set_source_rgb(*(int(c[i:i + 2], 16) / 255 for i in (1, 3, 5))),
-                cr.arc(5, 5, 4, 0, 6.2832), cr.fill()))
-            for w in (tag, label, value, bar):
-                box.append(w)
-            # Click anywhere on a cell mutes the whole pattern it came from.
-            click = Gtk.GestureClick()
-            click.connect("released", lambda *_: self._set_muted(self.muted | {key}))
-            box.add_controller(click)
-            box.set_tooltip_text(f"{message.strip()}\n{location} · klicka för att muta")
-            self.table.append(box)
-            unit = field_unit(message[num.end():])
-            cells.append({"value": value, "bar": bar, "unit": unit, "polarity": polarity, "label": text,
-                          "series": series})
-            pos = num.end()
-        if not cells: # no numbers: count, rate and how evenly the line arrives
-            box = Gtk.Box(spacing=4)
-            tag = Gtk.Label(css_classes=["monospace"], xalign=0)
-            tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
-            text = Gtk.Label(label=message, xalign=0, hexpand=True, width_chars=8, max_width_chars=30,
-                             ellipsize=3, tooltip_text=message)
-            count = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=10)
-            bar = Gtk.Label(label="", width_chars=2)
-            for w in (tag, text, count, bar):
-                box.append(w)
-            click = Gtk.GestureClick()
-            click.connect("released", lambda *_: self._set_muted(self.muted | {key}))
-            box.add_controller(click)
-            box.set_tooltip_text(f"{location} · klicka för att muta")
-            self.table.append(box)
-            cells.append({"value": count, "bar": bar, "unit": "", "polarity": 0, "label": message[:30],
-                          "series": None})
-        ranges = self.ranges.setdefault(key, [[None, None] for _ in cells])
-        return {"cells": cells, "n": 0, "ranges": ranges, "key": key, "numeric": bool(NUMBERS.search(message))}
+            self.graph.add_series(series, color, f"{module} {text}".strip(),
+                                  polarity_of(text, unit), unit, key)
+            fields_out.append({"series": series, "label": text, "unit": unit})
+            at = num.end()
+        ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
+        while len(ranges) < len(fields_out):
+            ranges.append([None, None])
+        return {"fields": fields_out, "n": 0, "ranges": ranges, "key": key, "module": module,
+                "message": message, "numeric": bool(fields_out)}
 
     def _update_row(self, state, fields):
         ts, level, module, location, message = fields
         state["n"] += 1
         if not state["numeric"]:
-            # Intervals between arrivals: the line shows the rate, its shape shows the jitter.
-            cell = state["cells"][0]
-            now = ts_seconds(ts)
-            previous = state.get("last_ts")
-            state["last_ts"] = now
-            if previous is None or not 0 < now - previous < 3600:
-                cell["value"].set_label(f"×{state['n']}")
-                return
-            gap = now - previous
-            gaps = state.setdefault("gaps", [None, None])
-            gaps[0] = gap if gaps[0] is None else min(gaps[0], gap)
-            gaps[1] = gap if gaps[1] is None else max(gaps[1], gap)
-            cell["value"].set_markup(
-                f"<b>×{state['n']}</b><span size=\"smaller\"> {1 / gap:.1f}/s</span>"
-                if gap > 0 else f"<b>×{state['n']}</b>")
-            cell["value"].set_tooltip_text(f"intervall {gap:.2f}s · min {gaps[0]:.2f}s · max {gaps[1]:.2f}s")
             return
-        for i, (cell, num, rng) in enumerate(zip(state["cells"], NUMBERS.finditer(message), state["ranges"])):
+        for i, (field, num, rng) in enumerate(zip(state["fields"], NUMBERS.finditer(message), state["ranges"])):
             v = float(num.group())
-            if (rng[0] is None or v < rng[0]) or (rng[1] is None or v > rng[1]):
+            if rng[0] is None or v < rng[0] or rng[1] is None or v > rng[1]:
                 rng[0] = v if rng[0] is None else min(rng[0], v)
                 rng[1] = v if rng[1] is None else max(rng[1], v)
                 self.ranges_dirty = True
             lo, hi = rng
-            odd = self._check_outlier(state["key"], i, v, cell["label"], module)
-            unit = f" {cell['unit']}" if cell["unit"] else ""
-            if hi > lo:
-                t = (v - lo) / (hi - lo)
-                self.graph.push(cell["series"], t, v)
-                cell["value"].set_markup(
-                    f'{"▲ " if odd else ""}'
-                    f'<span foreground="{heat_color(t, cell["polarity"])}"><b>{num.group()}</b></span>'
-                    f'<span size="smaller">{GLib.markup_escape_text(unit)}</span>')
-                cell["bar"].set_tooltip_text(f"min {lo:g} · max {hi:g}")
-            else:
-                cell["value"].set_markup(f"<b>{num.group()}</b><span size=\"smaller\">{GLib.markup_escape_text(unit)}</span>")
+            if self._check_outlier(state["key"], i, v, field["label"], module):
+                self.graph.flag(field["series"])
+            self.graph.push(field["series"], (v - lo) / (hi - lo) if hi > lo else 0.5, v, lo, hi)
 
     def _flush_ranges(self):
         if getattr(self, "ranges_dirty", False):
@@ -821,7 +770,7 @@ class Window(Adw.ApplicationWindow):
         if now - st[3] < OUTLIER_QUIET:
             return True
         st[3] = now
-        self._warn(f"{module} {label}: {value:g} (snitt {st[1]:.3g} ±{sigma:.2g})")
+        self._warn(f"{module} {label}: {value:g} (mean {st[1]:.3g} ±{sigma:.2g})")
         return True
 
     def _warn(self, text):
@@ -837,13 +786,16 @@ class Window(Adw.ApplicationWindow):
             return True
         span = max(time.time() - self.session_start, MIN_SPAN)
         started = datetime.fromtimestamp(self.session_start).strftime("%H:%M:%S")
-        self.axis.set_label(f"grafer: {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → nu")
+        self.axis.set_label(f"chart: {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → now")
         return True
+
+    def _mute_series(self, series_key):
+        series = self.graph.series.get(series_key)
+        if series:
+            self._set_muted(self.muted | {series["pattern"]})
 
     def _clear_table(self):
         self.session_start = None
-        while child := self.table.get_first_child():
-            self.table.remove(child)
         self.rows.clear()
         self.seen.clear()
         self.graph.series.clear()
@@ -927,7 +879,7 @@ class Window(Adw.ApplicationWindow):
     def _update_subtitle(self):
         parts = [self.mcu_text, self.serial_state]
         if self.muted:
-            parts.append(f"{len(self.muted)} mutade")
+            parts.append(f"{len(self.muted)} muted")
         self.title_widget.set_subtitle(" · ".join(p for p in parts if p))
 
     def _poll_state(self):
@@ -935,15 +887,15 @@ class Window(Adw.ApplicationWindow):
         if state:
             self.mcu_state = state.get("state")
             if not state.get("probe"):
-                text = "Ingen ST-Link"
+                text = "No ST-Link"
             elif state.get("debugger"):
-                text = f"Upptagen av {state['debugger']}"
+                text = f"Held by {state['debugger']}"
             else:
                 text = f"{state['probe']} · {STATE_TEXT.get(self.mcu_state, self.mcu_state)}"
             self.mcu_text = text
             self._update_subtitle()
             halted = self.mcu_state == "halted"
-            self.btn_toggle.get_child().set_label("[S] Starta" if halted else "[S] Stoppa")
+            self.btn_toggle.get_child().set_label("[S] Resume" if halted else "[S] Halt")
             self.btn_toggle.get_child().set_icon_name(
                 "media-playback-start-symbolic" if halted else "media-playback-pause-symbolic")
         return True
