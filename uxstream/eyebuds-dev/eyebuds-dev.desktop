@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=EyeBuds dev
+Comment=Camera, serial log and ST-Link controls for the eyebuds bench
+Exec=eyebuds-dev
+Icon=camera-web
+Categories=Development;Utility;
+StartupWMClass=dev.uxstream.EyebudsDev

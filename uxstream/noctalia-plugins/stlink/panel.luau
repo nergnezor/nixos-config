@@ -145,6 +145,12 @@ local function render()
         onClick = "onCamera",
       }),
       ui.button({
+        text = keyed("X", tr("actions.app")),
+        glyph = "device-desktop",
+        variant = "primary",
+        onClick = "onApp",
+      }),
+      ui.button({
         text = keyed("L", tr("actions.serial")),
         glyph = snapshot.serialRunning and "terminal-2" or "terminal",
         variant = snapshot.serialRunning and "primary" or "outline",
@@ -228,6 +234,7 @@ function onBuild() send("build", { mode = "build", build = buildType, env = buil
 function onFlash() send("build", { mode = "flash", build = buildType, env = buildEnv }) end
 function onBuildFlash() send("build", { mode = "both", build = buildType, env = buildEnv }) end
 function onOpenLog() send("open_log") end
+function onApp() send("open_app") end
 
 local KEY_HANDLERS = {
   s = function() send("toggle") end,
@@ -241,6 +248,7 @@ local KEY_HANDLERS = {
   f = onFlash,
   a = onBuildFlash,
   o = onOpenLog,
+  x = onApp,
 }
 
 function onKey(chord, pressed)

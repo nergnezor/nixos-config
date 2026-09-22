@@ -109,14 +109,14 @@ entry = "widget.luau"
 [[panel]]
 id = "control"
 entry = "panel.luau"
-width = 400
+width = 460
 height = 370
 placement = "floating"
 position = "center"
 open_near_click = true
 keyboard_focus = "exclusive"
 dismiss_on_outside_click = true
-capture_keys = ["s", "r", "h", "k", "l", "d", "e", "b", "f", "a", "o"]
+capture_keys = ["s", "r", "h", "k", "l", "d", "e", "b", "f", "a", "o", "x"]
 
 [[service]]
 id = "service"

@@ -58,9 +58,11 @@ local function nowSec()
   return math.floor((noctalia.nowMs() or 0) / 1000)
 end
 
+-- Mirrored to state.json so the EyeBuds dev app (uxstream/eyebuds-dev) can show the same state.
 local function publish()
   snapshot.busy = actionBusy
   noctalia.state.set(STATE_KEY, snapshot)
+  noctalia.writeFile(noctalia.pluginDataDir() .. "/state.json", noctalia.json.encode(snapshot))
 end
 
 local function result(command, ok, message)
@@ -339,6 +341,22 @@ local function runBuild(command)
   end, 10000)
 end
 
+-- The EyeBuds dev app (uxstream/eyebuds-dev) replaces the separate camera and serial windows.
+local function openDevApp(command)
+  local inner = "eyebuds-dev"
+  local script = "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect " .. inner
+    .. "; else setsid -f " .. inner .. " </dev/null >/dev/null 2>&1; fi"
+  noctalia.runAsync(script, function(res)
+    if res and res.exitCode == 0 then
+      result(command, true, noctalia.tr("result.app_started"))
+    else
+      local msg = noctalia.tr("result.failed", { error = errorText(res, "eyebuds-dev not found") })
+      result(command, false, msg)
+      noctalia.notifyError(noctalia.tr("title"), msg)
+    end
+  end, 10000)
+end
+
 local function openJobLog()
   local log = noctalia.pluginDataDir() .. "/job.log"
   local inner = "kitty --title " .. shellQuote("eyebuds build log") .. " less +G " .. shellQuote(log)
@@ -374,6 +392,8 @@ local function execute(command)
     runBuild(command)
   elseif action == "open_log" then
     openJobLog()
+  elseif action == "open_app" then
+    openDevApp(command)
   else
     result(command, false, "Unknown action: " .. action)
   end

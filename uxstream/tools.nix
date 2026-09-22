@@ -1,5 +1,6 @@
 # Uxstream host tools (flash/SWD + Android router build) and the ST-Link noctalia plugin
-# in ./noctalia-plugins (registered as a path source, see its catalog.toml). Kept in nixos-config
+# in ./noctalia-plugins (registered as a path source, see its catalog.toml) plus the
+# EyeBuds dev app in ./eyebuds-dev. Kept in nixos-config
 # for now — not in the embedded repo. Import from home.nix:
 #
 #   uxstreamTools = import ./uxstream/tools.nix { inherit pkgs; homeDirectory = config.home.homeDirectory; };
@@ -18,7 +19,7 @@
 # cargo-ndk for Android builds also installs from nix when needed.
 { pkgs, homeDirectory }:
 {
-  packages = with pkgs; [
+  packages = [ (pkgs.callPackage ./eyebuds-dev { }) ] ++ (with pkgs; [
     openocd
     probe-rs-tools
     python3 # shared_modules/scripts/prefix_binary.py (bankN.bin post-link step, stdlib only)
@@ -47,7 +48,7 @@
     libxkbcommon
     libinput.out # libinput's default outputsToInstall is just the CLI ("bin"); need the .so
     glib.dev # glib-2.0.pc, transitively required by gstreamer-1.0.pc
-  ];
+  ]);
 
   sessionVariables = {
     JAVA_HOME = pkgs.jdk17.home;

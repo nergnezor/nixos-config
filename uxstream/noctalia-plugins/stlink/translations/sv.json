@@ -20,7 +20,8 @@
     "build": "Bygg",
     "flash": "Flasha",
     "build_flash": "Bygg + flasha",
-    "open_log": "Logg"
+    "open_log": "Logg",
+    "app": "Dev-app"
   },
   "build": {
     "debug": "Debug",
@@ -46,7 +47,8 @@
     "camera_stopped": "Kameran stoppad",
     "serial_started": "Serieloggen startad",
     "serial_stopped": "Serieloggen stoppad",
-    "build_started": "Startat: {what}"
+    "build_started": "Startat: {what}",
+    "app_started": "EyeBuds dev-appen startad"
   },
   "settings": {
     "refresh_interval": {

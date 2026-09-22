@@ -20,7 +20,8 @@
     "build": "Build",
     "flash": "Flash",
     "build_flash": "Build + flash",
-    "open_log": "Log"
+    "open_log": "Log",
+    "app": "Dev app"
   },
   "build": {
     "debug": "Debug",
@@ -46,7 +47,8 @@
     "camera_stopped": "Camera stopped",
     "serial_started": "Serial log started",
     "serial_stopped": "Serial log stopped",
-    "build_started": "Started: {what}"
+    "build_started": "Started: {what}",
+    "app_started": "EyeBuds dev app started"
   },
   "settings": {
     "refresh_interval": {
