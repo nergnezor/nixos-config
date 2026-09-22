@@ -322,7 +322,7 @@ class MultiGraph(Gtk.DrawingArea):
             cr.move_to(tip_x, tip_y)
             cr.line_to(tx + width + 4, ly + 2)
             cr.stroke()
-            cr.set_source_rgba(1, 1, 1, 0.10) # a dim rounded plate keeps the value readable
+            cr.set_source_rgba(0, 0, 0, 0.45) # a dark rounded plate keeps the name readable
             rounded_rect(cr, tx - 5, ly - 6, width + 10, LABEL_PLATE, 5)
             cr.fill()
             cr.set_source_rgb(*rgb)
