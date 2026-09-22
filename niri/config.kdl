@@ -313,6 +313,12 @@ window-rule {
     open-on-output "DP-1"
 }
 
+// EyeBuds dev app (uxstream/eyebuds-dev): the width its layout was tuned for.
+window-rule {
+    match app-id=r#"^dev\.uxstream\.EyebudsDev$"#
+    default-column-width { fixed 740; }
+}
+
 // ST-Link panel helpers (usbcam / serial-log). Stacking them into one column is done
 // by uxstream/noctalia-plugins/stlink/stack.sh after launch, rules cannot do that.
 window-rule {

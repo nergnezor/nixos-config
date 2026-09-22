@@ -5,6 +5,7 @@ The ST-Link noctalia plugin stays the backend. Actions go through `noctalia msg 
 state comes back through the plugin's state.json / job.json.
 """
 import argparse
+import collections
 import glob
 import json
 import os
@@ -26,6 +27,8 @@ import serial  # noqa: E402
 
 PLUGIN = "erik/stlink:service"
 DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "noctalia/plugins/data/erik/stlink"
+# Remembered between runs: log height (paned position), camera rotation, filter.
+SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
     "running": "Kör", "halted": "Stoppad", "reset": "I reset",
     "debug-running": "Kör", "unknown": "Okänd",
@@ -52,6 +55,13 @@ def read_json(path):
         return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+
+
+def save_settings(**values):
+    current = read_json(SETTINGS) or {}
+    current.update(values)
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS.write_text(json.dumps(current))
 
 
 class SerialReader(threading.Thread):
@@ -99,7 +109,8 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, app, args):
         super().__init__(application=app, title="EyeBuds dev", default_width=1400, default_height=900)
         self.args = args
-        self.rotation = args.rotate
+        self.settings = read_json(SETTINGS) or {}
+        self.rotation = self.settings.get("rotation", args.rotate)
         self.build_type = "debug"
         self.build_env = "staging"
         self.job_active = False
@@ -126,45 +137,71 @@ class Window(Adw.ApplicationWindow):
         self.title_widget = header.get_title_widget()
         root.append(header)
 
-        body = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, vexpand=True, position=450)
+        body = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         root.append(body)
+        self.paned = body
 
+        # Bottom half: a vertical button column on the left, the camera filling the rest.
+        bottom = Gtk.Box(spacing=8, margin_top=6, margin_bottom=8, margin_start=8, margin_end=8)
+        body.set_end_child(bottom)
         self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=True)
         self.picture.add_css_class("card")
-        body.set_end_child(self.picture)
 
         self.textview = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, can_focus=False)
         self.textview.set_wrap_mode(Gtk.WrapMode.CHAR)
         self.buffer = self.textview.get_buffer()
         scroller = Gtk.ScrolledWindow(child=self.textview, hexpand=True, vexpand=True)
         self.scroller = scroller
-        self.serial_status = Gtk.Label(label="Serielogg", xalign=0, css_classes=["dim-label", "caption"], margin_start=6)
+        self.serial_status = Gtk.Label(label="Serielogg", xalign=0, hexpand=True, css_classes=["dim-label", "caption"], margin_start=6)
+        # Filter: case-insensitive regex over the uncoloured line, "!" first inverts it, "/" focuses it.
+        self.filter_entry = Gtk.SearchEntry(placeholder_text="[/] Filter (regex, !x utesluter)", width_chars=32)
+        self.filter_entry.set_text(self.settings.get("filter", ""))
+        self.filter_entry.connect("search-changed", lambda *_: self._refilter())
+        self.filter_entry.connect("stop-search", lambda *_: self.set_focus(None))
+        self.filter_entry.connect("activate", lambda *_: self.set_focus(None))
+        self.filter_count = Gtk.Label(label="", css_classes=["dim-label", "caption"], margin_end=6)
+        log_header = Gtk.Box(spacing=6)
+        log_header.append(self.serial_status)
+        log_header.append(self.filter_count)
+        log_header.append(self.filter_entry)
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        top.append(self.serial_status)
+        top.append(log_header)
         top.append(scroller)
+        self.lines = collections.deque(maxlen=5000) # complete raw lines, colours included
+        self.partial = ""
+        self.filter = None
+        self.filter_invert = False
+        self.shown = 0
+        self._refilter()
         body.set_start_child(top)
+        # Position is applied once both children exist, otherwise GTK recomputes it on first layout.
+        body.set_position(self.settings.get("log_height", 973))
+        # Saving starts after the initial layout has settled, so only the user's drags are remembered.
+        GLib.timeout_add(2000, lambda: body.connect(
+            "notify::position", lambda paned, _p: save_settings(log_height=paned.get_position())) and False)
         self.sgr_fg = None
         self.sgr_bold = False
         self.tags = {}
 
-        controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=8,
-                           margin_start=8, margin_end=8)
-        root.append(controls)
+        controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.START)
+        bottom.append(controls)
+        bottom.append(self.picture)
 
-        row1 = Gtk.Box(spacing=6)
+        row1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.btn_toggle = self._button(row1, "[S] Stoppa", "media-playback-pause-symbolic", lambda *_: send("toggle"))
         self._button(row1, "[R] Reset", "view-refresh-symbolic", lambda *_: send("reset"))
         self._button(row1, "[H] Reset + stopp", "media-skip-backward-symbolic", lambda *_: send("reset_halt"))
-        row1.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6, margin_end=6))
+        row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self._button(row1, "[Q] Rotera kamera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
-        self._button(row1, "[C] Rensa logg", "edit-clear-all-symbolic", lambda *_: self.buffer.set_text(""))
+        self._button(row1, "[C] Rensa logg", "edit-clear-all-symbolic", lambda *_: self.clear_log())
         controls.append(row1)
 
-        row2 = Gtk.Box(spacing=6)
-        row2.append(Gtk.Label(label="Bygge:", css_classes=["dim-label"]))
+        row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
+        row2.append(Gtk.Label(label="Bygge", xalign=0, css_classes=["dim-label", "caption"]))
         self.btn_type = self._button(row2, "[D] Debug", "bug-symbolic", lambda *_: self.toggle_type())
         self.btn_env = self._button(row2, "[E] Staging", "emblem-system-symbolic", lambda *_: self.toggle_env())
-        row2.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6, margin_end=6))
+        row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self.btn_build = self._button(row2, "[B] Bygg", "applications-engineering-symbolic", lambda *_: self.build("build"))
         self.btn_flash = self._button(row2, "[F] Flasha", "drive-harddisk-symbolic", lambda *_: self.build("flash"))
         self.btn_both = self._button(row2, "[A] Bygg + flasha", "media-playlist-consecutive-symbolic",
@@ -172,13 +209,13 @@ class Window(Adw.ApplicationWindow):
         self._button(row2, "[O] Logg", "text-x-generic-symbolic", lambda *_: send("open_log"))
         controls.append(row2)
 
-        self.job_label = Gtk.Label(label="", xalign=0, css_classes=["dim-label", "caption"])
+        self.job_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=24, css_classes=["dim-label", "caption"])
         self.progress = Gtk.ProgressBar()
         controls.append(self.job_label)
         controls.append(self.progress)
 
     def _button(self, box, label, icon, handler, css=None):
-        btn = Gtk.Button(child=Adw.ButtonContent(label=label, icon_name=icon))
+        btn = Gtk.Button(child=Adw.ButtonContent(label=label, icon_name=icon, halign=Gtk.Align.START))
         if css:
             btn.add_css_class(css)
         btn.connect("clicked", handler)
@@ -200,6 +237,7 @@ class Window(Adw.ApplicationWindow):
     def rotate(self, delta):
         self.rotation = (self.rotation + delta) % 360
         self.pipeline.get_by_name("flip").set_property("video-direction", DIRECTIONS[self.rotation])
+        save_settings(rotation=self.rotation)
 
     # --- serial -------------------------------------------------------------
 
@@ -238,17 +276,65 @@ class Window(Adw.ApplicationWindow):
         if pos < len(text):
             self.buffer.insert_with_tags(self.buffer.get_end_iter(), text[pos:], self._tag())
 
+    def _matches(self, line):
+        if self.filter is None:
+            return True
+        hit = self.filter.search(ANSI.sub("", line)) is not None
+        return hit != self.filter_invert
+
+    def _show_line(self, line):
+        self._insert_ansi(line)
+        self.shown += 1
+
+    def _refilter(self):
+        text = self.filter_entry.get_text()
+        save_settings(filter=text)
+        self.filter_invert = text.startswith("!")
+        pattern = text[1:] if self.filter_invert else text
+        try:
+            self.filter = re.compile(pattern, re.IGNORECASE) if pattern else None
+            self.filter_entry.remove_css_class("error")
+        except re.error:
+            self.filter_entry.add_css_class("error")
+            return
+        self.buffer.set_text("")
+        self.sgr_fg, self.sgr_bold = None, False
+        self.shown = 0
+        for line in self.lines:
+            if self._matches(line):
+                self._show_line(line)
+        self._update_count()
+        self._scroll_to_end()
+
+    def _update_count(self):
+        self.filter_count.set_label(f"{self.shown}/{len(self.lines)}" if self.filter else "")
+
+    def _scroll_to_end(self):
+        adj = self.scroller.get_vadjustment()
+        adj.set_value(adj.get_upper())
+
+    def clear_log(self):
+        self.lines.clear()
+        self.partial = ""
+        self.buffer.set_text("")
+        self.shown = 0
+        self._update_count()
+
     def _on_serial(self, text, status):
         if status:
             self.serial_status.set_label(f"Serielogg · {status}")
-        self._insert_ansi(text)
-        # Keep a bounded backlog so hours of logging do not grow the buffer without end.
+        self.partial += text
+        *complete, self.partial = self.partial.split("\n")
+        for line in complete:
+            line += "\n"
+            self.lines.append(line)
+            if self._matches(line):
+                self._show_line(line)
+        # Keep the view bounded like the backlog so hours of logging do not grow it without end.
         if self.buffer.get_line_count() > 5000:
-            start = self.buffer.get_start_iter()
-            cut = self.buffer.get_iter_at_line(1000)[1]
-            self.buffer.delete(start, cut)
-        adj = self.scroller.get_vadjustment()
-        adj.set_value(adj.get_upper())
+            self.buffer.delete(self.buffer.get_start_iter(), self.buffer.get_iter_at_line(1000)[1])
+        self._update_count()
+        self._scroll_to_end()
         return False
 
     # --- plugin state -------------------------------------------------------
@@ -301,10 +387,12 @@ class Window(Adw.ApplicationWindow):
     # --- keys ---------------------------------------------------------------
 
     def _on_key(self, _controller, keyval, _keycode, _state):
+        if self.get_focus() is not None and self.get_focus().is_ancestor(self.filter_entry):
+            return False # typing in the filter, not a shortcut
         key = chr(keyval).lower() if 32 <= keyval < 127 else ""
         actions = {
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
-            "q": lambda: self.rotate(90), "c": lambda: self.buffer.set_text(""),
+            "q": lambda: self.rotate(90), "c": self.clear_log, "/": lambda: self.filter_entry.grab_focus(),
             "d": self.toggle_type, "e": self.toggle_env,
             "b": lambda: self.build("build"), "f": lambda: self.build("flash"), "a": lambda: self.build("both"),
             "o": lambda: send("open_log"),
