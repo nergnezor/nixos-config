@@ -501,9 +501,9 @@ class Window(Adw.ApplicationWindow):
         self.session_start = None
         self.graph = MultiGraph(on_click=self._mute_series)
         self.next_color = 0
-        # Every series' range, compact, so the chart itself only has to carry current values.
-        self.range_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
-                                     css_classes=["caption", "dim-label"], visible=False)
+        # Every series' range in an aligned grid, so the chart only has to carry current values.
+        self.range_grid = Gtk.Grid(column_spacing=6, row_spacing=0, margin_start=8, margin_end=8,
+                                   margin_top=2, visible=False)
         # Outliers worth a second look, listed only while there are any.
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
         self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
@@ -511,7 +511,7 @@ class Window(Adw.ApplicationWindow):
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
         top.append(self.graph)
-        top.append(self.range_label)
+        top.append(self.range_grid)
         top.append(self.outlier_label)
         top.append(self.axis)
         top.append(scroller)
@@ -878,18 +878,29 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def _update_ranges(self):
-        rows = []
-        for series in self.graph.series.values():
-            if series["lo"] is None or series["hi"] <= series["lo"]:
-                continue
-            name = GLib.markup_escape_text(f"{series['group']} {series['label']}")[:34]
-            rows.append(f'<span foreground="{series["color"]}">{name}</span> '
-                        f'{series["lo"]:g}–{series["hi"]:g}')
-        self.range_label.set_visible(bool(rows))
-        if rows:
-            # Three to a line: the whole set fits in a couple of rows under the chart.
-            lines = ["   ".join(rows[i:i + 3]) for i in range(0, len(rows), 3)]
-            self.range_label.set_markup("\n".join(lines))
+        entries = [s for s in self.graph.series.values()
+                   if s["lo"] is not None and s["hi"] > s["lo"]]
+        while child := self.range_grid.get_first_child():
+            self.range_grid.remove(child)
+        self.range_grid.set_visible(bool(entries))
+        if not entries:
+            return True
+        # Name, min, now, max per entry, in as many columns as the width allows, so the block
+        # stays a few rows tall however many fields the firmware reports.
+        columns = max(1, min(4, self.get_width() // 260))
+        rows = -(-len(entries) // columns)
+        for i, series in enumerate(sorted(entries, key=lambda s: (s["group"], s["label"]))):
+            column, row = divmod(i, rows)
+            name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=22,
+                             css_classes=["caption"], hexpand=True)
+            name.set_markup(f'<span foreground="{series["color"]}">'
+                            f'{GLib.markup_escape_text(series["group"] + " " + series["label"])}</span>')
+            self.range_grid.attach(name, column * 4, row, 1, 1)
+            for offset, value, dim in ((1, series["lo"], True), (2, series["value"], False),
+                                       (3, series["hi"], True)):
+                classes = ["caption", "monospace"] + (["dim-label"] if dim else [])
+                self.range_grid.attach(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=7,
+                                                 css_classes=classes), column * 4 + offset, row, 1, 1)
         return True
 
     def _update_outliers(self):
