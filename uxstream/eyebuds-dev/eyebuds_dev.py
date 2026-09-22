@@ -38,6 +38,8 @@ STATE_TEXT = {
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
 CAMERA_MAX_FPS = 30
+# The sensor trades resolution for framerate: 30 fps only at 640x480, 7 fps at 1600x1200.
+CAMERA_SIZES = ["640x480", "800x600", "1280x720", "1600x1200"]
 # The firmware colours its log levels with SGR sequences. SGR is rendered with text tags,
 # every other escape sequence is dropped.
 ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
@@ -162,6 +164,7 @@ class Window(Adw.ApplicationWindow):
         self.rotation = self.settings.get("rotation", args.rotate)
         self.fps = self.settings.get("fps", CAMERA_MAX_FPS)
         self.camera_caps = ""
+        self.size = self.settings.get("size", CAMERA_SIZES[0])
         self.build_type = "debug"
         self.build_env = "staging"
         self.job_active = False
@@ -272,8 +275,12 @@ class Window(Adw.ApplicationWindow):
         self.fps_scale.set_draw_value(False)
         self.fps_scale.connect("value-changed", self._on_fps_changed)
         self._update_fps_label()
+        self.size_combo = Gtk.DropDown.new_from_strings(CAMERA_SIZES)
+        self.size_combo.set_selected(CAMERA_SIZES.index(self.size) if self.size in CAMERA_SIZES else 0)
+        self.size_combo.connect("notify::selected", self._on_size_changed)
         row1.append(self.fps_label)
         row1.append(self.fps_scale)
+        row1.append(self.size_combo)
         controls.append(row1)
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -306,19 +313,27 @@ class Window(Adw.ApplicationWindow):
 
     def _start_camera(self):
         Gst.init(None)
+        w, h = self.size.split("x")
         self.pipeline = Gst.parse_launch(
-            f"v4l2src name=src device={self.args.device} ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
+            f"v4l2src name=src device={self.args.device} ! video/x-raw,width={w},height={h} "
+            f"! queue max-size-buffers=1 leaky=downstream ! videoconvert "
             f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
             # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
             f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} "
             f"! videorate ! capsfilter name=rate caps=video/x-raw,framerate={self.fps}/1 "
             f"! gtk4paintablesink name=sink"
         )
-        sink = self.pipeline.get_by_name("sink")
-        self.picture.set_paintable(sink.props.paintable)
+        self.picture.set_paintable(self.pipeline.get_by_name("sink").props.paintable)
         self.pipeline.set_state(Gst.State.PLAYING)
         # Caps are only known once the source has negotiated, which is a few frames after PLAYING.
         GLib.timeout_add(500, self._read_camera_caps)
+
+    def _on_size_changed(self, combo, _param):
+        self.size = CAMERA_SIZES[combo.get_selected()]
+        save_settings(size=self.size)
+        self.pipeline.set_state(Gst.State.NULL) # caps on the source need a full renegotiation
+        self.camera_caps = ""
+        self._start_camera()
 
     def _read_camera_caps(self):
         caps = self.pipeline.get_by_name("src").get_static_pad("src").get_current_caps()
