@@ -42,7 +42,13 @@ CAMERA_HEIGHT = 560
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
+OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
+OUTLIER_SHOWN = 6 # how many of them are listed at once
 LABEL_WIDTH = 230 # right-hand strip the chart keeps for its labels
+LABEL_GAP = 22 # how close two labels may sit before they push each other away
+LABEL_SPRING = 55 # how hard a label is pulled back to the height of its own line
+LABEL_PUSH = 900 # how hard overlapping labels shove each other apart
+LABEL_DAMPING = 11 # how quickly that motion settles
 MIN_SPAN = 60 # seconds the chart covers even when the session is younger
 WORST_MARKS = 6 # how many "worst value" labels the chart carries at once
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
@@ -140,7 +146,8 @@ class MultiGraph(Gtk.DrawingArea):
         self.label_hits = [] # (y0, y1, series key) for clicks
         self.now = self.span = 0
         # Redrawn every frame: the curve slides with the clock instead of only when a sample lands.
-        self.add_tick_callback(lambda *_: (self.queue_draw(), GLib.SOURCE_CONTINUE)[1])
+        self.last_frame = None
+        self.add_tick_callback(self._tick)
         click = Gtk.GestureClick()
         click.connect("released", self._on_released)
         self.add_controller(click)
@@ -156,7 +163,8 @@ class MultiGraph(Gtk.DrawingArea):
         self.series[key] = {"t": [], "v": [], "color": color, "label": label, "polarity": polarity,
                             "group": group,
                             "unit": unit, "pattern": pattern, "value": None, "lo": None, "hi": None,
-                            "worst": None, "best": None, "flag": 0.0}
+                            "worst": None, "best": None, "flag": 0.0,
+                            "y": None, "label_y": None, "label_vy": 0.0, "band": None}
 
     def drop_pattern(self, pattern):
         for key in [k for k, s in self.series.items() if s["pattern"] == pattern]:
@@ -190,20 +198,42 @@ class MultiGraph(Gtk.DrawingArea):
             series["t"] = series["t"][1::2]
             series["v"] = [(a + b) / 2 for a, b in zip(series["v"][::2], series["v"][1::2])]
 
+    def _tick(self, _widget, clock):
+        now = clock.get_frame_time() / 1e6
+        dt = min(now - self.last_frame, 0.1) if self.last_frame else 0
+        self.last_frame = now
+        if dt:
+            self._step_labels(dt)
+        self.queue_draw()
+        return GLib.SOURCE_CONTINUE
+
+    def _step_labels(self, dt):
+        """Labels are beads on a thread: pulled to their line's height, pushed off each other."""
+        bands = {}
+        for series in self.series.values():
+            if series["y"] is not None and series["label_y"] is not None:
+                bands.setdefault(series["band"], []).append(series)
+        for band, beads in bands.items():
+            beads.sort(key=lambda s: s["label_y"])
+            for a, b in zip(beads, beads[1:]):
+                overlap = LABEL_GAP - (b["label_y"] - a["label_y"])
+                if overlap > 0:
+                    a["label_vy"] -= LABEL_PUSH * overlap * dt / LABEL_GAP
+                    b["label_vy"] += LABEL_PUSH * overlap * dt / LABEL_GAP
+            top, height = band
+            for bead in beads:
+                bead["label_vy"] += (bead["y"] - bead["label_y"]) * LABEL_SPRING * dt
+                bead["label_vy"] *= max(0.0, 1 - LABEL_DAMPING * dt)
+                # Room below for the range line, room above for the name.
+                bead["label_y"] = min(top + height - 18, max(top + 10, bead["label_y"] + bead["label_vy"] * dt))
+
     def _x(self, t, w):
         """Time to x, with now at the right edge: a line starts there and trails off to the left."""
         return w - 1 - (self.now - t) / self.span * (w - 2)
 
     def _bands(self, h):
-        """One band per module, stacked in y, in the order the modules first appeared."""
-        groups = []
-        for series in self.series.values():
-            if series["group"] not in groups:
-                groups.append(series["group"])
-        if not groups:
-            return {}
-        height = h / len(groups)
-        return {group: (i * height, height) for i, group in enumerate(groups)}
+        """Every series shares one band: the whole plot."""
+        return collections.defaultdict(lambda: (0.0, h))
 
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
@@ -216,27 +246,22 @@ class MultiGraph(Gtk.DrawingArea):
         self.span = max(self.now - self.t0, MIN_SPAN)
         bands = self._bands(h)
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.set_source_rgba(1, 1, 1, 0.04)
+        cr.rectangle(0, 0, plot, h)
+        cr.fill()
+        cr.set_source_rgba(1, 1, 1, 0.07)
+        cr.set_line_width(1)
+        for i in range(1, 4): # quarter lines, something for the eye to measure against
+            cr.move_to(0, h * i / 4)
+            cr.line_to(plot, h * i / 4)
+        cr.stroke()
 
-        for group, (top, height) in bands.items():
-            cr.set_source_rgba(1, 1, 1, 0.04)
-            cr.rectangle(0, top + 1, plot, height - 2)
-            cr.fill()
-            cr.set_source_rgba(1, 1, 1, 0.07)
-            cr.set_line_width(1)
-            cr.move_to(0, top + height / 2) # a mid line to read each band against
-            cr.line_to(plot, top + height / 2)
-            cr.stroke()
-            cr.set_font_size(10)
-            cr.set_source_rgba(1, 1, 1, 0.35)
-            cr.move_to(4, top + 12)
-            cr.show_text(group)
-
-        placed = []
         cr.set_font_size(11)
         for key, series in self.series.items():
-            if len(series["v"]) < 2 or series["group"] not in bands:
+            if len(series["v"]) < 2:
                 continue
             top, height = bands[series["group"]]
+            series["band"] = (top, height)
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
             points = [(self._x(t, plot), top + height - 3 - v * (height - 6))
                       for t, v in zip(series["t"], series["v"])]
@@ -250,38 +275,31 @@ class MultiGraph(Gtk.DrawingArea):
                 if mark and len(series["v"]) > 4:
                     cr.arc(self._x(mark[2], plot), top + height - 3 - mark[3] * (height - 6), 2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
-            placed.append((points[-1][1], key, series, rgb, top, height))
+            # The label sticks to the value its line last showed; the physics step keeps labels
+            # from sitting on top of each other.
+            series["y"] = points[-1][1]
+            if series["label_y"] is None:
+                series["label_y"] = series["y"]
 
-        # Direct labelling: each label starts at its line's height, then labels are pushed apart
-        # just enough not to overlap, without leaving their own band.
-        placed.sort()
-        spacing = 22 # room for the name and the range line under it
-        for band_top, band_height in {(t, hh) for *_, t, hh in placed}:
-            rows = [p for p in placed if p[4] == band_top]
-            y = band_top + 12
-            for entry in rows:
-                y = max(entry[0], y)
-                placed[placed.index(entry)] = (min(y, band_top + band_height - 8), *entry[1:])
-                y += spacing
-
-        for y, key, series, rgb, *_ in placed:
+            ly = series["label_y"]
             unit = f" {series['unit']}" if series["unit"] else ""
-            text = f"{'!' if time.time() - series['flag'] < 10 else ''}{series['label']} {series['value']:g}{unit}"
+            text = (f"{'!' if time.time() - series['flag'] < 10 else ''}"
+                    f"{series['group']} {series['label']} {series['value']:g}{unit}")
             cr.set_source_rgb(*rgb)
             cr.set_font_size(11)
-            cr.move_to(plot + 6, y + 4)
+            cr.move_to(plot + 6, ly + 4)
             cr.show_text(text)
             if series["lo"] is not None and series["hi"] > series["lo"]:
                 cr.set_source_rgba(*rgb, 0.55)
                 cr.set_font_size(9)
-                cr.move_to(plot + 6, y + 13)
+                cr.move_to(plot + 6, ly + 13)
                 cr.show_text(f"{series['lo']:g} – {series['hi']:g}")
-            cr.set_source_rgba(*rgb, 0.4) # a leader line back to where the curve ends
+            cr.set_source_rgba(*rgb, 0.4) # a leader line from the label back to the curve
             cr.set_line_width(1)
-            cr.move_to(plot, series["v"] and y)
-            cr.line_to(plot + 4, y + 1)
+            cr.move_to(plot, series["y"])
+            cr.line_to(plot + 4, ly + 1)
             cr.stroke()
-            self.label_hits.append((y - 6, y + 16, key))
+            self.label_hits.append((ly - 6, ly + 16, key))
 
 
 def ts_seconds(ts):
@@ -399,6 +417,7 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(1000, self._poll_state)
         GLib.timeout_add(500, self._poll_job)
         GLib.timeout_add(1000, self._update_axis)
+        GLib.timeout_add(5000, lambda: (self._update_outliers(), True)[1])
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -449,9 +468,14 @@ class Window(Adw.ApplicationWindow):
         self.session_start = None
         self.graph = MultiGraph(on_click=self._mute_series)
         self.next_color = 0
+        # Outliers worth a second look, listed only while there are any.
+        self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
+        self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
+                                       css_classes=["caption"], visible=False)
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
         top.append(self.graph)
+        top.append(self.outlier_label)
         top.append(self.axis)
         top.append(scroller)
         self._rebuild_mute_chips()
@@ -805,7 +829,21 @@ class Window(Adw.ApplicationWindow):
         self._warn(f"{module} {label}: {value:g} (mean {st[1]:.3g} ±{sigma:.2g})")
         return True
 
+    def _update_outliers(self):
+        cutoff = time.time() - OUTLIER_TTL
+        while self.outliers and self.outliers[0][0] < cutoff:
+            self.outliers.popleft()
+        self.outlier_label.set_visible(bool(self.outliers))
+        if self.outliers:
+            rows = "\n".join(
+                f'<span foreground="#e5c07b">!</span> {GLib.markup_escape_text(text)}'
+                f'<span alpha="55%"> {datetime.fromtimestamp(when):%H:%M:%S}</span>'
+                for when, text in reversed(self.outliers))
+            self.outlier_label.set_markup(rows)
+
     def _warn(self, text):
+        self.outliers.append((time.time(), text))
+        self._update_outliers()
         stamp = datetime.now().strftime("%H:%M:%S")
         self.recent.clear() # the warning breaks the run of collapsed lines
         self.buffer.insert_with_tags(self.buffer.get_end_iter(), f"{stamp} ▲ {text}\n",
@@ -816,9 +854,8 @@ class Window(Adw.ApplicationWindow):
         if self.session_start is None:
             self.axis.set_label("")
             return True
-        span = max(time.time() - self.session_start, MIN_SPAN)
-        started = datetime.fromtimestamp(self.session_start).strftime("%H:%M:%S")
-        self.axis.set_label(f"chart: {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → now")
+        span = int(max(time.time() - self.session_start, MIN_SPAN))
+        self.axis.set_label(f"{span // 60}m {span % 60:02d}s")
         return True
 
     def _mute_series(self, series_key):
