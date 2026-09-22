@@ -46,6 +46,7 @@ OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
 RANGE_ROWS = 24 # fields the range table has room to be useful about
 NUM_COLUMN = 52 # width of one number column in the table strip
+BAND_FLOOR = 46 # smallest height a band is given before the rest is shared out
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
 LABEL_GAP = 19 # how close two labels may sit before they push each other away
@@ -88,6 +89,26 @@ NUMBERS = re.compile(r"-?\d+(?:\.\d+)?")
 GOOD_LOW = re.compile(r"drop|err|fail|defer|queue|retry|lost|miss|latency|delay|jitter|usage|load|temp|reason",
                       re.IGNORECASE)
 GOOD_HIGH = re.compile(r"rate|fps|bitrate|rssi|signal|throughput|speed|bandwidth|kbps|mbps|level", re.IGNORECASE)
+
+
+# Lines are grouped by what they measure, not by which module printed them, so a band holds
+# things that are meaningful to compare with each other.
+FAMILIES = [
+    ("throughput", re.compile(r"kbps|mbps|bps|byte|bitrate|kb/s", re.IGNORECASE)),
+    ("frame rate", re.compile(r"\bfps\b|rendering", re.IGNORECASE)),
+    ("message rate", re.compile(r"^/s$")),
+    ("percent", re.compile(r"%|usage|load", re.IGNORECASE)),
+    ("signal", re.compile(r"rssi|\bdb\b|signal|channel|band", re.IGNORECASE)),
+    ("trouble", re.compile(r"drop|err|fail|defer|queue|retry|lost|miss|reject|nack", re.IGNORECASE)),
+]
+
+
+def family_of(label, unit):
+    """Which band a field belongs in, from its name and unit."""
+    for name, pattern in FAMILIES:
+        if pattern.search(unit) or pattern.search(label):
+            return name
+    return "counters"
 
 
 def polarity_of(label, unit):
@@ -248,8 +269,23 @@ class MultiGraph(Gtk.DrawingArea):
         return w - 1 - (self.now - t) / self.span * (w - 2)
 
     def _bands(self, h):
-        """Every series shares one band: the whole plot."""
-        return collections.defaultdict(lambda: (0.0, h))
+        """A band per family, tall in proportion to how many of its lines are being shown."""
+        counts = collections.Counter(s["group"] for s in self.series.values()
+                                     if s["key"] in self.visible)
+        if not counts:
+            return {}
+        order = [name for name, _ in FAMILIES] + ["counters"]
+        live = [name for name in order if counts[name]]
+        # Each band gets a floor, then the rest is shared out by how many lines it carries.
+        floor = min(BAND_FLOOR, h / len(live))
+        spare = h - floor * len(live)
+        total = sum(counts[name] for name in live)
+        bands, top = {}, 0.0
+        for name in live:
+            height = floor + spare * counts[name] / total
+            bands[name] = (top, height)
+            top += height
+        return bands
 
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
@@ -263,21 +299,25 @@ class MultiGraph(Gtk.DrawingArea):
         self.span = CHART_WINDOW
         bands = self._bands(h)
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_source_rgba(1, 1, 1, 0.04)
-        cr.rectangle(0, 0, plot, h)
-        cr.fill()
-        cr.set_source_rgba(1, 1, 1, 0.07)
-        cr.set_line_width(1)
-        for i in range(1, 4): # quarter lines, something for the eye to measure against
-            cr.move_to(0, h * i / 4)
-            cr.line_to(plot, h * i / 4)
-        cr.stroke()
+        for i, (name, (top, height)) in enumerate(sorted(bands.items(), key=lambda kv: kv[1][0])):
+            cr.set_source_rgba(1, 1, 1, 0.05 if i % 2 else 0.03) # alternating, so bands separate
+            cr.rectangle(0, top, plot, height)
+            cr.fill()
+            cr.set_source_rgba(1, 1, 1, 0.06)
+            cr.set_line_width(1)
+            cr.move_to(0, top + height / 2) # a mid line to read the band against
+            cr.line_to(plot, top + height / 2)
+            cr.stroke()
+            cr.set_font_size(9)
+            cr.set_source_rgba(1, 1, 1, 0.3)
+            cr.move_to(6, top + 11)
+            cr.show_text(name)
 
         cr.set_font_size(11)
         labels = []
         for key, series in self.series.items():
-            if len(series["v"]) < 2:
-                continue # nothing left in the window: it has slid off to the left
+            if len(series["v"]) < 2 or series["group"] not in bands:
+                continue # nothing left in the window, or nothing in its band worth a look
             top, height = bands[series["group"]]
             series["band"] = (top, height)
             shown = key in self.visible
@@ -300,7 +340,7 @@ class MultiGraph(Gtk.DrawingArea):
                 series["label_y"] = series["y"]
 
             flag = "! " if time.time() - series["flag"] < 10 else ""
-            text = f"{flag}{series['group']} {series['label']}" # the numbers live in the table
+            text = f"{flag}{series['label']}" # the numbers live in the table
             labels.append({"key": key, "series": series, "rgb": rgb, "text": text,
                            "width": cr.text_extents(text).width, "y": series["label_y"],
                            "tip": (points[-1][0], series["y"])})
@@ -842,15 +882,15 @@ class Window(Adw.ApplicationWindow):
             series = f"{key}#{i}"
             color = SERIES_COLORS[self.next_color % len(SERIES_COLORS)]
             self.next_color += 1
-            self.graph.add_series(series, color, text or message[:24],
-                                  polarity_of(text, unit), unit, key, module)
+            self.graph.add_series(series, color, f"{module} {text}" if text else message[:24],
+                                  polarity_of(text, unit), unit, key, family_of(text, unit))
             fields_out.append({"series": series, "label": text, "unit": unit})
             at = num.end()
         # How often this line arrives, so a stream that reports steady numbers still shows up.
         rate_series = f"{key}#rate"
         self.graph.add_series(rate_series, SERIES_COLORS[self.next_color % len(SERIES_COLORS)],
-                              f"{(fields_out[0]['label'] if fields_out else message)[:18]} rate", 0, "/s",
-                              key, module)
+                              f"{module} {(fields_out[0]['label'] if fields_out else message)[:18]} rate",
+                              0, "/s", key, "message rate")
         self.next_color += 1
         fields_out.append({"series": rate_series, "label": "rate", "unit": "/s"})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
