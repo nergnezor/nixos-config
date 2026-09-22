@@ -371,8 +371,8 @@ class Window(Adw.ApplicationWindow):
         self.rotation = self.settings.get("rotation", args.rotate)
         self.modes = camera_modes(args.device)
         self.size = self.settings.get("size", self.modes[0][0])
-        self.build_type = "debug"
-        self.build_env = "staging"
+        self.build_type = self.settings.get("build_type", "debug")
+        self.build_env = self.settings.get("build_env", "production")
         self.job_active = False
         self.mcu_state = None
         self.mcu_text = ""
@@ -480,8 +480,8 @@ class Window(Adw.ApplicationWindow):
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         row2.append(Gtk.Label(label="Build", xalign=0, css_classes=["dim-label", "caption"]))
-        self.btn_type = self._button(row2, "[D] Debug", "bug-symbolic", lambda *_: self.toggle_type())
-        self.btn_env = self._button(row2, "[E] Staging", "emblem-system-symbolic", lambda *_: self.toggle_env())
+        self.btn_type = self._switch(row2, "[D] Release", self.build_type == "release", self.toggle_type)
+        self.btn_env = self._switch(row2, "[E] Production", self.build_env == "production", self.toggle_env)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self.btn_build = self._button(row2, "[B] Build", "applications-engineering-symbolic", lambda *_: self.build("build"))
         self.btn_flash = self._button(row2, "[F] Flash", "drive-harddisk-symbolic", lambda *_: self.build("flash"))
@@ -494,6 +494,16 @@ class Window(Adw.ApplicationWindow):
         self.progress = Gtk.ProgressBar()
         controls.append(self.job_label)
         controls.append(self.progress)
+
+    def _switch(self, box, label, active, handler):
+        """A labelled switch: on means the second of the two build choices."""
+        row = Gtk.Box(spacing=6)
+        row.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+        switch = Gtk.Switch(active=active, valign=Gtk.Align.CENTER)
+        switch.connect("state-set", lambda _s, state: handler(state))
+        row.append(switch)
+        box.append(row)
+        return switch
 
     def _button(self, box, label, icon, handler, css=None):
         btn = Gtk.Button(child=Adw.ButtonContent(label=label, icon_name=icon, halign=Gtk.Align.START))
@@ -916,13 +926,17 @@ class Window(Adw.ApplicationWindow):
 
     # --- build --------------------------------------------------------------
 
-    def toggle_type(self):
-        self.build_type = "release" if self.build_type == "debug" else "debug"
-        self.btn_type.get_child().set_label(f"[D] {self.build_type.capitalize()}")
+    def toggle_type(self, state=None):
+        state = not self.btn_type.get_active() if state is None else state
+        self.build_type = "release" if state else "debug"
+        self.btn_type.set_active(state)
+        save_settings(build_type=self.build_type)
 
-    def toggle_env(self):
-        self.build_env = "production" if self.build_env == "staging" else "staging"
-        self.btn_env.get_child().set_label(f"[E] {self.build_env.capitalize()}")
+    def toggle_env(self, state=None):
+        state = not self.btn_env.get_active() if state is None else state
+        self.build_env = "production" if state else "staging"
+        self.btn_env.set_active(state)
+        save_settings(build_env=self.build_env)
 
     def build(self, mode):
         if not self.job_active:
@@ -936,7 +950,7 @@ class Window(Adw.ApplicationWindow):
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
             "q": lambda: self.rotate(90), "c": self.clear_log, "g": self.follow_end, "v": self.toggle_pretty,
             "m": self.mute_last, "u": self.unmute_all,
-            "d": self.toggle_type, "e": self.toggle_env,
+            "d": lambda: self.toggle_type(), "e": lambda: self.toggle_env(),
             "b": lambda: self.build("build"), "f": lambda: self.build("flash"), "a": lambda: self.build("both"),
             "o": lambda: send("open_log"),
         }
