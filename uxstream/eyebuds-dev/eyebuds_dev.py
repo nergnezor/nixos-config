@@ -44,12 +44,11 @@ OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is c
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
 OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
-LABEL_WIDTH = 230 # right-hand strip the chart keeps for its labels
-LABEL_GAP = 22 # how close two labels may sit before they push each other away
+CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
+LABEL_GAP = 15 # how close two labels may sit before they push each other away
 LABEL_SPRING = 55 # how hard a label is pulled back to the height of its own line
 LABEL_PUSH = 900 # how hard overlapping labels shove each other apart
 LABEL_DAMPING = 11 # how quickly that motion settles
-MIN_SPAN = 60 # seconds the chart covers even when the session is younger
 WORST_MARKS = 6 # how many "worst value" labels the chart carries at once
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
@@ -194,9 +193,10 @@ class MultiGraph(Gtk.DrawingArea):
         self.t0 = now if self.t0 is None else self.t0
         series["t"].append(now)
         series["v"].append(min(1.0, max(0.0, level)))
-        if len(series["v"]) > self.points: # halve the resolution, keep the whole session
-            series["t"] = series["t"][1::2]
-            series["v"] = [(a + b) / 2 for a, b in zip(series["v"][::2], series["v"][1::2])]
+        cutoff = now - CHART_WINDOW
+        while series["t"] and series["t"][0] < cutoff: # what leaves the window is forgotten
+            series["t"].pop(0)
+            series["v"].pop(0)
 
     def _tick(self, _widget, clock):
         now = clock.get_frame_time() / 1e6
@@ -224,11 +224,10 @@ class MultiGraph(Gtk.DrawingArea):
             for bead in beads:
                 bead["label_vy"] += (bead["y"] - bead["label_y"]) * LABEL_SPRING * dt
                 bead["label_vy"] *= max(0.0, 1 - LABEL_DAMPING * dt)
-                # Room below for the range line, room above for the name.
-                bead["label_y"] = min(top + height - 18, max(top + 10, bead["label_y"] + bead["label_vy"] * dt))
+                bead["label_y"] = min(top + height - 6, max(top + 10, bead["label_y"] + bead["label_vy"] * dt))
 
     def _x(self, t, w):
-        """Time to x, with now at the right edge: a line starts there and trails off to the left."""
+        """Time to x, with now at the right edge: samples drift left and off the chart."""
         return w - 1 - (self.now - t) / self.span * (w - 2)
 
     def _bands(self, h):
@@ -238,12 +237,12 @@ class MultiGraph(Gtk.DrawingArea):
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
         cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
-        plot = max(w - LABEL_WIDTH, 40)
+        plot = w
         self.label_hits = []
         if self.t0 is None:
             return
         self.now = time.time()
-        self.span = max(self.now - self.t0, MIN_SPAN)
+        self.span = CHART_WINDOW
         bands = self._bands(h)
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
         cr.set_source_rgba(1, 1, 1, 0.04)
@@ -259,7 +258,7 @@ class MultiGraph(Gtk.DrawingArea):
         cr.set_font_size(11)
         for key, series in self.series.items():
             if len(series["v"]) < 2:
-                continue
+                continue # nothing left in the window: it has slid off to the left
             top, height = bands[series["group"]]
             series["band"] = (top, height)
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
@@ -290,19 +289,16 @@ class MultiGraph(Gtk.DrawingArea):
                     f"{series['group']} {series['label']} {series['value']:g}{unit}")
             cr.set_font_size(11)
             width = cr.text_extents(text).width
-            tx = max(4, min(w - 4 - width, tip_x + 6))
+            # Right beside the last sample, on whichever side of it the label still fits.
+            tx = tip_x + 6 if tip_x + 6 + width < w - 4 else tip_x - 6 - width
+            tx = max(4, min(w - 4 - width, tx))
             cr.set_source_rgb(*rgb)
             cr.move_to(tx, ly + 4)
             cr.show_text(text)
-            if series["lo"] is not None and series["hi"] > series["lo"]:
-                cr.set_source_rgba(*rgb, 0.55)
-                cr.set_font_size(9)
-                cr.move_to(tx, ly + 13)
-                cr.show_text(f"{series['lo']:g} – {series['hi']:g}")
             cr.set_source_rgba(*rgb, 0.4) # a leader line from the label back to its last sample
             cr.set_line_width(1)
             cr.move_to(tip_x, series["y"])
-            cr.line_to(tx - 2, ly + 1)
+            cr.line_to(tx + (width + 2 if tx < tip_x else -2), ly + 1)
             cr.stroke()
             self.label_hits.append((tx, tx + width, ly - 6, ly + 16, key))
 
@@ -423,6 +419,7 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(500, self._poll_job)
         GLib.timeout_add(1000, self._update_axis)
         GLib.timeout_add(5000, lambda: (self._update_outliers(), True)[1])
+        GLib.timeout_add(2000, self._update_ranges)
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -473,6 +470,9 @@ class Window(Adw.ApplicationWindow):
         self.session_start = None
         self.graph = MultiGraph(on_click=self._mute_series)
         self.next_color = 0
+        # Every series' range, compact, so the chart itself only has to carry current values.
+        self.range_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
+                                     css_classes=["caption", "dim-label"], visible=False)
         # Outliers worth a second look, listed only while there are any.
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
         self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
@@ -480,6 +480,7 @@ class Window(Adw.ApplicationWindow):
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
         top.append(self.graph)
+        top.append(self.range_label)
         top.append(self.outlier_label)
         top.append(self.axis)
         top.append(scroller)
@@ -845,6 +846,21 @@ class Window(Adw.ApplicationWindow):
         self._warn(f"{module} {label}: {value:g} (mean {st[1]:.3g} ±{sigma:.2g})")
         return True
 
+    def _update_ranges(self):
+        rows = []
+        for series in self.graph.series.values():
+            if series["lo"] is None or series["hi"] <= series["lo"]:
+                continue
+            name = GLib.markup_escape_text(f"{series['group']} {series['label']}")[:34]
+            rows.append(f'<span foreground="{series["color"]}">{name}</span> '
+                        f'{series["lo"]:g}–{series["hi"]:g}')
+        self.range_label.set_visible(bool(rows))
+        if rows:
+            # Three to a line: the whole set fits in a couple of rows under the chart.
+            lines = ["   ".join(rows[i:i + 3]) for i in range(0, len(rows), 3)]
+            self.range_label.set_markup("\n".join(lines))
+        return True
+
     def _update_outliers(self):
         cutoff = time.time() - OUTLIER_TTL
         while self.outliers and self.outliers[0][0] < cutoff:
@@ -870,7 +886,7 @@ class Window(Adw.ApplicationWindow):
         if self.session_start is None:
             self.axis.set_label("")
             return True
-        span = int(max(time.time() - self.session_start, MIN_SPAN))
+        span = int(time.time() - self.session_start)
         self.axis.set_label(f"{span // 60}m {span % 60:02d}s")
         return True
 
