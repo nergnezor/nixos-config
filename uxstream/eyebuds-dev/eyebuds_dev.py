@@ -39,6 +39,8 @@ STATE_TEXT = {
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
+PROBE_WIDTH, PROBE_HEIGHT = 64, 48 # thumbnail the screen-change probe works on
+PROBE_THRESHOLD = 1.2 # mean abs difference (0-255) above which the filmed screen counts as changed
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
@@ -48,6 +50,8 @@ RANGE_ROWS = 24 # fields the range table has room to be useful about
 NUM_COLUMN = 52 # width of one number column in the table strip
 BAND_FLOOR = 46 # smallest height a band is given before the rest is shared out
 EVENT_RAIL = 20 # height of the strip along the top where one-off events are marked
+CLUSTER_POINTS = 48 # samples each line is read off at when shapes are compared
+CLUSTER_MATCH = 0.8 # correlation above which two lines are judged to have the same shape
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
 LABEL_GAP = 19 # how close two labels may sit before they push each other away
@@ -198,7 +202,8 @@ class MultiGraph(Gtk.DrawingArea):
     def add_series(self, key, color, label, polarity, unit, pattern, group):
         self.series[key] = {"key": key, "t": [], "v": [], "color": color, "label": label, "polarity": polarity,
                             "group": group,
-                            "unit": unit, "pattern": pattern, "value": None, "lo": None, "hi": None,
+                            "family": group, "unit": unit, "pattern": pattern,
+                            "value": None, "lo": None, "hi": None,
                             "worst": None, "best": None, "flag": 0.0,
                             "y": None, "label_y": None, "label_vy": 0.0, "band": None}
 
@@ -237,6 +242,62 @@ class MultiGraph(Gtk.DrawingArea):
 
     def set_visible(self, keys):
         self.visible = set(keys)
+        self._recluster()
+
+    def _sampled(self, series, grid):
+        """The series read off at fixed times, so two of them can be compared point by point."""
+        out, i = [], 0
+        for t in grid:
+            while i + 1 < len(series["t"]) and series["t"][i + 1] <= t:
+                i += 1
+            out.append(series["v"][i] if series["t"] and series["t"][i] <= t else None)
+        return out
+
+    @staticmethod
+    def _correlation(a, b):
+        pairs = [(x, y) for x, y in zip(a, b) if x is not None and y is not None]
+        if len(pairs) < 8:
+            return 0.0
+        xs, ys = zip(*pairs)
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        dx = [x - mx for x in xs]
+        dy = [y - my for y in ys]
+        sx = sum(v * v for v in dx) ** 0.5
+        sy = sum(v * v for v in dy) ** 0.5
+        if sx < 1e-9 or sy < 1e-9:
+            return 0.0
+        return sum(p * q for p, q in zip(dx, dy)) / (sx * sy)
+
+    def _recluster(self):
+        """Group the shown lines by the shape they trace, falling back to what they measure.
+
+        Two fields that rise and fall together belong on the same baseline whatever their units;
+        a line that matches nothing keeps its own family's band.
+        """
+        live = [s for s in self.series.values() if s["key"] in self.visible and len(s["v"]) > 8]
+        for series in self.series.values():
+            series["group"] = series["family"]
+        if len(live) < 2 or self.t0 is None:
+            return
+        now = time.time()
+        grid = [now - self.span + i * self.span / CLUSTER_POINTS for i in range(CLUSTER_POINTS)]
+        curves = {s["key"]: self._sampled(s, grid) for s in live}
+        clusters = []
+        for series in live:
+            for members in clusters:
+                if all(self._correlation(curves[series["key"]], curves[m["key"]]) > CLUSTER_MATCH
+                       for m in members):
+                    members.append(series)
+                    break
+            else:
+                clusters.append([series])
+        for members in clusters:
+            if len(members) < 2:
+                continue
+            # Named after what most of its lines measure, so the band still says what it holds.
+            name = collections.Counter(m["family"] for m in members).most_common(1)[0][0]
+            for member in members:
+                member["group"] = f"{name} ×{len(members)}"
 
     def add_event(self, text, color):
         """A one-off line worth marking on the rail: a state change, a warning, an error."""
@@ -285,7 +346,8 @@ class MultiGraph(Gtk.DrawingArea):
         if not counts:
             return {}
         order = [name for name, _ in FAMILIES] + ["counters"]
-        live = [name for name in order if counts[name]]
+        live = sorted(counts, key=lambda name: next(
+            (i for i, family in enumerate(order) if name.startswith(family)), len(order)))
         # Each band gets a floor, then the rest is shared out by how many lines it carries.
         floor = min(BAND_FLOOR, h / len(live))
         spare = h - floor * len(live)
@@ -532,6 +594,11 @@ class Window(Adw.ApplicationWindow):
         self.rotation = self.settings.get("rotation", args.rotate)
         self.modes = camera_modes(args.device)
         self.size = self.settings.get("size", self.modes[0][0])
+        self.probe_frame = None  # previous camera thumbnail
+        self.probe_changes = 0   # thumbnails that differed since the last tick
+        self.camera_rate = 0.0
+        self.camera_range = [0.0, 0.0]
+        self.probe_tick = time.monotonic()
         self.build_type = self.settings.get("build_type", "debug")
         self.build_env = self.settings.get("build_env", "production")
         self.job_active = False
@@ -546,6 +613,7 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(1000, self._update_axis)
         GLib.timeout_add(5000, lambda: (self._update_outliers(), True)[1])
         GLib.timeout_add(2000, self._update_ranges)
+        GLib.timeout_add(1000, self._publish_camera_rate)
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -709,11 +777,60 @@ class Window(Adw.ApplicationWindow):
             f"! queue max-size-buffers=1 leaky=downstream ! videoconvert "
             f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
             # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
-            f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} "
-            f"! gtk4paintablesink name=sink"
+            f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! tee name=t "
+            f"t. ! queue ! gtk4paintablesink name=sink "
+            # A thumbnail branch to count how often the filmed screen actually changes.
+            f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert ! videoscale "
+            f"! video/x-raw,format=GRAY8,width={PROBE_WIDTH},height={PROBE_HEIGHT} "
+            f"! appsink name=probe emit-signals=true max-buffers=1 drop=true sync=false"
         )
+        self.pipeline.get_by_name("probe").connect("new-sample", self._on_camera_frame)
         self.picture.set_paintable(self.pipeline.get_by_name("sink").props.paintable)
         self.pipeline.set_state(Gst.State.PLAYING)
+
+    def _on_camera_frame(self, sink):
+        """Mean absolute difference against the previous thumbnail: did the filmed screen change?"""
+        sample = sink.emit("pull-sample")
+        if sample is None:
+            return Gst.FlowReturn.OK
+        ok, info = sample.get_buffer().map(Gst.MapFlags.READ)
+        if not ok:
+            return Gst.FlowReturn.OK
+        try:
+            frame = bytes(info.data)
+        finally:
+            sample.get_buffer().unmap(info)
+        previous, self.probe_frame = self.probe_frame, frame
+        if previous is None or len(previous) != len(frame):
+            return Gst.FlowReturn.OK
+        # The camera samples at 30 fps, so this counts updates up to about 15 Hz; above that the
+        # rate folds back on itself. It is here to catch freezes and stutter, not to time a panel.
+        difference = sum(abs(a - b) for a, b in zip(frame, previous)) / len(frame)
+        self.probe_changes += difference > PROBE_THRESHOLD
+        return Gst.FlowReturn.OK
+
+    def _publish_camera_rate(self):
+        changes, self.probe_changes = self.probe_changes, 0
+        now = time.monotonic()
+        elapsed, self.probe_tick = now - self.probe_tick, now
+        if self.pipeline is None or elapsed <= 0:
+            return True
+        # Against the clock, not against the tick: a stalled main loop would otherwise look like
+        # a faster screen.
+        self.camera_rate = self.camera_rate * 0.6 + (changes / elapsed) * 0.4
+        GLib.idle_add(self._feed_camera_rate, self.camera_rate)
+        return True
+
+    def _feed_camera_rate(self, rate):
+        key = "camera#updates"
+        if key not in self.graph.series:
+            self.graph.add_series(key, "#f08cc3", "CAM screen updates", 1, "/s", "camera", "frame rate")
+            self.camera_range = [rate, rate]
+        self.camera_range[0] = min(self.camera_range[0], rate)
+        self.camera_range[1] = max(self.camera_range[1], rate)
+        lo, hi = self.camera_range
+        self.graph.push(key, (rate - lo) / (hi - lo) if hi > lo else 0.5, rate, lo, hi)
+        return False
 
     def _on_size_changed(self, combo, _param):
         self.size = self.modes[combo.get_selected()][0]
