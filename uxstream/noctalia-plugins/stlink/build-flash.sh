@@ -30,7 +30,7 @@ progress() { # <phase> <percent> <message>
 }
 fail() { progress error 0 "$1"; exit 1; }
 
-cd "$project" || fail "Hittar inte $project"
+cd "$project" || fail "Cannot find $project"
 
 # vcpkg-shell activate brings ninja and the ARM gcc but not cmake, which vcpkg also downloaded.
 if ! command -v cmake >/dev/null; then
@@ -41,21 +41,21 @@ if ! command -v cmake >/dev/null; then
 fi
 
 if [ "$mode" != flash ]; then
-    progress build 0 "Konfigurerar $preset"
+    progress build 0 "Configuring $preset"
     # Ninja prints "[done/total] step", the only percent source the build has.
     make "${build}_${env}_bank${bank}" 2>&1 | while IFS= read -r line; do
         printf '%s\n' "$line" >> "$log"
         if [[ $line =~ ^\[([0-9]+)/([0-9]+)\] ]]; then
-            progress build $(( 100 * BASH_REMATCH[1] / BASH_REMATCH[2] )) "Bygger $preset ${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+            progress build $(( 100 * BASH_REMATCH[1] / BASH_REMATCH[2] )) "Building $preset ${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
         fi
     done
-    [ "${PIPESTATUS[0]}" -eq 0 ] || fail "Bygget misslyckades: $(grep -m1 -E 'error|FAILED' "$log" | cut -c1-120)"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || fail "Build failed: $(grep -m1 -E 'error|FAILED' "$log" | cut -c1-120)"
 fi
 
 if [ "$mode" != build ]; then
     file="build/$preset/$artifact"
-    [ -f "$file" ] || fail "Saknas: $file"
-    progress flash 0 "Flashar $artifact"
+    [ -f "$file" ] || fail "Missing: $file"
+    progress flash 0 "Flashing $artifact"
     # The bar widget polls the probe with openocd, so the first attempt can find it busy.
     for attempt in 1 2 3 4 5; do
         # script(1) gives probe-rs a pty so its progress bar (with percentages) is printed.
@@ -63,19 +63,19 @@ if [ "$mode" != build ]; then
         | tr '\r' '\n' | while IFS= read -r line; do
             printf '%s\n' "$line" >> "$log"
             if [[ $line =~ ([0-9]+)% ]]; then
-                progress flash "${BASH_REMATCH[1]}" "Flashar $artifact"
+                progress flash "${BASH_REMATCH[1]}" "Flashing $artifact"
             fi
         done
         [ "${PIPESTATUS[0]}" -eq 0 ] && break
-        [ "$attempt" -eq 5 ] && fail "Flashning misslyckades: $(grep -m1 -i 'error' "$log" | cut -c1-120)"
+        [ "$attempt" -eq 5 ] && fail "Flashing failed: $(grep -m1 -i 'error' "$log" | cut -c1-120)"
         sleep 1
     done
     progress flash 100 "Reset"
-    probe-rs reset --chip "$chip" --protocol swd >> "$log" 2>&1 || fail "Reset efter flashning misslyckades"
+    probe-rs reset --chip "$chip" --protocol swd >> "$log" 2>&1 || fail "Reset after flashing failed"
 fi
 
 case "$mode" in
-    build) progress done 100 "Byggt: $preset bank$bank" ;;
-    flash) progress done 100 "Flashat: $preset bank$bank" ;;
-    *)     progress done 100 "Byggt och flashat: $preset bank$bank" ;;
+    build) progress done 100 "Built: $preset bank$bank" ;;
+    flash) progress done 100 "Flashed: $preset bank$bank" ;;
+    *)     progress done 100 "Built and flashed: $preset bank$bank" ;;
 esac

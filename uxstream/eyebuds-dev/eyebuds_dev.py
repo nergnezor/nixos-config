@@ -34,8 +34,8 @@ DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) 
 # Remembered between runs: camera rotation and size, mutes, raw/pretty view.
 SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
-    "running": "Running", "halted": "Halted", "reset": "In reset",
-    "debug-running": "Running", "unknown": "Unknown",
+    "running": "▶️ running", "halted": "⏸️ halted", "reset": "⏮️ in reset",
+    "debug-running": "▶️ running", "unknown": "❔ unknown",
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
@@ -70,8 +70,8 @@ ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
 # "00:08:05.905 TRACE REND jpeg_lcd.c:398: Display rendering rate: 29.9 fps"
 LOG_LINE = re.compile(r"^(\d\d:\d\d:\d\d\.\d{3})\s+(\w+)\s+(\S+)\s+(\S+:\d+):\s*(.*?)\s*$")
 LEVELS = {  # glyph and colour per level, replacing the word
-    "TRACE": ("·", "#7f848e"), "DEBUG": ("○", "#61afef"), "INFO": ("●", "#98c379"),
-    "WARN": ("▲", "#e5c07b"), "WARNING": ("▲", "#e5c07b"), "ERROR": ("✖", "#e06c75"), "FATAL": ("✖", "#e06c75"),
+    "TRACE": ("·", "#7f848e"), "DEBUG": ("○", "#61afef"), "INFO": ("ℹ️", "#98c379"),
+    "WARN": ("⚠️", "#e5c07b"), "WARNING": ("⚠️", "#e5c07b"), "ERROR": ("❌", "#e06c75"), "FATAL": ("💀", "#e06c75"),
 }
 NUMBERS = re.compile(r"-?\d+(?:\.\d+)?")
 
@@ -250,7 +250,7 @@ class MultiGraph(Gtk.DrawingArea):
 
         for y, key, series, rgb in placed:
             unit = f" {series['unit']}" if series["unit"] else ""
-            text = f"{'▲ ' if time.time() - series['flag'] < 10 else ''}{series['label']} {series['value']:g}{unit}"
+            text = f"{'⚠️ ' if time.time() - series['flag'] < 10 else ''}{series['label']} {series['value']:g}{unit}"
             cr.set_source_rgb(*rgb)
             cr.move_to(plot + 6, y + 4)
             cr.show_text(text)
@@ -337,21 +337,21 @@ class SerialReader(threading.Thread):
         while True:
             ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
             if not ports:
-                self._emit("(no serial port)\n", status="No port")
+                self._emit("(no serial port)\n", status="🔌 no port")
                 time.sleep(1)
                 continue
             self.port = ports[0]
             try:
                 self._pump()
             except (serial.SerialException, OSError) as exc:
-                self._emit(f"(port gone: {exc})\n", status="Disconnected")
+                self._emit(f"(port gone: {exc})\n", status="🔌 disconnected")
                 time.sleep(1)
 
     def _pump(self):
         self.logdir.mkdir(parents=True, exist_ok=True)
         logfile = self.logdir / f"{datetime.now():%Y%m%d-%H%M%S}-{Path(self.port).name}.log"
         with serial.Serial(self.port, self.baud, timeout=0.2) as ser, logfile.open("ab") as log:
-            self._emit(f"(connected {self.port} @ {self.baud}, log {logfile})\n", status=f"{self.port} @ {self.baud}")
+            self._emit(f"(connected {self.port} @ {self.baud}, log {logfile})\n", status=f"🔌 {self.port} @ {self.baud}")
             while True:
                 data = ser.read(4096)
                 if data:
@@ -464,11 +464,11 @@ class Window(Adw.ApplicationWindow):
         bottom.append(self.picture)
 
         row1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.btn_toggle = self._button(row1, "[S] Halt", "media-playback-pause-symbolic", lambda *_: send("toggle"))
-        self._button(row1, "[R] Reset", "view-refresh-symbolic", lambda *_: send("reset"))
-        self._button(row1, "[H] Reset + halt", "media-skip-backward-symbolic", lambda *_: send("reset_halt"))
+        self.btn_toggle = self._button(row1, "⏸️ [S] Halt", lambda *_: send("toggle"))
+        self._button(row1, "🔄 [R] Reset", lambda *_: send("reset"))
+        self._button(row1, "⏮️ [H] Reset + halt", lambda *_: send("reset_halt"))
         row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        self._button(row1, "[Q] Rotate camera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
+        self._button(row1, "🔃 [Q] Rotate camera", lambda *_: self.rotate(90))
         labels = [f"{w}×{h} @ {fps} fps" for (size, fps) in self.modes for (w, h) in [size.split("x")]]
         self.size_combo = Gtk.DropDown.new_from_strings(labels)
         sizes = [size for size, _ in self.modes]
@@ -479,15 +479,15 @@ class Window(Adw.ApplicationWindow):
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        row2.append(Gtk.Label(label="Build", xalign=0, css_classes=["dim-label", "caption"]))
-        self.btn_type = self._switch(row2, "[D] Release", self.build_type == "release", self.toggle_type)
-        self.btn_env = self._switch(row2, "[E] Production", self.build_env == "production", self.toggle_env)
+        row2.append(Gtk.Label(label="🔧 Build", xalign=0, css_classes=["dim-label", "caption"]))
+        self.btn_type = self._switch(row2, "🏁 [D] Release", self.build_type == "release", self.toggle_type)
+        self.btn_env = self._switch(row2, "🌍 [E] Production", self.build_env == "production", self.toggle_env)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        self.btn_build = self._button(row2, "[B] Build", "applications-engineering-symbolic", lambda *_: self.build("build"))
-        self.btn_flash = self._button(row2, "[F] Flash", "drive-harddisk-symbolic", lambda *_: self.build("flash"))
-        self.btn_both = self._button(row2, "[A] Build + flash", "media-playlist-consecutive-symbolic",
-                                     lambda *_: self.build("both"), css="suggested-action")
-        self._button(row2, "[O] Log", "text-x-generic-symbolic", lambda *_: send("open_log"))
+        self.btn_build = self._button(row2, "🔨 [B] Build", lambda *_: self.build("build"))
+        self.btn_flash = self._button(row2, "⚡ [F] Flash", lambda *_: self.build("flash"))
+        self.btn_both = self._button(row2, "🚀 [A] Build + flash", lambda *_: self.build("both"),
+                                     css="suggested-action")
+        self._button(row2, "📄 [O] Log", lambda *_: send("open_log"))
         controls.append(row2)
 
         self.job_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=24, css_classes=["dim-label", "caption"])
@@ -505,8 +505,8 @@ class Window(Adw.ApplicationWindow):
         box.append(row)
         return switch
 
-    def _button(self, box, label, icon, handler, css=None):
-        btn = Gtk.Button(child=Adw.ButtonContent(label=label, icon_name=icon, halign=Gtk.Align.START))
+    def _button(self, box, label, handler, css=None):
+        btn = Gtk.Button(child=Gtk.Label(label=label, xalign=0))
         if css:
             btn.add_css_class(css)
         btn.connect("clicked", handler)
@@ -786,7 +786,7 @@ class Window(Adw.ApplicationWindow):
     def _warn(self, text):
         stamp = datetime.now().strftime("%H:%M:%S")
         self.recent.clear() # the warning breaks the run of collapsed lines
-        self.buffer.insert_with_tags(self.buffer.get_end_iter(), f"{stamp} ▲ {text}\n",
+        self.buffer.insert_with_tags(self.buffer.get_end_iter(), f"{stamp} ⚠️ {text}\n",
                                      self._style("#e5c07b", bold=True))
         self.follow_end()
 
@@ -796,7 +796,7 @@ class Window(Adw.ApplicationWindow):
             return True
         span = max(time.time() - self.session_start, MIN_SPAN)
         started = datetime.fromtimestamp(self.session_start).strftime("%H:%M:%S")
-        self.axis.set_label(f"chart: {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → now")
+        self.axis.set_label(f"📈 {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → now")
         return True
 
     def _mute_series(self, series_key):
@@ -889,7 +889,7 @@ class Window(Adw.ApplicationWindow):
     def _update_subtitle(self):
         parts = [self.mcu_text, self.serial_state]
         if self.muted:
-            parts.append(f"{len(self.muted)} muted")
+            parts.append(f"🔇 {len(self.muted)} muted")
         self.title_widget.set_subtitle(" · ".join(p for p in parts if p))
 
     def _poll_state(self):
@@ -897,17 +897,15 @@ class Window(Adw.ApplicationWindow):
         if state:
             self.mcu_state = state.get("state")
             if not state.get("probe"):
-                text = "No ST-Link"
+                text = "🔌 no ST-Link"
             elif state.get("debugger"):
-                text = f"Held by {state['debugger']}"
+                text = f"🔒 held by {state['debugger']}"
             else:
                 text = f"{state['probe']} · {STATE_TEXT.get(self.mcu_state, self.mcu_state)}"
             self.mcu_text = text
             self._update_subtitle()
             halted = self.mcu_state == "halted"
-            self.btn_toggle.get_child().set_label("[S] Resume" if halted else "[S] Halt")
-            self.btn_toggle.get_child().set_icon_name(
-                "media-playback-start-symbolic" if halted else "media-playback-pause-symbolic")
+            self.btn_toggle.get_child().set_label("▶️ [S] Resume" if halted else "⏸️ [S] Halt")
         return True
 
     def _poll_job(self):
