@@ -190,8 +190,8 @@ class MultiGraph(Gtk.DrawingArea):
             series["v"] = [(a + b) / 2 for a, b in zip(series["v"][::2], series["v"][1::2])]
 
     def _x(self, t, w):
-        """Time to x. The session starts at the left edge and grows right until it fills the width."""
-        return 1 + (t - self.t0) / self.span * (w - 2)
+        """Time to x, with now at the right edge: a line starts there and trails off to the left."""
+        return w - 1 - (self.now - t) / self.span * (w - 2)
 
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
