@@ -75,26 +75,57 @@ def heat_color(t):
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
-class HeatBar(Gtk.DrawingArea):
-    """A small bar filled to `fraction` with the heat colour, drawn with Cairo."""
+class Sparkline(Gtk.DrawingArea):
+    """Recent values of one field, drawn as a heat-coloured line scaled to its min/max."""
 
-    def __init__(self):
-        super().__init__(content_width=56, content_height=8, valign=Gtk.Align.CENTER)
-        self.fraction = 0.0
+    def __init__(self, width=96, height=18, points=180):
+        super().__init__(content_width=width, content_height=height, valign=Gtk.Align.CENTER)
+        self.values = collections.deque(maxlen=points)
+        self.lo = self.hi = None
         self.set_draw_func(self._draw)
 
-    def set_fraction(self, fraction):
-        self.fraction = min(1.0, max(0.0, fraction))
+    def push(self, value, lo, hi):
+        self.values.append(value)
+        self.lo, self.hi = lo, hi
         self.queue_draw()
 
     def _draw(self, _area, cr, w, h):
-        cr.set_source_rgba(1, 1, 1, 0.12)
+        cr.set_source_rgba(1, 1, 1, 0.06)
         cr.rectangle(0, 0, w, h)
         cr.fill()
-        r, g, b = colorsys.hls_to_rgb((1 - self.fraction) * 0.62, 0.62, 0.85)
-        cr.set_source_rgb(r, g, b)
-        cr.rectangle(0, 0, w * self.fraction, h)
+        if len(self.values) < 2 or self.hi is None or self.hi <= self.lo:
+            return
+        span = self.hi - self.lo
+        step = w / (len(self.values) - 1)
+        points = [(i * step, h - 1 - (v - self.lo) / span * (h - 2)) for i, v in enumerate(self.values)]
+        r, g, b = colorsys.hls_to_rgb((1 - (self.values[-1] - self.lo) / span) * 0.62, 0.62, 0.85)
+        cr.move_to(0, h)
+        for x, y in points:
+            cr.line_to(x, y)
+        cr.line_to(points[-1][0], h)
+        cr.close_path()
+        cr.set_source_rgba(r, g, b, 0.22)
         cr.fill()
+        cr.move_to(*points[0])
+        for x, y in points[1:]:
+            cr.line_to(x, y)
+        cr.set_source_rgb(r, g, b)
+        cr.set_line_width(1.2)
+        cr.stroke()
+
+
+def field_label(text, drop_unit=""):
+    """Label for a numeric field: the words right before it, minus the previous field's unit."""
+    if drop_unit:
+        text = re.sub(r"^\s*" + re.escape(drop_unit) + r"\b", "", text)
+    words = re.sub(r"%%", "%", re.sub(r"[^\w%/ -]", " ", text)).split()
+    return " ".join(words[-3:])[:22] or "?"
+
+
+def field_unit(text):
+    """Unit right after a number: the first word, if it looks like one."""
+    m = re.match(r"\s*([A-Za-z%/]{1,6})\b", text)
+    return m.group(1) if m else ""
 
 
 def pattern_of(plain):
@@ -184,6 +215,7 @@ class Window(Adw.ApplicationWindow):
         self.build_env = "staging"
         self.job_active = False
         self.mcu_state = None
+        self.mcu_text = ""
         self._build_ui()
         self._start_camera()
         self.serial = SerialReader(args.baud, args.logdir, self._on_serial)
@@ -222,31 +254,27 @@ class Window(Adw.ApplicationWindow):
         self.buffer = self.textview.get_buffer()
         scroller = Gtk.ScrolledWindow(child=self.textview, hexpand=True, vexpand=True)
         self.scroller = scroller
-        self.serial_status = Gtk.Label(label="Serielogg", xalign=0, hexpand=True, css_classes=["dim-label", "caption"], margin_start=6)
-        self.filter_count = Gtk.Label(label="", css_classes=["dim-label", "caption"], margin_end=6)
-        log_header = Gtk.Box(spacing=6)
-        log_header.append(self.serial_status)
-        log_header.append(self.filter_count)
+        self.serial_state = "" # shown in the window subtitle next to the MCU state
         # Muted patterns as chips, each a button that unmutes its pattern.
         self.muted = set(self.settings.get("muted", []))
-        self.mute_box = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=6,
-                                    row_spacing=2, column_spacing=4, margin_start=6, margin_end=6)
+        self.mute_box = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=8,
+                                    row_spacing=0, column_spacing=2, margin_start=6, margin_end=6)
         self.mute_box.set_visible(False)
         # Live table: one row per repeating message pattern, numbers drawn as value + min/max bar.
-        self.table = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["telemetry"],
-                                 margin_start=6, margin_end=6, margin_bottom=4)
+        # One cell per numeric field, packed in columns: the repeated prose collapses into a label.
+        self.table = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["telemetry"],
+                                 min_children_per_line=2, max_children_per_line=3, homogeneous=True,
+                                 row_spacing=0, column_spacing=6, margin_start=6, margin_end=6, margin_bottom=2)
         css = Gtk.CssProvider()
-        css.load_from_string(""".telemetry row { padding: 0 4px; min-height: 0; border-bottom: 1px solid alpha(currentColor, 0.08); }
-            .telemetry label { padding: 0; }
-            .telemetry button { min-height: 0; min-width: 0; padding: 2px; }""")
+        css.load_from_string(""".telemetry > flowboxchild { padding: 0; min-height: 0; }
+            .telemetry label { padding: 0; font-size: 0.85em; }""")
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        table_scroller = Gtk.ScrolledWindow(child=self.table, propagate_natural_height=True, max_content_height=420,
+        table_scroller = Gtk.ScrolledWindow(child=self.table, propagate_natural_height=True, max_content_height=300,
                                             hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.rows = {}   # pattern -> row state
         self.seen = {}   # pattern -> occurrences before promotion to the table
         self.ranges = self.settings.get("ranges", {}) # pattern -> [[min, max], ...] per numeric field
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        top.append(log_header)
         top.append(self.mute_box)
         top.append(table_scroller)
         top.append(scroller)
@@ -453,9 +481,9 @@ class Window(Adw.ApplicationWindow):
         while child := self.mute_box.get_first_child():
             self.mute_box.remove(child)
         for pattern in sorted(self.muted):
-            label = pattern if len(pattern) <= 60 else pattern[:57] + "…"
-            chip = Gtk.Button(child=Adw.ButtonContent(label=label, icon_name="window-close-symbolic"),
-                              tooltip_text=pattern, css_classes=["flat", "caption"])
+            label = pattern if len(pattern) <= 28 else pattern[:27] + "…"
+            chip = Gtk.Button(label=label, tooltip_text=f"{pattern}\nklicka för att avmuta",
+                              css_classes=["flat", "caption", "telemetry"])
             chip.connect("clicked", lambda _b, pat=pattern: self.unmute(pat))
             self.mute_box.append(chip)
         self.mute_box.set_visible(bool(self.muted))
@@ -504,55 +532,69 @@ class Window(Adw.ApplicationWindow):
 
     def _make_row(self, key, raw, fields):
         ts, level, module, location, message = fields
-        box = Gtk.Box(spacing=6)
-        box.append(Gtk.Label(css_classes=["monospace"], xalign=0, valign=Gtk.Align.START, tooltip_text=location))
-        box.get_last_child().set_markup(f'<span foreground="{self._module_color(raw, module)}"><b>{module}</b></span>')
-        # Message as one wrapping label (values coloured with markup), bars after it in field order.
-        text = Gtk.Label(xalign=0, wrap=True, wrap_mode=2, hexpand=True, max_width_chars=40, css_classes=["monospace"],
-                         valign=Gtk.Align.START) # 2 = Pango.WrapMode.WORD_CHAR
-        bars = Gtk.Box(spacing=3, valign=Gtk.Align.START, margin_top=4)
-        nfields = len(NUMBERS.findall(message))
-        for _ in range(nfields):
-            bars.append(HeatBar())
-        count = Gtk.Label(label="", css_classes=["dim-label", "caption"], width_chars=4, xalign=1, valign=Gtk.Align.START)
-        mute = Gtk.Button(icon_name="window-close-symbolic", css_classes=["flat", "circular"], tooltip_text="Muta",
-                          valign=Gtk.Align.START)
-        mute.connect("clicked", lambda *_: self._set_muted(self.muted | {key}))
-        for w in (text, bars, count, mute):
-            box.append(w)
-        row = Gtk.ListBoxRow(child=box, activatable=False)
-        self.table.append(row)
-        ranges = self.ranges.setdefault(key, [[None, None] for _ in range(nfields)])
-        return {"row": row, "text": text, "bars": bars, "count": count, "n": 0, "ranges": ranges}
+        color = self._module_color(raw, module)
+        cells = []
+        pos = 0
+        unit = ""
+        for num in NUMBERS.finditer(message):
+            box = Gtk.Box(spacing=4)
+            tag = Gtk.Label(css_classes=["monospace"], xalign=0, tooltip_text=location)
+            tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
+            label = Gtk.Label(label=field_label(message[pos:num.start()], unit), xalign=0, hexpand=True,
+                              ellipsize=3, css_classes=["dim-label"]) # 3 = Pango.EllipsizeMode.END
+            value = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=10)
+            bar = Sparkline()
+            for w in (tag, label, value, bar):
+                box.append(w)
+            # Click anywhere on a cell mutes the whole pattern it came from.
+            click = Gtk.GestureClick()
+            click.connect("released", lambda *_: self._set_muted(self.muted | {key}))
+            box.add_controller(click)
+            box.set_tooltip_text(f"{message.strip()}\n{location} · klicka för att muta")
+            self.table.append(box)
+            unit = field_unit(message[num.end():])
+            cells.append({"value": value, "bar": bar, "unit": unit})
+            pos = num.end()
+        if not cells: # no numbers: one cell with the message itself
+            box = Gtk.Box(spacing=4)
+            tag = Gtk.Label(css_classes=["monospace"], xalign=0)
+            tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
+            text = Gtk.Label(label=message, xalign=0, hexpand=True, ellipsize=3)
+            count = Gtk.Label(css_classes=["dim-label"], xalign=1, width_chars=5)
+            for w in (tag, text, count):
+                box.append(w)
+            click = Gtk.GestureClick()
+            click.connect("released", lambda *_: self._set_muted(self.muted | {key}))
+            box.add_controller(click)
+            box.set_tooltip_text(f"{location} · klicka för att muta")
+            self.table.append(box)
+            cells.append({"value": count, "bar": None, "unit": ""})
+        ranges = self.ranges.setdefault(key, [[None, None] for _ in cells])
+        return {"cells": cells, "n": 0, "ranges": ranges, "numeric": bool(NUMBERS.search(message))}
 
     def _update_row(self, state, fields):
         ts, level, module, location, message = fields
         state["n"] += 1
-        state["count"].set_label(f"×{state['n']}")
-        state["count"].set_tooltip_text(f"senast {ts}")
-        markup = []
-        pos = 0
-        bar = state["bars"].get_first_child()
-        for num, rng in zip(NUMBERS.finditer(message), state["ranges"]):
+        if not state["numeric"]:
+            state["cells"][0]["value"].set_label(f"×{state['n']}")
+            return
+        for cell, num, rng in zip(state["cells"], NUMBERS.finditer(message), state["ranges"]):
             v = float(num.group())
             rng[0] = v if rng[0] is None else min(rng[0], v)
             rng[1] = v if rng[1] is None else max(rng[1], v)
             lo, hi = rng
-            markup.append(GLib.markup_escape_text(message[pos:num.start()]))
+            unit = f" {cell['unit']}" if cell["unit"] else ""
             if hi > lo:
                 t = (v - lo) / (hi - lo)
-                markup.append(f'<span foreground="{heat_color(t)}"><b>{num.group()}</b></span>')
-                if bar:
-                    bar.set_fraction(t)
-                    bar.set_tooltip_text(f"{message[pos:num.start()].strip()} min {lo:g} · max {hi:g}")
+                cell["value"].set_markup(
+                    f'<span foreground="{heat_color(t)}"><b>{num.group()}</b></span>'
+                    f'<span size="smaller">{GLib.markup_escape_text(unit)}</span>')
+                cell["bar"].push(v, lo, hi)
+                cell["bar"].set_tooltip_text(f"min {lo:g} · max {hi:g}")
             else:
-                markup.append(f"<b>{num.group()}</b>") # constant so far, nothing to grade
-            if bar:
-                bar.set_visible(hi > lo)
-                bar = bar.get_next_sibling()
-            pos = num.end()
-        markup.append(GLib.markup_escape_text(message[pos:]))
-        state["text"].set_markup("".join(markup))
+                cell["value"].set_markup(f"<b>{num.group()}</b><span size=\"smaller\">{GLib.markup_escape_text(unit)}</span>")
+            if hi <= lo:
+                cell["bar"].push(v, lo, hi) # flat so far, keep the history going
         self.ranges_dirty = True
 
     def _flush_ranges(self):
@@ -582,7 +624,7 @@ class Window(Adw.ApplicationWindow):
         self.follow_end()
 
     def _update_count(self):
-        self.filter_count.set_label(f"{self.shown}/{len(self.lines)}" if self.muted else "")
+        self._update_subtitle()
 
     def _at_end(self, adj):
         return adj.get_value() >= adj.get_upper() - adj.get_page_size() - 40
@@ -627,7 +669,8 @@ class Window(Adw.ApplicationWindow):
 
     def _on_serial(self, text, status):
         if status:
-            self.serial_status.set_label(f"Serielogg · {status}")
+            self.serial_state = status
+            self._update_subtitle()
         self.partial += text
         *complete, self.partial = self.partial.split("\n")
         for line in complete:
@@ -643,6 +686,12 @@ class Window(Adw.ApplicationWindow):
 
     # --- plugin state -------------------------------------------------------
 
+    def _update_subtitle(self):
+        parts = [self.mcu_text, self.serial_state]
+        if self.muted:
+            parts.append(f"{len(self.muted)} mutade")
+        self.title_widget.set_subtitle(" · ".join(p for p in parts if p))
+
     def _poll_state(self):
         state = read_json(DATA_DIR / "state.json")
         if state:
@@ -653,7 +702,8 @@ class Window(Adw.ApplicationWindow):
                 text = f"Upptagen av {state['debugger']}"
             else:
                 text = f"{state['probe']} · {STATE_TEXT.get(self.mcu_state, self.mcu_state)}"
-            self.title_widget.set_subtitle(text)
+            self.mcu_text = text
+            self._update_subtitle()
             halted = self.mcu_state == "halted"
             self.btn_toggle.get_child().set_label("[S] Starta" if halted else "[S] Stoppa")
             self.btn_toggle.get_child().set_icon_name(
