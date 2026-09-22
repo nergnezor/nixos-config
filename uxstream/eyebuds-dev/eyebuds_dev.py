@@ -45,7 +45,8 @@ OUTLIER_QUIET = 20 # seconds before the same field may warn again
 OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
-LABEL_GAP = 15 # how close two labels may sit before they push each other away
+LABEL_PLATE = 17 # height of the rounded plate behind a label
+LABEL_GAP = 19 # how close two labels may sit before they push each other away
 LABEL_SPRING = 55 # how hard a label is pulled back to the height of its own line
 LABEL_PUSH = 900 # how hard overlapping labels shove each other apart
 LABEL_DAMPING = 11 # how quickly that motion settles
@@ -109,6 +110,15 @@ def level_rgb(level, polarity):
 def heat_color(level, polarity=-1):
     r, g, b = level_rgb(level, polarity)
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def rounded_rect(cr, x, y, w, h, r):
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -1.5708, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
+    cr.arc(x + r, y + h - r, r, 1.5708, 3.1416)
+    cr.arc(x + r, y + r, r, 3.1416, 4.7124)
+    cr.close_path()
 
 
 def spline(cr, points):
@@ -256,6 +266,7 @@ class MultiGraph(Gtk.DrawingArea):
         cr.stroke()
 
         cr.set_font_size(11)
+        labels = []
         for key, series in self.series.items():
             if len(series["v"]) < 2:
                 continue # nothing left in the window: it has slid off to the left
@@ -264,14 +275,13 @@ class MultiGraph(Gtk.DrawingArea):
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
             points = [(self._x(t, plot), top + height - 3 - v * (height - 6))
                       for t, v in zip(series["t"], series["v"])]
-            points = [p for p in points if p[0] > -plot]
             cr.set_source_rgb(*rgb)
             cr.set_line_width(1.4)
             spline(cr, points)
             cr.stroke()
             for kind, fill in (("worst", True), ("best", False)):
                 mark = series[kind]
-                if mark and len(series["v"]) > 4:
+                if mark and len(series["v"]) > 4 and mark[2] > self.now - self.span:
                     cr.arc(self._x(mark[2], plot), top + height - 3 - mark[3] * (height - 6), 2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
             # The label sticks to the value its line last showed; the physics step keeps labels
@@ -280,27 +290,48 @@ class MultiGraph(Gtk.DrawingArea):
             if series["label_y"] is None:
                 series["label_y"] = series["y"]
 
-            ly = series["label_y"]
-            # The label trails its own last sample, so a field that has gone quiet drifts left
-            # with the point it belongs to instead of hanging at the right edge.
             tip_x = points[-1][0]
             unit = f" {series['unit']}" if series["unit"] else ""
             text = (f"{'!' if time.time() - series['flag'] < 10 else ''}"
                     f"{series['group']} {series['label']} {series['value']:g}{unit}")
-            cr.set_font_size(11)
             width = cr.text_extents(text).width
             # Right beside the last sample, on whichever side of it the label still fits.
             tx = tip_x + 6 if tip_x + 6 + width < w - 4 else tip_x - 6 - width
             tx = max(4, min(w - 4 - width, tx))
-            cr.set_source_rgb(*rgb)
-            cr.move_to(tx, ly + 4)
-            cr.show_text(text)
+            labels.append({"key": key, "series": series, "rgb": rgb, "text": text, "width": width,
+                           "x": tx, "y": series["label_y"], "tip": (tip_x, series["y"])})
+
+        self._separate(labels, h)
+        for label in labels:
+            series, rgb, tx, ly, width = (label["series"], label["rgb"], label["x"], label["y"],
+                                          label["width"])
+            series["label_y"] = ly # the simulation carries on from where the drawing settled
             cr.set_source_rgba(*rgb, 0.4) # a leader line from the label back to its last sample
             cr.set_line_width(1)
-            cr.move_to(tip_x, series["y"])
-            cr.line_to(tx + (width + 2 if tx < tip_x else -2), ly + 1)
+            cr.move_to(*label["tip"])
+            cr.line_to(tx + (width + 6 if tx < label["tip"][0] else -6), ly + 2)
             cr.stroke()
-            self.label_hits.append((tx, tx + width, ly - 6, ly + 16, key))
+            cr.set_source_rgba(1, 1, 1, 0.10) # a dim rounded plate keeps the text readable
+            rounded_rect(cr, tx - 5, ly - 6, width + 10, LABEL_PLATE, 5)
+            cr.fill()
+            cr.set_source_rgb(*rgb)
+            cr.move_to(tx, ly + 6)
+            cr.show_text(label["text"])
+            self.label_hits.append((tx - 5, tx + width + 5, ly - 6, ly + LABEL_PLATE - 6, label["key"]))
+
+    @staticmethod
+    def _separate(labels, h):
+        """Last word on placement: plates whose x ranges meet may never share a y range."""
+        labels.sort(key=lambda label: label["y"])
+        for i, label in enumerate(labels):
+            for other in labels[:i]:
+                if label["x"] > other["x"] + other["width"] + 10 or other["x"] > label["x"] + label["width"] + 10:
+                    continue # side by side, so their heights do not matter
+                label["y"] = max(label["y"], other["y"] + LABEL_PLATE + 2)
+        overflow = max((label["y"] + LABEL_PLATE - h for label in labels), default=0)
+        if overflow > 0: # ran out of room at the bottom, so lift the whole stack
+            for label in labels:
+                label["y"] = max(8, label["y"] - overflow)
 
 
 def ts_seconds(ts):
