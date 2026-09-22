@@ -29,13 +29,14 @@ import serial  # noqa: E402
 
 PLUGIN = "erik/stlink:service"
 DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "noctalia/plugins/data/erik/stlink"
-# Remembered between runs: log height (paned position), camera rotation, filter.
+# Remembered between runs: camera rotation, filter, mutes, min/max ranges.
 SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
     "running": "Kör", "halted": "Stoppad", "reset": "I reset",
     "debug-running": "Kör", "unknown": "Okänd",
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
+CAMERA_HEIGHT = 560
 # The firmware colours its log levels with SGR sequences. SGR is rendered with text tags,
 # every other escape sequence is dropped.
 ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
@@ -185,14 +186,14 @@ class Window(Adw.ApplicationWindow):
         self.title_widget = header.get_title_widget()
         root.append(header)
 
-        body = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
+        # Log on top takes whatever is left, the bottom keeps its natural height so the whole
+        # camera image and every button always stay visible.
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         root.append(body)
-        self.paned = body
 
         # Bottom half: a vertical button column on the left, the camera filling the rest.
-        bottom = Gtk.Box(spacing=8, margin_top=6, margin_bottom=8, margin_start=8, margin_end=8)
-        body.set_end_child(bottom)
-        self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=True)
+        bottom = Gtk.Box(spacing=8, margin_top=6, margin_bottom=8, margin_start=8, margin_end=8, vexpand=False)
+        self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=False)
         self.picture.add_css_class("card")
 
         self.textview = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, can_focus=False)
@@ -253,12 +254,9 @@ class Window(Adw.ApplicationWindow):
         self.last_count = 1
         self.line_mark = None # start of the last rendered line
         self._refilter()
-        body.set_start_child(top)
-        # Position is applied once both children exist, otherwise GTK recomputes it on first layout.
-        body.set_position(self.settings.get("log_height", 973))
-        # Saving starts after the initial layout has settled, so only the user's drags are remembered.
-        GLib.timeout_add(2000, lambda: body.connect(
-            "notify::position", lambda paned, _p: save_settings(log_height=paned.get_position())) and False)
+        top.set_vexpand(True)
+        body.append(top)
+        body.append(bottom)
         self.sgr_fg = None
         self.sgr_bold = False
         self.tags = {}
@@ -312,7 +310,9 @@ class Window(Adw.ApplicationWindow):
         Gst.init(None)
         self.pipeline = Gst.parse_launch(
             f"v4l2src device={self.args.device} ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
-            f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} ! gtk4paintablesink name=sink"
+            f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
+            # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
+            f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! gtk4paintablesink name=sink"
         )
         sink = self.pipeline.get_by_name("sink")
         self.picture.set_paintable(sink.props.paintable)
