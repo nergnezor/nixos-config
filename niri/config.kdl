@@ -314,7 +314,7 @@ window-rule {
 }
 
 // ST-Link panel helpers (usbcam / serial-log). Stacking them into one column is done
-// by niri/noctalia/plugins/stlink/stack.sh after launch, rules cannot do that.
+// by uxstream/noctalia-plugins/stlink/stack.sh after launch, rules cannot do that.
 window-rule {
     match app-id=r#"^usbcam$"#
     match app-id=r#"^kitty$"# title=r#"^picocom "#

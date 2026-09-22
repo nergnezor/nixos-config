@@ -1,12 +1,12 @@
 { config, lib, pkgs, spicetify-nix, ... }:
 let
   spicePkgs = spicetify-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
-  uxstreamTools = import ./uxstream-tools.nix {
+  uxstreamTools = import ./uxstream/tools.nix {
     inherit pkgs;
     homeDirectory = config.home.homeDirectory;
   };
   # The USB camera viewer and the serial logger live in the ST-Link noctalia
-  # plugin (niri/noctalia/plugins/stlink), which starts them itself.
+  # plugin (uxstream/noctalia-plugins/stlink), which starts them itself.
   # Same camera as a network stream, see the usage line at the top of the script.
   usbcamStream = pkgs.writeShellApplication {
     name = "usbcam-stream";
@@ -56,7 +56,7 @@ in
     nodejs_22
     # discord, thunderbird, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
-    # the trimmed set. mpv comes from uxstream-tools.nix for the bench
+    # the trimmed set. mpv comes from uxstream/tools.nix for the bench
     # camera, not as a general media player here. Spotify itself now comes
     # from programs.spicetify below, not this list -- the spicetify-nix
     # module installs its own patched build and warns against also listing

@@ -1,7 +1,8 @@
-# Uxstream host tools (flash/SWD + Android router build). Kept in nixos-config
+# Uxstream host tools (flash/SWD + Android router build) and the ST-Link noctalia plugin
+# in ./noctalia-plugins (registered as a path source, see its catalog.toml). Kept in nixos-config
 # for now — not in the embedded repo. Import from home.nix:
 #
-#   uxstreamTools = import ./uxstream-tools.nix { inherit pkgs; homeDirectory = config.home.homeDirectory; };
+#   uxstreamTools = import ./uxstream/tools.nix { inherit pkgs; homeDirectory = config.home.homeDirectory; };
 #   home.packages = uxstreamTools.packages ++ ...;
 #   home.sessionVariables = { ... } // uxstreamTools.sessionVariables;
 #

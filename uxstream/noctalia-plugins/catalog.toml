@@ -1,5 +1,5 @@
 # Local plugin source for noctalia. Registered once with:
-#   noctalia msg plugins source add local path ~/nixos-config/niri/noctalia/plugins
+#   noctalia msg plugins source add local path ~/nixos-config/uxstream/noctalia-plugins
 # Plugins load straight from this directory and hot-reload on save.
 
 [[plugin]]
