@@ -21,6 +21,8 @@
     openocd
     probe-rs-tools
     python3 # shared_modules/scripts/prefix_binary.py (bankN.bin post-link step, stdlib only)
+    mpv # bench camera viewer (stlink plugin usbcam.sh), mpv + v4l2 for minimal latency
+    v4l-utils # v4l2-ctl for `usbcam.sh -l`
     picocom # UART console (eyebuds USART1 @ 2 Mbaud: picocom -b 2000000 /dev/ttyACM0)
     jdk17
     android-tools # adb / fastboot without depending on ~/Android/Sdk being on PATH

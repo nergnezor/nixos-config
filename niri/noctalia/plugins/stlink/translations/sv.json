@@ -65,22 +65,6 @@
       "label": "Target-namn",
       "description": "openocd-target som används för curstate, t.ex. stm32u5x.cpu"
     },
-    "camera_desktop": {
-      "label": "Kamerans desktop-fil",
-      "description": "Desktop-id som Kamera-knappen startar, t.ex. usbcam"
-    },
-    "camera_match": {
-      "label": "Kamerans processmönster",
-      "description": "pgrep -f-mönster som känner igen den körande kameraappen."
-    },
-    "serial_desktop": {
-      "label": "Serieloggens desktop-fil",
-      "description": "Desktop-id som Serielogg-knappen startar, t.ex. serial-log"
-    },
-    "serial_match": {
-      "label": "Serieloggens processnamn",
-      "description": "Exakt processnamn (pgrep -x) som känner igen den körande serieloggern."
-    },
     "project_dir": {
       "label": "Projektkatalog",
       "description": "Katalog med Makefile vars <debug|release>_<staging|production>_bankN-mål byggs."
@@ -100,6 +84,18 @@
     "show_label": {
       "label": "Visa tillståndstext",
       "description": "Visa Kör/Stoppad bredvid ikonen i baren."
+    },
+    "camera_args": {
+      "label": "Kameraargument",
+      "description": "Flaggor till usbcam.sh, t.ex. -r 270 för monteringens rotation."
+    },
+    "serial_baud": {
+      "label": "Baudrate",
+      "description": "Baudrate som skickas till picocom."
+    },
+    "serial_logdir": {
+      "label": "Katalog för serieloggar",
+      "description": "Dit picocom skriver sina tidsstämplade loggfiler."
     }
   },
   "job": {

@@ -5,26 +5,13 @@ let
     inherit pkgs;
     homeDirectory = config.home.homeDirectory;
   };
-  # Low-latency USB camera viewer. mpv + v4l2 beats cheese/guvcview for
-  # latency; the camera on this machine tops out at 30 fps (YUYV only), so
-  # "fast" here means minimal buffering, not inventing frames the sensor
-  # cannot deliver. Rotation is a property (video-rotate), not a re-encode.
-  usbcam = pkgs.writeShellApplication {
-    name = "usbcam";
-    runtimeInputs = with pkgs; [ mpv v4l-utils ];
-    text = builtins.readFile ./scripts/usbcam.sh;
-  };
+  # The USB camera viewer and the serial logger live in the ST-Link noctalia
+  # plugin (niri/noctalia/plugins/stlink), which starts them itself.
   # Same camera as a network stream, see the usage line at the top of the script.
   usbcamStream = pkgs.writeShellApplication {
     name = "usbcam-stream";
     runtimeInputs = with pkgs; [ ffmpeg ];
     text = builtins.readFile ./scripts/usbcam-stream.sh;
-  };
-  # Serial console at 2 Mbaud with a timestamped log, launched from the app launcher.
-  serialLog = pkgs.writeShellApplication {
-    name = "serial-log";
-    runtimeInputs = with pkgs; [ kitty picocom libnotify ];
-    text = builtins.readFile ./scripts/serial-log.sh;
   };
 in
 {
@@ -33,7 +20,6 @@ in
   home.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
 
   home.packages = [
-    usbcam
     usbcamStream
   ]
   ++ uxstreamTools.packages
@@ -70,8 +56,8 @@ in
     nodejs_22
     # discord, thunderbird, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
-    # the trimmed set. mpv is pulled in only as a runtimeInput of usbcam
-    # above, not as a general media player here. Spotify itself now comes
+    # the trimmed set. mpv comes from uxstream-tools.nix for the bench
+    # camera, not as a general media player here. Spotify itself now comes
     # from programs.spicetify below, not this list -- the spicetify-nix
     # module installs its own patched build and warns against also listing
     # pkgs.spotify here.
@@ -121,29 +107,6 @@ in
                        # unlike the entries above, which are each locked to
                        # one vendor's own CLI.
   ]);
-
-  # Shows up in noctalia/fuzzel/etc. as "USB Camera"; always starts rotated
-  # 270° (the mount orientation on this desk). CLI `usbcam` stays unrotated
-  # by default so -r still means something when run by hand.
-  xdg.desktopEntries.usbcam = {
-    name = "USB Camera";
-    genericName = "Camera";
-    comment = "Low-latency USB camera (rotated 270°)";
-    exec = "${lib.getExe usbcam} -r 270";
-    icon = "camera-web";
-    categories = [ "AudioVideo" "Video" "Photography" ];
-    terminal = false;
-  };
-
-  xdg.desktopEntries.serial-log = {
-    name = "Serial Log (2M)";
-    genericName = "Serial console";
-    comment = "picocom @ 2000000 baud, logs to /tmp/serial-logs";
-    exec = "${lib.getExe serialLog}";
-    icon = "utilities-terminal";
-    categories = [ "Development" "Utility" ];
-    terminal = false;
-  };
 
   # noctalia is installed by programs.noctalia in configuration.nix (NixOS
   # module, systemd user unit in /etc), not here — a home.packages entry

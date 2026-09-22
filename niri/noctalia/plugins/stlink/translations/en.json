@@ -65,22 +65,6 @@
       "label": "Target name",
       "description": "openocd target used for curstate, e.g. stm32u5x.cpu"
     },
-    "camera_desktop": {
-      "label": "Camera desktop entry",
-      "description": "Desktop file id launched by the Camera button, e.g. usbcam"
-    },
-    "camera_match": {
-      "label": "Camera process match",
-      "description": "pgrep -f pattern that identifies the running camera app."
-    },
-    "serial_desktop": {
-      "label": "Serial log desktop entry",
-      "description": "Desktop file id launched by the Serial log button, e.g. serial-log"
-    },
-    "serial_match": {
-      "label": "Serial log process name",
-      "description": "Exact process name (pgrep -x) that identifies the running serial logger."
-    },
     "project_dir": {
       "label": "Project directory",
       "description": "Directory with the Makefile whose <debug|release>_<staging|production>_bankN targets are built."
@@ -100,6 +84,18 @@
     "show_label": {
       "label": "Show state text",
       "description": "Show Running/Halted next to the icon in the bar."
+    },
+    "camera_args": {
+      "label": "Camera arguments",
+      "description": "Options for usbcam.sh, e.g. -r 270 for the mount rotation."
+    },
+    "serial_baud": {
+      "label": "Serial baud rate",
+      "description": "Baud rate passed to picocom."
+    },
+    "serial_logdir": {
+      "label": "Serial log directory",
+      "description": "Where picocom writes its timestamped log files."
     }
   },
   "job": {

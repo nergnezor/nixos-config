@@ -1,6 +1,7 @@
-# Low-latency USB camera viewer (mpv + v4l2).
+#!/usr/bin/env bash
+# Low-latency USB camera viewer (mpv + v4l2), launched by the ST-Link panel or by hand.
 # Rotation: -r / keys r and R. Device: -d. List: -l.
-# Installed via home.nix writeShellApplication (adds bash shebang + PATH).
+set -euo pipefail
 
 DEVICE="/dev/video0"
 ROTATE=0

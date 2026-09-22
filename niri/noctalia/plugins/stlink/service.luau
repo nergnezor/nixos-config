@@ -116,21 +116,24 @@ local function errorText(res, fallback)
   return err ~= "" and err or fallback
 end
 
+-- Helper apps are the plugin's own scripts. `match` identifies the running process for pgrep,
+-- `window` is a jq filter over niri windows used by stack.sh.
 local function cameraApp()
   return {
-    id = cfg("camera_desktop", "usbcam"),
-    match = cfg("camera_match", "title=usbcam"),
+    command = "bash " .. shellQuote(noctalia.pluginDir() .. "/usbcam.sh") .. " " .. cfg("camera_args", "-r 270"),
+    match = "wayland-app-id=usbcam",
     exact = false,
-    window = '(.app_id == "usbcam" or (.title | startswith("usbcam ")))',
+    window = '(.app_id == "usbcam")',
     startedKey = "result.camera_started",
     stoppedKey = "result.camera_stopped",
   }
 end
 
 local function serialApp()
+  local baud = tostring(math.floor(tonumber(noctalia.getConfig("serial_baud")) or 2000000))
   return {
-    id = cfg("serial_desktop", "serial-log"),
-    match = cfg("serial_match", "picocom"),
+    command = "bash " .. shellQuote(noctalia.pluginDir() .. "/serial-log.sh") .. " " .. shellQuote(baud) .. " " .. shellQuote(cfg("serial_logdir", "/tmp/serial-logs")),
+    match = "picocom",
     exact = true,
     window = '(.app_id == "kitty" and (.title | startswith("picocom ")))',
     startedKey = "result.serial_started",
@@ -248,12 +251,9 @@ local function toggleApp(command, app, partner)
   -- The shell decides running/not running itself, so a stale snapshot cannot turn a start into a kill.
   local script = table.concat({
     "if pgrep " .. flag .. pattern .. " >/dev/null; then pkill " .. flag .. pattern .. " && echo stopped; exit; fi",
-    -- Launched from the .desktop Exec line as a transient unit, so a noctalia restart does not kill it.
-    "for d in $(echo \"$XDG_DATA_DIRS\" | tr : \" \") \"$HOME/.local/share\" \"/etc/profiles/per-user/$(id -un)/share\"; do",
-    "  f=\"$d/applications/" .. app.id .. ".desktop\"; [ -f \"$f\" ] && break; done",
-    "[ -f \"$f\" ] || { echo \"Error: no desktop entry " .. app.id .. "\" >&2; exit 1; }",
-    "cmd=$(grep -m1 \"^Exec=\" \"$f\" | cut -d= -f2- | sed \"s/ %[a-zA-Z]//g\")",
-    "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect sh -c \"$cmd\"; else setsid -f sh -c \"$cmd\" </dev/null >/dev/null 2>&1; fi",
+    -- Started as a transient unit, so a noctalia restart does not kill it.
+    "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect sh -c " .. shellQuote(app.command)
+      .. "; else setsid -f sh -c " .. shellQuote(app.command) .. " </dev/null >/dev/null 2>&1; fi",
     -- Stacks the new window under its partner (stack.sh), detached so the toggle returns at once.
     "setsid -f sh " .. shellQuote(noctalia.pluginDir() .. "/stack.sh") .. " " .. shellQuote(app.window) .. " " .. shellQuote(partner.window) .. " >/dev/null 2>&1",
     "echo started",

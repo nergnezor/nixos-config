@@ -6,7 +6,7 @@ version = "0.1.0"
 plugin_api = 13
 author = "erik"
 license = "MIT"
-dependencies = ["openocd", "pgrep", "cat"]
+dependencies = ["openocd", "probe-rs", "pgrep", "jq", "kitty", "picocom", "mpv", "v4l2-ctl", "make"]
 tags = ["embedded", "utility", "bar", "panel", "service"]
 icon = "cpu"
 description = "Halt, resume and reset the MCU behind an ST-Link via openocd."
@@ -42,34 +42,27 @@ description_key = "settings.target_name.description"
 default = "stm32u5x.cpu"
 
 [[setting]]
-key = "camera_desktop"
+key = "camera_args"
 type = "string"
-label_key = "settings.camera_desktop.label"
-description_key = "settings.camera_desktop.description"
-default = "usbcam"
+label_key = "settings.camera_args.label"
+description_key = "settings.camera_args.description"
+default = "-r 270"
 
 [[setting]]
-key = "camera_match"
-type = "string"
-label_key = "settings.camera_match.label"
-description_key = "settings.camera_match.description"
-default = "title=usbcam"
-advanced = true
+key = "serial_baud"
+type = "int"
+label_key = "settings.serial_baud.label"
+description_key = "settings.serial_baud.description"
+default = 2000000
+min = 300
+max = 10000000
 
 [[setting]]
-key = "serial_desktop"
+key = "serial_logdir"
 type = "string"
-label_key = "settings.serial_desktop.label"
-description_key = "settings.serial_desktop.description"
-default = "serial-log"
-
-[[setting]]
-key = "serial_match"
-type = "string"
-label_key = "settings.serial_match.label"
-description_key = "settings.serial_match.description"
-default = "picocom"
-advanced = true
+label_key = "settings.serial_logdir.label"
+description_key = "settings.serial_logdir.description"
+default = "/tmp/serial-logs"
 
 [[setting]]
 key = "project_dir"
