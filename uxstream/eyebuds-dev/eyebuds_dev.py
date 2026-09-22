@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import cairo
 import colorsys
 
 import gi
@@ -23,13 +24,14 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Gst", "1.0")
-from gi.repository import Adw, GLib, Gst, Gtk  # noqa: E402
+gi.require_version("Graphene", "1.0")
+from gi.repository import Adw, GLib, Graphene, Gst, Gtk  # noqa: E402
 
 import serial  # noqa: E402
 
 PLUGIN = "erik/stlink:service"
 DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "noctalia/plugins/data/erik/stlink"
-# Remembered between runs: camera rotation, filter, mutes, min/max ranges.
+# Remembered between runs: camera rotation and size, mutes, raw/pretty view.
 SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
     "running": "Kör", "halted": "Stoppad", "reset": "I reset",
@@ -37,6 +39,7 @@ STATE_TEXT = {
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
+RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
 
@@ -68,50 +71,126 @@ LEVELS = {  # glyph and colour per level, replacing the word
 NUMBERS = re.compile(r"-?\d+(?:\.\d+)?")
 
 
-def heat_color(t):
-    """0 = cold (blue) … 1 = hot (red), through green and yellow."""
-    t = min(1.0, max(0.0, t))
-    r, g, b = colorsys.hls_to_rgb((1 - t) * 0.62, 0.62, 0.85)
+# Which direction is good, guessed from the field's label and unit.
+GOOD_LOW = re.compile(r"drop|err|fail|defer|queue|retry|lost|miss|latency|delay|jitter|usage|load|temp|reason",
+                      re.IGNORECASE)
+GOOD_HIGH = re.compile(r"rate|fps|bitrate|rssi|signal|throughput|speed|bandwidth|kbps|mbps|level", re.IGNORECASE)
+
+
+def polarity_of(label, unit):
+    """-1 when lower is better, 1 when higher is better, 0 when it is just a number."""
+    text = f"{label} {unit}"
+    if GOOD_LOW.search(text):
+        return -1
+    if GOOD_HIGH.search(text):
+        return 1
+    return 0
+
+
+def level_rgb(level, polarity):
+    """Colour for a value at `level` (0…1 of its range), green where that is good."""
+    level = min(1.0, max(0.0, level))
+    if polarity == 0:
+        return colorsys.hls_to_rgb(0.58, 0.45 + 0.3 * level, 0.55) # no good/bad, just brighter
+    good = level if polarity > 0 else 1 - level
+    return colorsys.hls_to_rgb(good * 0.33, 0.62, 0.85) # red → yellow → green
+
+
+def heat_color(level, polarity=-1):
+    r, g, b = level_rgb(level, polarity)
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
 class Sparkline(Gtk.DrawingArea):
-    """Recent values of one field, drawn as a heat-coloured line scaled to its min/max."""
+    """Every value of this session, scaled to the session min/max and coloured by level.
 
-    def __init__(self, width=96, height=18, points=180):
+    The x axis always spans the whole session: once the buffer is full, pairs of points are
+    averaged and each point comes to stand for twice as long.
+    """
+
+    def __init__(self, width=96, height=18, points=180, polarity=0):
         super().__init__(content_width=width, content_height=height, valign=Gtk.Align.CENTER)
-        self.values = collections.deque(maxlen=points)
+        self.points = points
+        self.polarity = polarity
+        self.values = []
+        self.bucket = 1 # samples per drawn point
+        self.acc = 0.0
+        self.acc_n = 0
         self.lo = self.hi = None
-        self.set_draw_func(self._draw)
+        self.shown = []      # eased copy of `values`, what actually gets drawn
+        self.tick_id = None
 
     def push(self, value, lo, hi):
-        self.values.append(value)
+        self.acc += value
+        self.acc_n += 1
+        if self.acc_n >= self.bucket:
+            self.values.append(self.acc / self.acc_n)
+            self.acc, self.acc_n = 0.0, 0
+            if len(self.values) > self.points:
+                self.values = [(a + b) / 2 for a, b in zip(self.values[::2], self.values[1::2])]
+                self.bucket *= 2
+                self.shown = self.values[:] # decimation reshapes the curve, no point easing that
         self.lo, self.hi = lo, hi
-        self.queue_draw()
+        # Redrawn every frame while it catches up, so the curve slides instead of stepping.
+        if self.tick_id is None and self.get_mapped():
+            self.tick_id = self.add_tick_callback(self._ease)
 
-    def _draw(self, _area, cr, w, h):
+    def _ease(self, _widget, _clock):
+        if len(self.shown) != len(self.values):
+            # Grow towards the new point from the previous one so it slides in from the right.
+            self.shown = self.shown[-len(self.values):] + self.values[len(self.shown):len(self.values)]
+        done = True
+        for i, target in enumerate(self.values):
+            gap = target - self.shown[i]
+            if abs(gap) > (abs(target) + 1e-9) * 1e-4:
+                self.shown[i] += gap * 0.25
+                done = False
+        self.queue_draw()
+        if done:
+            self.tick_id = None
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
+
+    def do_snapshot(self, snapshot):
+        w, h = self.get_width(), self.get_height()
+        cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
         cr.set_source_rgba(1, 1, 1, 0.06)
         cr.rectangle(0, 0, w, h)
         cr.fill()
-        if len(self.values) < 2 or self.hi is None or self.hi <= self.lo:
+        values = self.shown if len(self.shown) == len(self.values) else self.values
+        if len(values) < 2 or self.hi is None or self.hi <= self.lo:
             return
         span = self.hi - self.lo
-        step = w / (len(self.values) - 1)
-        points = [(i * step, h - 1 - (v - self.lo) / span * (h - 2)) for i, v in enumerate(self.values)]
-        r, g, b = colorsys.hls_to_rgb((1 - (self.values[-1] - self.lo) / span) * 0.62, 0.62, 0.85)
+        step = w / (len(values) - 1)
+        points = [(i * step, h - 1 - (v - self.lo) / span * (h - 2)) for i, v in enumerate(values)]
+        # Height maps to value, so a vertical gradient colours each point by its own level:
+        # only the peaks come out red.
+        gradient = cairo.LinearGradient(0, 1, 0, h - 1)
+        for i in range(5):
+            r, g, b = level_rgb(1 - i / 4, self.polarity) # stop 0 is the top of the graph
+            gradient.add_color_stop_rgb(i / 4, r, g, b)
         cr.move_to(0, h)
         for x, y in points:
             cr.line_to(x, y)
         cr.line_to(points[-1][0], h)
         cr.close_path()
-        cr.set_source_rgba(r, g, b, 0.22)
-        cr.fill()
+        cr.save()
+        cr.clip()
+        cr.set_source(gradient)
+        cr.paint_with_alpha(0.22)
+        cr.restore()
         cr.move_to(*points[0])
         for x, y in points[1:]:
             cr.line_to(x, y)
-        cr.set_source_rgb(r, g, b)
+        cr.set_source(gradient)
         cr.set_line_width(1.2)
         cr.stroke()
+
+
+def ts_seconds(ts):
+    """Firmware timestamp HH:MM:SS.mmm as seconds."""
+    h, m, rest = ts.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(rest)
 
 
 def field_label(text, drop_unit=""):
@@ -222,7 +301,6 @@ class Window(Adw.ApplicationWindow):
         self.serial.start()
         GLib.timeout_add(1000, self._poll_state)
         GLib.timeout_add(500, self._poll_job)
-        GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
         self.add_controller(keys)
@@ -273,7 +351,7 @@ class Window(Adw.ApplicationWindow):
                                             hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.rows = {}   # pattern -> row state
         self.seen = {}   # pattern -> occurrences before promotion to the table
-        self.ranges = self.settings.get("ranges", {}) # pattern -> [[min, max], ...] per numeric field
+        self.ranges = {} # pattern -> [[min, max], ...] per numeric field, for this session only
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
         top.append(table_scroller)
@@ -290,9 +368,7 @@ class Window(Adw.ApplicationWindow):
         self.partial = ""
         self.shown = 0
         self.pretty = self.settings.get("pretty", True)
-        self.last_key = None   # (level, module, location, message) of the last rendered line
-        self.last_count = 1
-        self.line_mark = None # start of the last rendered line
+        self.recent = collections.OrderedDict() # pattern -> the line it was last rendered on
         self._refilter()
         top.set_vexpand(True)
         body.append(top)
@@ -433,27 +509,36 @@ class Window(Adw.ApplicationWindow):
         plain = ANSI.sub("", raw)
         m = LOG_LINE.match(plain.rstrip("\r\n"))
         if not m:
-            self.last_key = None
+            self.recent.clear()
             self._insert_ansi(raw)
             return
         ts, level, module, location, message = m.groups()
         key = pattern_of(plain)
-        if key == self.last_key and self.line_mark is not None:
-            # Same message again (numbers may differ): rewrite the previous line with the latest
-            # values and a repeat counter instead of adding a new one.
-            self.last_count += 1
-            start = self.buffer.get_iter_at_mark(self.line_mark)
+        now = ts_seconds(ts)
+        if key in self.recent:
+            # Seen among the last lines (they often interleave, e.g. an error and its follow-up):
+            # rewrite that line in place with the latest values, a count and the arrival rate.
+            state = self.recent[key]
+            state["count"] += 1
+            if 0 < now - state["ts"] < 3600:
+                state["gaps"].append(now - state["ts"])
+            state["ts"] = now
+            start = self.buffer.get_iter_at_mark(state["mark"])
             end = start.copy()
             end.forward_to_line_end()
             self.buffer.delete(start, end)
-            self._insert_pretty(self.buffer.get_iter_at_mark(self.line_mark), raw, m.groups(), self.last_count)
+            self._insert_pretty(self.buffer.get_iter_at_mark(state["mark"]), raw, m.groups(),
+                                state["count"], state["gaps"])
             return
-        self.last_key, self.last_count = key, 1
-        self.line_mark = self.buffer.create_mark(None, self.buffer.get_end_iter(), True)
-        self._insert_pretty(self.buffer.get_end_iter(), raw, m.groups(), 1)
+        mark = self.buffer.create_mark(None, self.buffer.get_end_iter(), True)
+        self._insert_pretty(self.buffer.get_end_iter(), raw, m.groups(), 1, [])
         self.buffer.insert(self.buffer.get_end_iter(), "\n")
+        self.recent[key] = {"mark": mark, "count": 1, "ts": now, "gaps": []}
+        while len(self.recent) > RECENT_LINES:
+            _, old = self.recent.popitem(last=False)
+            self.buffer.delete_mark(old["mark"])
 
-    def _insert_pretty(self, it, raw, fields, count):
+    def _insert_pretty(self, it, raw, fields, count, gaps):
         ts, level, module, location, message = fields
         glyph, color = LEVELS.get(level.upper(), ("·", "#7f848e"))
         loud = level.upper() in ("WARN", "WARNING", "ERROR", "FATAL")
@@ -464,7 +549,13 @@ class Window(Adw.ApplicationWindow):
             (message, self._style(color if loud else None)),
         ]
         if count > 1:
-            parts.append((f"  ×{count}", self._style("#e5c07b", bold=True)))
+            badge = f"  ×{count}"
+            if gaps:
+                mean = sum(gaps) / len(gaps)
+                # Spread of the intervals: small means the line arrives on a steady beat.
+                spread = (max(gaps) - min(gaps)) / mean if mean else 0
+                badge += f" {1 / mean:.1f}/s {'jämnt' if spread < 0.25 else f'±{spread:.0%}'}"
+            parts.append((badge, self._style("#e5c07b", bold=True)))
         parts.append(("  " + location, self._style("#5c6370", scale=0.8)))
         for text, tag in parts:
             self.buffer.insert_with_tags(it, text, tag)
@@ -540,10 +631,12 @@ class Window(Adw.ApplicationWindow):
             box = Gtk.Box(spacing=4)
             tag = Gtk.Label(css_classes=["monospace"], xalign=0, tooltip_text=location)
             tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
-            label = Gtk.Label(label=field_label(message[pos:num.start()], unit), xalign=0, hexpand=True,
+            text = field_label(message[pos:num.start()], unit)
+            label = Gtk.Label(label=text, xalign=0, hexpand=True,
                               ellipsize=3, css_classes=["dim-label"]) # 3 = Pango.EllipsizeMode.END
             value = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=10)
-            bar = Sparkline()
+            polarity = polarity_of(text, field_unit(message[num.end():]))
+            bar = Sparkline(polarity=polarity)
             for w in (tag, label, value, bar):
                 box.append(w)
             # Click anywhere on a cell mutes the whole pattern it came from.
@@ -553,22 +646,23 @@ class Window(Adw.ApplicationWindow):
             box.set_tooltip_text(f"{message.strip()}\n{location} · klicka för att muta")
             self.table.append(box)
             unit = field_unit(message[num.end():])
-            cells.append({"value": value, "bar": bar, "unit": unit})
+            cells.append({"value": value, "bar": bar, "unit": unit, "polarity": polarity})
             pos = num.end()
-        if not cells: # no numbers: one cell with the message itself
+        if not cells: # no numbers: count, rate and how evenly the line arrives
             box = Gtk.Box(spacing=4)
             tag = Gtk.Label(css_classes=["monospace"], xalign=0)
             tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
             text = Gtk.Label(label=message, xalign=0, hexpand=True, ellipsize=3)
-            count = Gtk.Label(css_classes=["dim-label"], xalign=1, width_chars=5)
-            for w in (tag, text, count):
+            count = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=10)
+            bar = Sparkline(polarity=0)
+            for w in (tag, text, count, bar):
                 box.append(w)
             click = Gtk.GestureClick()
             click.connect("released", lambda *_: self._set_muted(self.muted | {key}))
             box.add_controller(click)
             box.set_tooltip_text(f"{location} · klicka för att muta")
             self.table.append(box)
-            cells.append({"value": count, "bar": None, "unit": ""})
+            cells.append({"value": count, "bar": bar, "unit": "", "polarity": 0})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in cells])
         return {"cells": cells, "n": 0, "ranges": ranges, "numeric": bool(NUMBERS.search(message))}
 
@@ -576,7 +670,23 @@ class Window(Adw.ApplicationWindow):
         ts, level, module, location, message = fields
         state["n"] += 1
         if not state["numeric"]:
-            state["cells"][0]["value"].set_label(f"×{state['n']}")
+            # Intervals between arrivals: the line shows the rate, its shape shows the jitter.
+            cell = state["cells"][0]
+            now = ts_seconds(ts)
+            previous = state.get("last_ts")
+            state["last_ts"] = now
+            if previous is None or not 0 < now - previous < 3600:
+                cell["value"].set_label(f"×{state['n']}")
+                return
+            gap = now - previous
+            gaps = state.setdefault("gaps", [None, None])
+            gaps[0] = gap if gaps[0] is None else min(gaps[0], gap)
+            gaps[1] = gap if gaps[1] is None else max(gaps[1], gap)
+            cell["bar"].push(gap, gaps[0], gaps[1])
+            cell["value"].set_markup(
+                f"<b>×{state['n']}</b><span size=\"smaller\"> {1 / gap:.1f}/s</span>"
+                if gap > 0 else f"<b>×{state['n']}</b>")
+            cell["bar"].set_tooltip_text(f"intervall {gap:.2f}s · min {gaps[0]:.2f}s · max {gaps[1]:.2f}s")
             return
         for cell, num, rng in zip(state["cells"], NUMBERS.finditer(message), state["ranges"]):
             v = float(num.group())
@@ -587,7 +697,7 @@ class Window(Adw.ApplicationWindow):
             if hi > lo:
                 t = (v - lo) / (hi - lo)
                 cell["value"].set_markup(
-                    f'<span foreground="{heat_color(t)}"><b>{num.group()}</b></span>'
+                    f'<span foreground="{heat_color(t, cell["polarity"])}"><b>{num.group()}</b></span>'
                     f'<span size="smaller">{GLib.markup_escape_text(unit)}</span>')
                 cell["bar"].push(v, lo, hi)
                 cell["bar"].set_tooltip_text(f"min {lo:g} · max {hi:g}")
@@ -595,27 +705,19 @@ class Window(Adw.ApplicationWindow):
                 cell["value"].set_markup(f"<b>{num.group()}</b><span size=\"smaller\">{GLib.markup_escape_text(unit)}</span>")
             if hi <= lo:
                 cell["bar"].push(v, lo, hi) # flat so far, keep the history going
-        self.ranges_dirty = True
-
-    def _flush_ranges(self):
-        if getattr(self, "ranges_dirty", False):
-            self.ranges_dirty = False
-            # Bounded so the settings file cannot grow without end.
-            keep = dict(list(self.ranges.items())[-200:])
-            save_settings(ranges=keep)
-        return True
 
     def _clear_table(self):
         while child := self.table.get_first_child():
             self.table.remove(child)
         self.rows.clear()
         self.seen.clear()
+        self.ranges.clear()
 
     def _refilter(self):
         self.buffer.set_text("")
         self.sgr_fg, self.sgr_bold = None, False
         self.shown = 0
-        self.last_key, self.line_mark = None, None
+        self.recent.clear()
         self._clear_table()
         for line in self.lines:
             if self._matches(line):
@@ -663,7 +765,7 @@ class Window(Adw.ApplicationWindow):
         self.partial = ""
         self.buffer.set_text("")
         self.shown = 0
-        self.last_key, self.line_mark = None, None
+        self.recent.clear()
         self._clear_table()
         self._update_count()
 
