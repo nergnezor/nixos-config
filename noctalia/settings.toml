@@ -367,9 +367,6 @@ widget_order = [
 [plugin_settings."avivbintangaringga/nix-monitor"]
 update_command = "nrbu"
 
-[plugin_settings."nzlov/daily-wallpaper"]
-source = "nasa"
-
 [plugins]
 enabled = [
     "noctalia/bongocat",
@@ -397,7 +394,7 @@ enabled = [
 
     [[plugins.source]]
     kind = "path"
-    location = "/home/erik/nixos-config/niri/noctalia/plugins"
+    location = "/home/erik/nixos-config/uxstream/noctalia-plugins"
     name = "local"
 
 [shell]
@@ -405,6 +402,9 @@ corner_radius_scale = 2.0
 lang = "sv"
 password_style = "random"
 screen_time_enabled = true
+
+    [shell.animation]
+    speed = 0.5000000074505806
 
     [shell.panel]
     transparency_mode = "glass"
@@ -423,6 +423,7 @@ screen_time_enabled = true
 [theme]
 builtin = "Catppuccin"
 community_palette = "Tokyo Night Moon"
+mode = "dark"
 source = "community"
 wallpaper_scheme = "m3-content"
 
@@ -434,10 +435,10 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -446,10 +447,10 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/nasa-2026-09-21.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
