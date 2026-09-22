@@ -40,6 +40,8 @@ STATE_TEXT = {
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
+OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
+OUTLIER_QUIET = 20 # seconds before the same field may warn again
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
 
@@ -108,7 +110,7 @@ class Sparkline(Gtk.DrawingArea):
     averaged and each point comes to stand for twice as long.
     """
 
-    def __init__(self, width=96, height=18, points=180, polarity=0):
+    def __init__(self, width=84, height=18, points=180, polarity=0):
         super().__init__(content_width=width, content_height=height, valign=Gtk.Align.CENTER)
         self.points = points
         self.polarity = polarity
@@ -119,6 +121,10 @@ class Sparkline(Gtk.DrawingArea):
         self.lo = self.hi = None
         self.shown = []      # eased copy of `values`, what actually gets drawn
         self.tick_id = None
+
+    def set_range(self, lo, hi):
+        """All-time min/max, used for colour and for the warning threshold."""
+        self.lo, self.hi = lo, hi
 
     def push(self, value, lo, hi):
         self.acc += value
@@ -158,16 +164,22 @@ class Sparkline(Gtk.DrawingArea):
         cr.rectangle(0, 0, w, h)
         cr.fill()
         values = self.shown if len(self.shown) == len(self.values) else self.values
-        if len(values) < 2 or self.hi is None or self.hi <= self.lo:
+        if len(values) < 2 or self.hi is None:
             return
-        span = self.hi - self.lo
+        # Scaled to what is on screen so the shape stays readable, coloured against the all-time
+        # range so the same colour always means the same thing.
+        vlo, vhi = min(values), max(values)
+        if vhi <= vlo:
+            vlo, vhi = vlo - 0.5, vhi + 0.5
+        span = vhi - vlo
         step = w / (len(values) - 1)
-        points = [(i * step, h - 1 - (v - self.lo) / span * (h - 2)) for i, v in enumerate(values)]
-        # Height maps to value, so a vertical gradient colours each point by its own level:
-        # only the peaks come out red.
+        points = [(i * step, h - 1 - (v - vlo) / span * (h - 2)) for i, v in enumerate(values)]
+        # Height maps to value, so a vertical gradient colours each point by its own level.
+        all_span = (self.hi - self.lo) or 1
         gradient = cairo.LinearGradient(0, 1, 0, h - 1)
         for i in range(5):
-            r, g, b = level_rgb(1 - i / 4, self.polarity) # stop 0 is the top of the graph
+            value = vhi - (i / 4) * span # stop 0 is the top of the graph
+            r, g, b = level_rgb((value - self.lo) / all_span, self.polarity)
             gradient.add_color_stop_rgb(i / 4, r, g, b)
         cr.move_to(0, h)
         for x, y in points:
@@ -301,6 +313,8 @@ class Window(Adw.ApplicationWindow):
         self.serial.start()
         GLib.timeout_add(1000, self._poll_state)
         GLib.timeout_add(500, self._poll_job)
+        GLib.timeout_add(1000, self._update_axis)
+        GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
         self.add_controller(keys)
@@ -341,20 +355,25 @@ class Window(Adw.ApplicationWindow):
         # Live table: one row per repeating message pattern, numbers drawn as value + min/max bar.
         # One cell per numeric field, packed in columns: the repeated prose collapses into a label.
         self.table = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["telemetry"],
-                                 min_children_per_line=2, max_children_per_line=3, homogeneous=True,
+                                 min_children_per_line=1, max_children_per_line=2, homogeneous=True,
                                  row_spacing=0, column_spacing=6, margin_start=6, margin_end=6, margin_bottom=2)
         css = Gtk.CssProvider()
         css.load_from_string(""".telemetry > flowboxchild { padding: 0; min-height: 0; }
             .telemetry label { padding: 0; font-size: 0.85em; }""")
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        table_scroller = Gtk.ScrolledWindow(child=self.table, propagate_natural_height=True, max_content_height=300,
-                                            hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.rows = {}   # pattern -> row state
         self.seen = {}   # pattern -> occurrences before promotion to the table
-        self.ranges = {} # pattern -> [[min, max], ...] per numeric field, for this session only
+        self.ranges = self.settings.get("ranges", {}) # pattern -> [[min, max], ...], kept between runs
+        self.stats = {} # (pattern, field) -> [n, mean, m2, last_warning] for spotting outliers
+        # Shared time axis: every graph spans the same session, so one line says it for all of them.
+        self.axis = Gtk.Label(xalign=1, css_classes=["dim-label", "caption"], margin_end=8)
+        self.session_start = None
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
-        top.append(table_scroller)
+        top.append(self.axis)
+        # Wrapped so the flow gets the window width to wrap against, with no height cap of its own:
+        # every metric stays visible and the log takes what is left.
+        top.append(self.table) # no height cap of its own: every metric stays visible
         top.append(scroller)
         self._rebuild_mute_chips()
         # Follow mode: new lines glide the view to the end, but only while it already sits there.
@@ -617,6 +636,8 @@ class Window(Adw.ApplicationWindow):
             self.seen[key] = self.seen.get(key, 0) + 1
             if self.seen[key] < 2:
                 return False
+            if self.session_start is None:
+                self.session_start = time.time()
             self.rows[key] = self._make_row(key, raw, m.groups())
         self._update_row(self.rows[key], m.groups())
         return True
@@ -632,9 +653,9 @@ class Window(Adw.ApplicationWindow):
             tag = Gtk.Label(css_classes=["monospace"], xalign=0, tooltip_text=location)
             tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
             text = field_label(message[pos:num.start()], unit)
-            label = Gtk.Label(label=text, xalign=0, hexpand=True,
+            label = Gtk.Label(label=text, xalign=0, hexpand=True, width_chars=8, max_width_chars=22,
                               ellipsize=3, css_classes=["dim-label"]) # 3 = Pango.EllipsizeMode.END
-            value = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=10)
+            value = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=9)
             polarity = polarity_of(text, field_unit(message[num.end():]))
             bar = Sparkline(polarity=polarity)
             for w in (tag, label, value, bar):
@@ -646,7 +667,7 @@ class Window(Adw.ApplicationWindow):
             box.set_tooltip_text(f"{message.strip()}\n{location} · klicka för att muta")
             self.table.append(box)
             unit = field_unit(message[num.end():])
-            cells.append({"value": value, "bar": bar, "unit": unit, "polarity": polarity})
+            cells.append({"value": value, "bar": bar, "unit": unit, "polarity": polarity, "label": text})
             pos = num.end()
         if not cells: # no numbers: count, rate and how evenly the line arrives
             box = Gtk.Box(spacing=4)
@@ -662,9 +683,9 @@ class Window(Adw.ApplicationWindow):
             box.add_controller(click)
             box.set_tooltip_text(f"{location} · klicka för att muta")
             self.table.append(box)
-            cells.append({"value": count, "bar": bar, "unit": "", "polarity": 0})
+            cells.append({"value": count, "bar": bar, "unit": "", "polarity": 0, "label": message[:30]})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in cells])
-        return {"cells": cells, "n": 0, "ranges": ranges, "numeric": bool(NUMBERS.search(message))}
+        return {"cells": cells, "n": 0, "ranges": ranges, "key": key, "numeric": bool(NUMBERS.search(message))}
 
     def _update_row(self, state, fields):
         ts, level, module, location, message = fields
@@ -688,15 +709,20 @@ class Window(Adw.ApplicationWindow):
                 if gap > 0 else f"<b>×{state['n']}</b>")
             cell["bar"].set_tooltip_text(f"intervall {gap:.2f}s · min {gaps[0]:.2f}s · max {gaps[1]:.2f}s")
             return
-        for cell, num, rng in zip(state["cells"], NUMBERS.finditer(message), state["ranges"]):
+        for i, (cell, num, rng) in enumerate(zip(state["cells"], NUMBERS.finditer(message), state["ranges"])):
             v = float(num.group())
-            rng[0] = v if rng[0] is None else min(rng[0], v)
-            rng[1] = v if rng[1] is None else max(rng[1], v)
+            if (rng[0] is None or v < rng[0]) or (rng[1] is None or v > rng[1]):
+                rng[0] = v if rng[0] is None else min(rng[0], v)
+                rng[1] = v if rng[1] is None else max(rng[1], v)
+                self.ranges_dirty = True
             lo, hi = rng
+            odd = self._check_outlier(state["key"], i, v, cell["label"], module)
+            cell["bar"].set_range(lo, hi)
             unit = f" {cell['unit']}" if cell["unit"] else ""
             if hi > lo:
                 t = (v - lo) / (hi - lo)
                 cell["value"].set_markup(
+                    f'{"▲ " if odd else ""}'
                     f'<span foreground="{heat_color(t, cell["polarity"])}"><b>{num.group()}</b></span>'
                     f'<span size="smaller">{GLib.markup_escape_text(unit)}</span>')
                 cell["bar"].push(v, lo, hi)
@@ -706,12 +732,53 @@ class Window(Adw.ApplicationWindow):
             if hi <= lo:
                 cell["bar"].push(v, lo, hi) # flat so far, keep the history going
 
+    def _flush_ranges(self):
+        if getattr(self, "ranges_dirty", False):
+            self.ranges_dirty = False
+            save_settings(ranges=dict(list(self.ranges.items())[-200:])) # bounded, not unbounded history
+        return True
+
+    def _check_outlier(self, key, index, value, label, module):
+        """Welford mean/variance per field; a value far outside it is worth saying out loud."""
+        st = self.stats.setdefault((key, index), [0, 0.0, 0.0, 0.0])
+        st[0] += 1
+        delta = value - st[1]
+        st[1] += delta / st[0]
+        st[2] += delta * (value - st[1])
+        if st[0] < 30:
+            return False
+        sigma = (st[2] / (st[0] - 1)) ** 0.5
+        if sigma <= 0 or abs(value - st[1]) < OUTLIER_SIGMA * sigma:
+            return False
+        now = time.time()
+        if now - st[3] < OUTLIER_QUIET:
+            return True
+        st[3] = now
+        self._warn(f"{module} {label}: {value:g} (snitt {st[1]:.3g} ±{sigma:.2g})")
+        return True
+
+    def _warn(self, text):
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.recent.clear() # the warning breaks the run of collapsed lines
+        self.buffer.insert_with_tags(self.buffer.get_end_iter(), f"{stamp} ▲ {text}\n",
+                                     self._style("#e5c07b", bold=True))
+        self.follow_end()
+
+    def _update_axis(self):
+        if self.session_start is None:
+            self.axis.set_label("")
+            return True
+        span = time.time() - self.session_start
+        started = datetime.fromtimestamp(self.session_start).strftime("%H:%M:%S")
+        self.axis.set_label(f"grafer: {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → nu")
+        return True
+
     def _clear_table(self):
+        self.session_start = None
         while child := self.table.get_first_child():
             self.table.remove(child)
         self.rows.clear()
         self.seen.clear()
-        self.ranges.clear()
 
     def _refilter(self):
         self.buffer.set_text("")
