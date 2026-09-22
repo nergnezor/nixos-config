@@ -19,7 +19,8 @@
     "serial": "Serial log",
     "build": "Build",
     "flash": "Flash",
-    "build_flash": "Build + flash"
+    "build_flash": "Build + flash",
+    "open_log": "Log"
   },
   "build": {
     "debug": "Debug",
@@ -100,5 +101,8 @@
       "label": "Show state text",
       "description": "Show Running/Halted next to the icon in the bar."
     }
+  },
+  "job": {
+    "starting": "Starting…"
   }
 }

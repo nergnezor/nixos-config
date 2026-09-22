@@ -19,7 +19,8 @@
     "serial": "Serielogg",
     "build": "Bygg",
     "flash": "Flasha",
-    "build_flash": "Bygg + flasha"
+    "build_flash": "Bygg + flasha",
+    "open_log": "Logg"
   },
   "build": {
     "debug": "Debug",
@@ -100,5 +101,8 @@
       "label": "Visa tillståndstext",
       "description": "Visa Kör/Stoppad bredvid ikonen i baren."
     }
+  },
+  "job": {
+    "starting": "Startar…"
   }
 }

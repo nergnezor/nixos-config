@@ -49,7 +49,35 @@ local function statusText()
   return tr("state." .. tostring(snapshot.state))
 end
 
+-- Progress of the last build/flash job: bar while active, result line with a log button afterwards.
+local function jobRow()
+  local job = snapshot.job
+  if type(job) ~= "table" then
+    return ui.spacer({ height = 0 })
+  end
+  local percent = math.max(0, math.min(100, tonumber(job.percent) or 0))
+  local fill = "primary"
+  if job.phase == "error" then
+    fill = "error"
+  elseif job.phase == "done" then
+    fill = "#73c936"
+  end
+  return ui.row({ gap = 8, align = "center" }, {
+    ui.column({ gap = 3, flexGrow = 1 }, {
+      ui.label({
+        text = job.active and `{tostring(job.message)} · {percent}%` or tostring(job.message),
+        fontSize = 11,
+        color = job.phase == "error" and "error" or "on_surface_variant",
+        maxLines = 1,
+      }),
+      ui.progress({ progress = percent / 100, fill = fill, track = "on_surface/0.10", radius = 3, height = 6 }),
+    }),
+    ui.button({ text = keyed("O", tr("actions.open_log")), glyph = "file-text", variant = "ghost", controlSize = "sm", onClick = "onOpenLog" }),
+  })
+end
+
 local function render()
+  local jobActive = type(snapshot.job) == "table" and snapshot.job.active == true
   local ready = snapshot.probe ~= "" and snapshot.debugger == "" and not snapshot.busy
   local halted = snapshot.state == "halted"
   local color = "on_surface_variant"
@@ -139,10 +167,11 @@ local function render()
       }),
     }),
     ui.row({ gap = 6 }, {
-      ui.button({ text = keyed("B", tr("actions.build")), glyph = "hammer", variant = "outline", onClick = "onBuild" }),
-      ui.button({ text = keyed("F", tr("actions.flash")), glyph = "bolt", variant = "outline", enabled = ready, onClick = "onFlash" }),
-      ui.button({ text = keyed("A", tr("actions.build_flash")), glyph = "player-track-next", variant = "primary", enabled = ready, onClick = "onBuildFlash" }),
+      ui.button({ text = keyed("B", tr("actions.build")), glyph = "hammer", variant = "outline", enabled = not jobActive, onClick = "onBuild" }),
+      ui.button({ text = keyed("F", tr("actions.flash")), glyph = "bolt", variant = "outline", enabled = ready and not jobActive, onClick = "onFlash" }),
+      ui.button({ text = keyed("A", tr("actions.build_flash")), glyph = "player-track-next", variant = "primary", enabled = ready and not jobActive, onClick = "onBuildFlash" }),
     }),
+    jobRow(),
     ui.column({ gap = 3, align = "stretch" }, notes),
     ui.spacer({ flexGrow = 1 }),
     ui.label({
@@ -198,6 +227,7 @@ end
 function onBuild() send("build", { mode = "build", build = buildType, env = buildEnv }) end
 function onFlash() send("build", { mode = "flash", build = buildType, env = buildEnv }) end
 function onBuildFlash() send("build", { mode = "both", build = buildType, env = buildEnv }) end
+function onOpenLog() send("open_log") end
 
 local KEY_HANDLERS = {
   s = function() send("toggle") end,
@@ -210,6 +240,7 @@ local KEY_HANDLERS = {
   b = onBuild,
   f = onFlash,
   a = onBuildFlash,
+  o = onOpenLog,
 }
 
 function onKey(chord, pressed)

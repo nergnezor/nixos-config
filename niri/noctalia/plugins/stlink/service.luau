@@ -22,6 +22,7 @@ local snapshot = {
   probe = "",        -- "" when no ST-Link is plugged in
   debugger = "",     -- process name holding the probe, "" when free
   state = "unknown", -- running | halted | reset | debug-running | unknown
+  job = nil,         -- last build/flash job: phase, percent, message, active
   cameraRunning = false,
   serialRunning = false,
   busy = false,
@@ -270,29 +271,78 @@ local function toggleApp(command, app, partner)
   end, 10000)
 end
 
--- Build/flash runs in its own kitty (build-flash.sh) so the output is visible and survives a noctalia restart.
+-- Build/flash runs headless (build-flash.sh) as a transient unit and reports through job.json,
+-- which is polled at JOB_POLL_MS while a job is active.
+local JOB_POLL_MS = 500
+local jobActive = false
+
+local function jobFile()
+  return noctalia.pluginDataDir() .. "/job.json"
+end
+
+local function publishJob(job)
+  snapshot.job = job
+  publish()
+end
+
+local function pollJob()
+  local raw = noctalia.readFile(jobFile())
+  local job = raw and noctalia.json.decode(raw) or nil
+  if type(job) ~= "table" then
+    return
+  end
+  job.active = job.phase == "build" or job.phase == "flash"
+  if not job.active and jobActive then
+    jobActive = false
+    noctalia.setUpdateInterval(refreshIntervalMs())
+    if job.phase == "done" then
+      noctalia.notify(noctalia.tr("title"), tostring(job.message))
+    else
+      noctalia.notifyError(noctalia.tr("title"), tostring(job.message))
+    end
+  end
+  publishJob(job)
+end
+
 local function runBuild(command)
+  if jobActive then
+    result(command, false, noctalia.tr("result.busy"))
+    return
+  end
   local mode = tostring(command.mode or "build")
   local build = tostring(command.build or "debug")
   local env = tostring(command.env or "staging")
   local bank = tostring(math.floor(tonumber(noctalia.getConfig("bank")) or 0))
   local project = cfg("project_dir", "~/uxstream/embedded/client/projects/eyebuds"):gsub("^~", "$HOME")
   local inner = table.concat({
-    "kitty", "--title", shellQuote(`eyebuds {build} {env} bank{bank}`),
+    "rm -f", shellQuote(jobFile()), "&&",
     "bash", shellQuote(noctalia.pluginDir() .. "/build-flash.sh"),
-    shellQuote(mode), shellQuote(build), shellQuote(env), shellQuote(bank), '"' .. project .. '"', shellQuote(cfg("chip", "STM32U5G9BJ")),
+    shellQuote(mode), shellQuote(build), shellQuote(env), shellQuote(bank), '"' .. project .. '"',
+    shellQuote(cfg("chip", "STM32U5G9BJ")), shellQuote(noctalia.pluginDataDir()),
   }, " ")
   local script = "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect sh -c " .. shellQuote(inner)
     .. "; else setsid -f sh -c " .. shellQuote(inner) .. " </dev/null >/dev/null 2>&1; fi"
+  jobActive = true
+  publishJob({ phase = mode == "flash" and "flash" or "build", percent = 0, message = noctalia.tr("job.starting"), active = true })
+  noctalia.setUpdateInterval(JOB_POLL_MS)
   noctalia.runAsync(script, function(res)
     if res and res.exitCode == 0 then
       result(command, true, noctalia.tr("result.build_started", { what = `{build} {env} bank{bank}` }))
     else
+      jobActive = false
+      noctalia.setUpdateInterval(refreshIntervalMs())
       local msg = noctalia.tr("result.failed", { error = errorText(res, "launch failed") })
+      publishJob({ phase = "error", percent = 0, message = msg, active = false })
       result(command, false, msg)
       noctalia.notifyError(noctalia.tr("title"), msg)
     end
   end, 10000)
+end
+
+local function openJobLog()
+  local log = noctalia.pluginDataDir() .. "/job.log"
+  local inner = "kitty --title " .. shellQuote("eyebuds build log") .. " less +G " .. shellQuote(log)
+  noctalia.runAsync("setsid -f sh -c " .. shellQuote(inner) .. " </dev/null >/dev/null 2>&1")
 end
 
 local function execute(command)
@@ -322,6 +372,8 @@ local function execute(command)
     toggleApp(command, serialApp(), cameraApp())
   elseif action == "build" then
     runBuild(command)
+  elseif action == "open_log" then
+    openJobLog()
   else
     result(command, false, "Unknown action: " .. action)
   end
@@ -332,7 +384,11 @@ noctalia.setUpdateInterval(refreshIntervalMs())
 poll()
 
 function update()
-  poll()
+  if jobActive then
+    pollJob()
+  else
+    poll()
+  end
 end
 
 function onConfigChanged()
