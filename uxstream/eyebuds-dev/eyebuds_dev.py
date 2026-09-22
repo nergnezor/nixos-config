@@ -37,6 +37,7 @@ STATE_TEXT = {
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
+CAMERA_MAX_FPS = 30
 # The firmware colours its log levels with SGR sequences. SGR is rendered with text tags,
 # every other escape sequence is dropped.
 ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
@@ -159,6 +160,7 @@ class Window(Adw.ApplicationWindow):
         self.args = args
         self.settings = read_json(SETTINGS) or {}
         self.rotation = self.settings.get("rotation", args.rotate)
+        self.fps = self.settings.get("fps", CAMERA_MAX_FPS)
         self.build_type = "debug"
         self.build_env = "staging"
         self.job_active = False
@@ -202,17 +204,10 @@ class Window(Adw.ApplicationWindow):
         scroller = Gtk.ScrolledWindow(child=self.textview, hexpand=True, vexpand=True)
         self.scroller = scroller
         self.serial_status = Gtk.Label(label="Serielogg", xalign=0, hexpand=True, css_classes=["dim-label", "caption"], margin_start=6)
-        # Filter: case-insensitive regex over the uncoloured line, "!" first inverts it, "/" focuses it.
-        self.filter_entry = Gtk.SearchEntry(placeholder_text="[/] Filter (regex, !x utesluter)", width_chars=32)
-        self.filter_entry.set_text(self.settings.get("filter", ""))
-        self.filter_entry.connect("search-changed", lambda *_: self._refilter())
-        self.filter_entry.connect("stop-search", lambda *_: self.set_focus(None))
-        self.filter_entry.connect("activate", lambda *_: self.set_focus(None))
         self.filter_count = Gtk.Label(label="", css_classes=["dim-label", "caption"], margin_end=6)
         log_header = Gtk.Box(spacing=6)
         log_header.append(self.serial_status)
         log_header.append(self.filter_count)
-        log_header.append(self.filter_entry)
         # Muted patterns as chips, each a button that unmutes its pattern.
         self.muted = set(self.settings.get("muted", []))
         self.mute_box = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=6,
@@ -246,8 +241,6 @@ class Window(Adw.ApplicationWindow):
         adj.connect("notify::upper", lambda *_: self.follow and self._scroll_to_end())
         self.lines = collections.deque(maxlen=5000) # complete raw lines, colours included
         self.partial = ""
-        self.filter = None
-        self.filter_invert = False
         self.shown = 0
         self.pretty = self.settings.get("pretty", True)
         self.last_key = None   # (level, module, location, message) of the last rendered line
@@ -271,11 +264,15 @@ class Window(Adw.ApplicationWindow):
         self._button(row1, "[H] Reset + stopp", "media-skip-backward-symbolic", lambda *_: send("reset_halt"))
         row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self._button(row1, "[Q] Rotera kamera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
-        self._button(row1, "[C] Rensa logg", "edit-clear-all-symbolic", lambda *_: self.clear_log())
-        self._button(row1, "[G] Till slutet", "go-bottom-symbolic", lambda *_: self.follow_end())
-        self._button(row1, "[V] Råvy", "view-list-symbolic", lambda *_: self.toggle_pretty())
-        self._button(row1, "[M] Muta senaste", "audio-volume-muted-symbolic", lambda *_: self.mute_last())
-        self._button(row1, "[U] Avmuta allt", "audio-volume-high-symbolic", lambda *_: self.unmute_all())
+        # The sensor only offers 30 fps, so this throttles with videorate rather than asking for more.
+        self.fps_label = Gtk.Label(xalign=0, css_classes=["dim-label", "caption"])
+        self.fps_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1, CAMERA_MAX_FPS, 1)
+        self.fps_scale.set_value(self.fps)
+        self.fps_scale.set_draw_value(False)
+        self.fps_scale.connect("value-changed", self._on_fps_changed)
+        self._update_fps_label()
+        row1.append(self.fps_label)
+        row1.append(self.fps_scale)
         controls.append(row1)
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -312,11 +309,23 @@ class Window(Adw.ApplicationWindow):
             f"v4l2src device={self.args.device} ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
             f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
             # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
-            f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! gtk4paintablesink name=sink"
+            f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} "
+            f"! videorate ! capsfilter name=rate caps=video/x-raw,framerate={self.fps}/1 "
+            f"! gtk4paintablesink name=sink"
         )
         sink = self.pipeline.get_by_name("sink")
         self.picture.set_paintable(sink.props.paintable)
         self.pipeline.set_state(Gst.State.PLAYING)
+
+    def _update_fps_label(self):
+        self.fps_label.set_label(f"{self.fps} fps")
+
+    def _on_fps_changed(self, scale):
+        self.fps = int(scale.get_value())
+        self._update_fps_label()
+        self.pipeline.get_by_name("rate").set_property(
+            "caps", Gst.Caps.from_string(f"video/x-raw,framerate={self.fps}/1"))
+        save_settings(fps=self.fps)
 
     def rotate(self, delta):
         self.rotation = (self.rotation + delta) % 360
@@ -426,13 +435,7 @@ class Window(Adw.ApplicationWindow):
         self._refilter()
 
     def _matches(self, line):
-        plain = ANSI.sub("", line)
-        if self.muted and pattern_of(plain) in self.muted:
-            return False
-        if self.filter is None:
-            return True
-        hit = self.filter.search(plain) is not None
-        return hit != self.filter_invert
+        return not (self.muted and pattern_of(ANSI.sub("", line)) in self.muted)
 
     def _rebuild_mute_chips(self):
         while child := self.mute_box.get_first_child():
@@ -555,16 +558,6 @@ class Window(Adw.ApplicationWindow):
         self.seen.clear()
 
     def _refilter(self):
-        text = self.filter_entry.get_text()
-        save_settings(filter=text)
-        self.filter_invert = text.startswith("!")
-        pattern = text[1:] if self.filter_invert else text
-        try:
-            self.filter = re.compile(pattern, re.IGNORECASE) if pattern else None
-            self.filter_entry.remove_css_class("error")
-        except re.error:
-            self.filter_entry.add_css_class("error")
-            return
         self.buffer.set_text("")
         self.sgr_fg, self.sgr_bold = None, False
         self.shown = 0
@@ -577,7 +570,7 @@ class Window(Adw.ApplicationWindow):
         self.follow_end()
 
     def _update_count(self):
-        self.filter_count.set_label(f"{self.shown}/{len(self.lines)}" if (self.filter or self.muted) else "")
+        self.filter_count.set_label(f"{self.shown}/{len(self.lines)}" if self.muted else "")
 
     def _at_end(self, adj):
         return adj.get_value() >= adj.get_upper() - adj.get_page_size() - 40
@@ -686,12 +679,11 @@ class Window(Adw.ApplicationWindow):
     # --- keys ---------------------------------------------------------------
 
     def _on_key(self, _controller, keyval, _keycode, _state):
-        if self.get_focus() is not None and self.get_focus().is_ancestor(self.filter_entry):
-            return False # typing in the filter, not a shortcut
         key = chr(keyval).lower() if 32 <= keyval < 127 else ""
         actions = {
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
-            "q": lambda: self.rotate(90), "c": self.clear_log, "g": self.follow_end, "v": self.toggle_pretty, "m": self.mute_last, "u": self.unmute_all, "/": lambda: self.filter_entry.grab_focus(),
+            "q": lambda: self.rotate(90), "c": self.clear_log, "g": self.follow_end, "v": self.toggle_pretty,
+            "m": self.mute_last, "u": self.unmute_all,
             "d": self.toggle_type, "e": self.toggle_env,
             "b": lambda: self.build("build"), "f": lambda: self.build("flash"), "a": lambda: self.build("both"),
             "o": lambda: send("open_log"),
