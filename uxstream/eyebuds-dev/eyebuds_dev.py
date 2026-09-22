@@ -31,8 +31,13 @@ STATE_TEXT = {
     "debug-running": "Kör", "unknown": "Okänd",
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
-# The firmware colours its log levels with SGR sequences, which a TextView cannot render.
-ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+# The firmware colours its log levels with SGR sequences. SGR is rendered with text tags,
+# every other escape sequence is dropped.
+ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
+SGR_COLORS = {
+    30: "#3b4252", 31: "#e06c75", 32: "#98c379", 33: "#e5c07b", 34: "#61afef", 35: "#c678dd", 36: "#56b6c2", 37: "#c8ccd4",
+    90: "#7f848e", 91: "#ef8a8a", 92: "#b5e890", 93: "#f0d38a", 94: "#8ac4ff", 95: "#dc9bf0", 96: "#7ad4df", 97: "#ffffff",
+}
 
 
 def send(action, **payload):
@@ -84,7 +89,7 @@ class SerialReader(threading.Thread):
                 if data:
                     log.write(data)
                     log.flush()
-                    self._emit(ANSI.sub("", data.decode("utf-8", "replace")))
+                    self._emit(data.decode("utf-8", "replace"))
 
     def _emit(self, text, status=None):
         GLib.idle_add(self.on_line, text, status)
@@ -121,12 +126,12 @@ class Window(Adw.ApplicationWindow):
         self.title_widget = header.get_title_widget()
         root.append(header)
 
-        body = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True, position=640)
+        body = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, vexpand=True, position=450)
         root.append(body)
 
         self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=True)
         self.picture.add_css_class("card")
-        body.set_start_child(self.picture)
+        body.set_end_child(self.picture)
 
         self.textview = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, can_focus=False)
         self.textview.set_wrap_mode(Gtk.WrapMode.CHAR)
@@ -134,10 +139,13 @@ class Window(Adw.ApplicationWindow):
         scroller = Gtk.ScrolledWindow(child=self.textview, hexpand=True, vexpand=True)
         self.scroller = scroller
         self.serial_status = Gtk.Label(label="Serielogg", xalign=0, css_classes=["dim-label", "caption"], margin_start=6)
-        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        right.append(self.serial_status)
-        right.append(scroller)
-        body.set_end_child(right)
+        top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        top.append(self.serial_status)
+        top.append(scroller)
+        body.set_start_child(top)
+        self.sgr_fg = None
+        self.sgr_bold = False
+        self.tags = {}
 
         controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=8,
                            margin_start=8, margin_end=8)
@@ -195,11 +203,45 @@ class Window(Adw.ApplicationWindow):
 
     # --- serial -------------------------------------------------------------
 
+    def _tag(self):
+        key = (self.sgr_fg, self.sgr_bold)
+        if key not in self.tags:
+            tag = self.buffer.create_tag(None)
+            if self.sgr_fg:
+                tag.set_property("foreground", self.sgr_fg)
+            if self.sgr_bold:
+                tag.set_property("weight", 700)
+            self.tags[key] = tag
+        return self.tags[key]
+
+    def _apply_sgr(self, params):
+        for code in (int(p) for p in params.split(";") if p.isdigit()) or [0]:
+            if code == 0:
+                self.sgr_fg, self.sgr_bold = None, False
+            elif code == 1:
+                self.sgr_bold = True
+            elif code == 22:
+                self.sgr_bold = False
+            elif code == 39:
+                self.sgr_fg = None
+            elif code in SGR_COLORS:
+                self.sgr_fg = SGR_COLORS[code]
+
+    def _insert_ansi(self, text):
+        pos = 0
+        for m in ANSI.finditer(text):
+            if m.start() > pos:
+                self.buffer.insert_with_tags(self.buffer.get_end_iter(), text[pos:m.start()], self._tag())
+            if m.group(2) == "m":
+                self._apply_sgr(m.group(1))
+            pos = m.end()
+        if pos < len(text):
+            self.buffer.insert_with_tags(self.buffer.get_end_iter(), text[pos:], self._tag())
+
     def _on_serial(self, text, status):
         if status:
             self.serial_status.set_label(f"Serielogg · {status}")
-        end = self.buffer.get_end_iter()
-        self.buffer.insert(end, text)
+        self._insert_ansi(text)
         # Keep a bounded backlog so hours of logging do not grow the buffer without end.
         if self.buffer.get_line_count() > 5000:
             start = self.buffer.get_start_iter()
