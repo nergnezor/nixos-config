@@ -161,6 +161,7 @@ class Window(Adw.ApplicationWindow):
         self.settings = read_json(SETTINGS) or {}
         self.rotation = self.settings.get("rotation", args.rotate)
         self.fps = self.settings.get("fps", CAMERA_MAX_FPS)
+        self.camera_caps = ""
         self.build_type = "debug"
         self.build_env = "staging"
         self.job_active = False
@@ -306,7 +307,7 @@ class Window(Adw.ApplicationWindow):
     def _start_camera(self):
         Gst.init(None)
         self.pipeline = Gst.parse_launch(
-            f"v4l2src device={self.args.device} ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
+            f"v4l2src name=src device={self.args.device} ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
             f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
             # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
             f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} "
@@ -316,9 +317,21 @@ class Window(Adw.ApplicationWindow):
         sink = self.pipeline.get_by_name("sink")
         self.picture.set_paintable(sink.props.paintable)
         self.pipeline.set_state(Gst.State.PLAYING)
+        # Caps are only known once the source has negotiated, which is a few frames after PLAYING.
+        GLib.timeout_add(500, self._read_camera_caps)
+
+    def _read_camera_caps(self):
+        caps = self.pipeline.get_by_name("src").get_static_pad("src").get_current_caps()
+        if caps is None:
+            return GLib.SOURCE_CONTINUE
+        st = caps.get_structure(0)
+        num, den = st.get_fraction("framerate")[1:]
+        self.camera_caps = f"{st.get_value('width')}×{st.get_value('height')} @ {num / den:g}"
+        self._update_fps_label()
+        return GLib.SOURCE_REMOVE
 
     def _update_fps_label(self):
-        self.fps_label.set_label(f"{self.fps} fps")
+        self.fps_label.set_label(f"{self.camera_caps} → {self.fps} fps" if self.camera_caps else f"{self.fps} fps")
 
     def _on_fps_changed(self, scale):
         self.fps = int(scale.get_value())
