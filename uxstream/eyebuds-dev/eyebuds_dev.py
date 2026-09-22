@@ -37,9 +37,25 @@ STATE_TEXT = {
 }
 DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
-CAMERA_MAX_FPS = 30
-# The sensor trades resolution for framerate: 30 fps only at 640x480, 7 fps at 1600x1200.
-CAMERA_SIZES = ["640x480", "800x600", "1280x720", "1600x1200"]
+# The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
+CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
+
+
+def camera_modes(device):
+    """Discrete sizes and their best framerate, from v4l2-ctl. Falls back to the known list."""
+    try:
+        out = subprocess.run(["v4l2-ctl", "-d", device, "--list-formats-ext"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return CAMERA_SIZES
+    modes = {}
+    size = None
+    for line in out.splitlines():
+        if m := re.search(r"Size: Discrete (\d+x\d+)", line):
+            size = m.group(1)
+        elif size and (m := re.search(r"\(([\d.]+) fps\)", line)):
+            modes[size] = max(modes.get(size, 0), round(float(m.group(1))))
+    return sorted(modes.items(), key=lambda kv: int(kv[0].split("x")[0])) or CAMERA_SIZES
 # The firmware colours its log levels with SGR sequences. SGR is rendered with text tags,
 # every other escape sequence is dropped.
 ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
@@ -162,9 +178,8 @@ class Window(Adw.ApplicationWindow):
         self.args = args
         self.settings = read_json(SETTINGS) or {}
         self.rotation = self.settings.get("rotation", args.rotate)
-        self.fps = self.settings.get("fps", CAMERA_MAX_FPS)
-        self.camera_caps = ""
-        self.size = self.settings.get("size", CAMERA_SIZES[0])
+        self.modes = camera_modes(args.device)
+        self.size = self.settings.get("size", self.modes[0][0])
         self.build_type = "debug"
         self.build_env = "staging"
         self.job_active = False
@@ -268,18 +283,11 @@ class Window(Adw.ApplicationWindow):
         self._button(row1, "[H] Reset + stopp", "media-skip-backward-symbolic", lambda *_: send("reset_halt"))
         row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self._button(row1, "[Q] Rotera kamera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
-        # The sensor only offers 30 fps, so this throttles with videorate rather than asking for more.
-        self.fps_label = Gtk.Label(xalign=0, css_classes=["dim-label", "caption"])
-        self.fps_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1, CAMERA_MAX_FPS, 1)
-        self.fps_scale.set_value(self.fps)
-        self.fps_scale.set_draw_value(False)
-        self.fps_scale.connect("value-changed", self._on_fps_changed)
-        self._update_fps_label()
-        self.size_combo = Gtk.DropDown.new_from_strings(CAMERA_SIZES)
-        self.size_combo.set_selected(CAMERA_SIZES.index(self.size) if self.size in CAMERA_SIZES else 0)
+        labels = [f"{w}×{h} @ {fps} fps" for (size, fps) in self.modes for (w, h) in [size.split("x")]]
+        self.size_combo = Gtk.DropDown.new_from_strings(labels)
+        sizes = [size for size, _ in self.modes]
+        self.size_combo.set_selected(sizes.index(self.size) if self.size in sizes else 0)
         self.size_combo.connect("notify::selected", self._on_size_changed)
-        row1.append(self.fps_label)
-        row1.append(self.fps_scale)
         row1.append(self.size_combo)
         controls.append(row1)
 
@@ -320,40 +328,16 @@ class Window(Adw.ApplicationWindow):
             f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
             # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
             f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} "
-            f"! videorate ! capsfilter name=rate caps=video/x-raw,framerate={self.fps}/1 "
             f"! gtk4paintablesink name=sink"
         )
         self.picture.set_paintable(self.pipeline.get_by_name("sink").props.paintable)
         self.pipeline.set_state(Gst.State.PLAYING)
-        # Caps are only known once the source has negotiated, which is a few frames after PLAYING.
-        GLib.timeout_add(500, self._read_camera_caps)
 
     def _on_size_changed(self, combo, _param):
-        self.size = CAMERA_SIZES[combo.get_selected()]
+        self.size = self.modes[combo.get_selected()][0]
         save_settings(size=self.size)
         self.pipeline.set_state(Gst.State.NULL) # caps on the source need a full renegotiation
-        self.camera_caps = ""
         self._start_camera()
-
-    def _read_camera_caps(self):
-        caps = self.pipeline.get_by_name("src").get_static_pad("src").get_current_caps()
-        if caps is None:
-            return GLib.SOURCE_CONTINUE
-        st = caps.get_structure(0)
-        num, den = st.get_fraction("framerate")[1:]
-        self.camera_caps = f"{st.get_value('width')}×{st.get_value('height')} @ {num / den:g}"
-        self._update_fps_label()
-        return GLib.SOURCE_REMOVE
-
-    def _update_fps_label(self):
-        self.fps_label.set_label(f"{self.camera_caps} → {self.fps} fps" if self.camera_caps else f"{self.fps} fps")
-
-    def _on_fps_changed(self, scale):
-        self.fps = int(scale.get_value())
-        self._update_fps_label()
-        self.pipeline.get_by_name("rate").set_property(
-            "caps", Gst.Caps.from_string(f"video/x-raw,framerate={self.fps}/1"))
-        save_settings(fps=self.fps)
 
     def rotate(self, delta):
         self.rotation = (self.rotation + delta) % 360
