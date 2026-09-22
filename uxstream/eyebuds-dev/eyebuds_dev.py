@@ -42,6 +42,9 @@ CAMERA_HEIGHT = 560
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
+EXTREME_MARKS = 4 # lines that get their worst and best value named on the chart
+MIN_SPAN = 60 # seconds the chart covers even when the session is younger
+WORST_MARKS = 6 # how many "worst value" labels the chart carries at once
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
 
@@ -103,6 +106,20 @@ def heat_color(level, polarity=-1):
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
+def spline(cr, points):
+    """Catmull-Rom through the points, as cubic beziers: no overshoot, no corners."""
+    if len(points) < 2:
+        return
+    cr.move_to(*points[0])
+    for i in range(len(points) - 1):
+        p0 = points[i - 1] if i else points[0]
+        p1, p2 = points[i], points[i + 1]
+        p3 = points[i + 2] if i + 2 < len(points) else p2
+        cr.curve_to(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+                    p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
+                    p2[0], p2[1])
+
+
 SERIES_COLORS = ["#61afef", "#98c379", "#e5c07b", "#e06c75", "#c678dd", "#56b6c2",
                  "#d19a66", "#7fd1b9", "#f08cc3", "#a3be8c", "#88c0d0", "#bf8bff"]
 
@@ -115,20 +132,33 @@ class MultiGraph(Gtk.DrawingArea):
         self.points = points
         self.series = {} # key -> {"t": [...], "v": [...], "color": str, "n": int}
         self.t0 = None
+        # Redrawn every frame: the curve then slides with the clock instead of only when a
+        # sample lands, which is what makes slow fields look smooth.
+        self.add_tick_callback(lambda *_: (self.queue_draw(), GLib.SOURCE_CONTINUE)[1])
 
-    def add_series(self, key, color):
-        self.series[key] = {"t": [], "v": [], "color": color}
+    def add_series(self, key, color, label, polarity):
+        self.series[key] = {"t": [], "v": [], "color": color, "label": label, "polarity": polarity,
+                            "worst": None, "best": None} # (badness, value, time, level) each
 
     def drop_series(self, key):
         self.series.pop(key, None)
         if not self.series:
             self.t0 = None
 
-    def push(self, key, level):
+    def push(self, key, level, value):
         series = self.series.get(key)
         if series is None:
             return
         now = time.time()
+        # Worst means lowest where high is good, highest where low is good, and the biggest
+        # excursion either way when the field has no direction.
+        polarity = series["polarity"]
+        badness = (1 - level) if polarity > 0 else level if polarity < 0 else abs(level - 0.5) * 2
+        sample = (badness, value, now, level)
+        if series["worst"] is None or badness > series["worst"][0]:
+            series["worst"] = sample
+        if series["best"] is None or badness < series["best"][0]:
+            series["best"] = sample
         self.t0 = now if self.t0 is None else self.t0
         series["t"].append(now)
         series["v"].append(min(1.0, max(0.0, level)))
@@ -151,17 +181,77 @@ class MultiGraph(Gtk.DrawingArea):
         cr.stroke()
         if self.t0 is None:
             return
-        span = max(time.time() - self.t0, 1e-6)
+        now = time.time()
+        span = max(now - self.t0, MIN_SPAN) # never cram a few seconds across the whole width
+        self.now, self.span = now, span
         for series in self.series.values():
             if len(series["v"]) < 2:
                 continue
             cr.set_source_rgb(*(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
             cr.set_line_width(1.4)
-            for i, (t, v) in enumerate(zip(series["t"], series["v"])):
-                x = (t - self.t0) / span * (w - 2) + 1
-                y = h - 2 - v * (h - 4)
-                cr.line_to(x, y) if i else cr.move_to(x, y)
+            points = [(self._x(t, w), h - 2 - v * (h - 4)) for t, v in zip(series["t"], series["v"])]
+            spline(cr, [p for p in points if p[0] > -w])
             cr.stroke()
+        self._draw_extremes(cr, w, h, span)
+
+    def _x(self, t, w):
+        """Time to x, with now at the right edge."""
+        return w - 1 - (self.now - t) / self.span * (w - 2)
+
+    def _draw_extremes(self, cr, w, h, span):
+        """Name and value at each line's worst and best sample, the most extreme lines first."""
+        ranked = sorted((s for s in self.series.values() if s["worst"] and len(s["v"]) > 4),
+                        reverse=True, key=lambda s: s["worst"][0])
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(11)
+        taken = []
+        for series in ranked[:EXTREME_MARKS]:
+            rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
+            for kind in ("worst", "best"):
+                _, value, when, level = series[kind]
+                x = self._x(when, w)
+                y = h - 2 - level * (h - 4)
+                text = f"{series['label']} {value:g}"
+                tw = cr.text_extents(text).width
+                tx = x + 7 if x + 7 + tw < w else x - 7 - tw
+                ty = min(h - 3, max(11, y - 5))
+                while any(abs(ty - oy) < 12 and abs(tx - ox) < tw for ox, oy in taken) and ty < h - 3:
+                    ty += 12 # nudge down rather than write on top of another mark
+                taken.append((tx, ty))
+                cr.set_source_rgb(*rgb)
+                cr.arc(x, y, 2.5, 0, 6.2832)
+                cr.fill() if kind == "worst" else cr.stroke() # worst filled, best hollow
+                cr.move_to(tx, ty)
+                cr.set_source_rgba(*rgb, 1 if kind == "worst" else 0.65)
+                cr.show_text(text)
+        self._draw_worst(cr, w, h, span)
+
+    def _draw_worst(self, cr, w, h, span):
+        """Name and value of each line's worst sample, the few worst ones first."""
+        marks = [(s["worst"][0], s) for s in self.series.values()
+                 if s["worst"] is not None and len(s["v"]) > 4]
+        marks.sort(reverse=True, key=lambda m: m[0])
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(11)
+        taken = []
+        for _, series in marks[:WORST_MARKS]:
+            _, value, when, level = series["worst"]
+            x = (when - self.t0) / span * (w - 2) + 1
+            y = h - 2 - level * (h - 4)
+            text = f"{series['label']} {value:g}"
+            tw = cr.text_extents(text).width
+            tx = x + 6 if x + 6 + tw < w else x - 6 - tw
+            ty = min(h - 3, max(11, y - 5))
+            while any(abs(ty - other) < 12 and abs(tx - ox) < tw for ox, other in taken):
+                ty += 12 # nudge down rather than write on top of another mark
+                if ty > h - 3:
+                    break
+            taken.append((tx, ty))
+            cr.set_source_rgb(*(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
+            cr.arc(x, y, 2.5, 0, 6.2832)
+            cr.fill()
+            cr.move_to(tx, ty)
+            cr.show_text(text)
 
 
 def ts_seconds(ts):
@@ -631,7 +721,7 @@ class Window(Adw.ApplicationWindow):
             series = f"{key}#{len(cells)}"
             color = SERIES_COLORS[self.next_color % len(SERIES_COLORS)]
             self.next_color += 1
-            self.graph.add_series(series, color)
+            self.graph.add_series(series, color, f"{module} {text}".strip(), polarity)
             bar = Gtk.DrawingArea(content_width=10, content_height=10, valign=Gtk.Align.CENTER)
             bar.set_draw_func(lambda _a, cr, _w, _h, c=color: (
                 cr.set_source_rgb(*(int(c[i:i + 2], 16) / 255 for i in (1, 3, 5))),
@@ -700,7 +790,7 @@ class Window(Adw.ApplicationWindow):
             unit = f" {cell['unit']}" if cell["unit"] else ""
             if hi > lo:
                 t = (v - lo) / (hi - lo)
-                self.graph.push(cell["series"], t)
+                self.graph.push(cell["series"], t, v)
                 cell["value"].set_markup(
                     f'{"▲ " if odd else ""}'
                     f'<span foreground="{heat_color(t, cell["polarity"])}"><b>{num.group()}</b></span>'
@@ -745,7 +835,7 @@ class Window(Adw.ApplicationWindow):
         if self.session_start is None:
             self.axis.set_label("")
             return True
-        span = time.time() - self.session_start
+        span = max(time.time() - self.session_start, MIN_SPAN)
         started = datetime.fromtimestamp(self.session_start).strftime("%H:%M:%S")
         self.axis.set_label(f"grafer: {started} ←  {int(span) // 60}m {int(span) % 60:02d}s  → nu")
         return True
