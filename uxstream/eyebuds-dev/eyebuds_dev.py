@@ -153,9 +153,9 @@ class MultiGraph(Gtk.DrawingArea):
         self.add_controller(click)
 
     def _on_released(self, _gesture, _n, x, y):
-        if self.on_click and x > self.get_width() - LABEL_WIDTH:
-            for y0, y1, key in self.label_hits:
-                if y0 <= y <= y1:
+        if self.on_click:
+            for x0, x1, y0, y1, key in self.label_hits:
+                if x0 <= x <= x1 and y0 <= y <= y1:
                     self.on_click(key)
                     return
 
@@ -282,24 +282,29 @@ class MultiGraph(Gtk.DrawingArea):
                 series["label_y"] = series["y"]
 
             ly = series["label_y"]
+            # The label trails its own last sample, so a field that has gone quiet drifts left
+            # with the point it belongs to instead of hanging at the right edge.
+            tip_x = points[-1][0]
             unit = f" {series['unit']}" if series["unit"] else ""
             text = (f"{'!' if time.time() - series['flag'] < 10 else ''}"
                     f"{series['group']} {series['label']} {series['value']:g}{unit}")
-            cr.set_source_rgb(*rgb)
             cr.set_font_size(11)
-            cr.move_to(plot + 6, ly + 4)
+            width = cr.text_extents(text).width
+            tx = max(4, min(w - 4 - width, tip_x + 6))
+            cr.set_source_rgb(*rgb)
+            cr.move_to(tx, ly + 4)
             cr.show_text(text)
             if series["lo"] is not None and series["hi"] > series["lo"]:
                 cr.set_source_rgba(*rgb, 0.55)
                 cr.set_font_size(9)
-                cr.move_to(plot + 6, ly + 13)
+                cr.move_to(tx, ly + 13)
                 cr.show_text(f"{series['lo']:g} – {series['hi']:g}")
-            cr.set_source_rgba(*rgb, 0.4) # a leader line from the label back to the curve
+            cr.set_source_rgba(*rgb, 0.4) # a leader line from the label back to its last sample
             cr.set_line_width(1)
-            cr.move_to(plot, series["y"])
-            cr.line_to(plot + 4, ly + 1)
+            cr.move_to(tip_x, series["y"])
+            cr.line_to(tx - 2, ly + 1)
             cr.stroke()
-            self.label_hits.append((ly - 6, ly + 16, key))
+            self.label_hits.append((tx, tx + width, ly - 6, ly + 16, key))
 
 
 def ts_seconds(ts):
@@ -521,8 +526,10 @@ class Window(Adw.ApplicationWindow):
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         row2.append(Gtk.Label(label="Build", xalign=0, css_classes=["dim-label", "caption"]))
-        self.btn_type = self._switch(row2, "D", "Release", self.build_type == "release", self.toggle_type)
-        self.btn_env = self._switch(row2, "E", "Production", self.build_env == "production", self.toggle_env)
+        self.btn_type = self._switch(row2, "D", "Debug", "Release",
+                                     self.build_type == "release", self.toggle_type)
+        self.btn_env = self._switch(row2, "E", "Staging", "Production",
+                                    self.build_env == "production", self.toggle_env)
         row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self.btn_build = self._button(row2, "B", "Build", lambda *_: self.build("build"))
         self.btn_flash = self._button(row2, "F", "Flash", lambda *_: self.build("flash"))
@@ -540,13 +547,22 @@ class Window(Adw.ApplicationWindow):
         """Label with the shortcut key picked out in white, so the binding reads as part of it."""
         return f'<span foreground="#ffffff"><b>{key}</b></span>  {GLib.markup_escape_text(name)}'
 
-    def _switch(self, box, key, name, active, handler):
-        """A labelled switch: on means the second of the two build choices."""
+    def _switch(self, box, key, off_name, on_name, active, handler):
+        """Both choices flank the switch, the active one lit, with the shortcut key on the left."""
         row = Gtk.Box(spacing=6)
-        row.append(Gtk.Label(label=self._keyed(key, name), use_markup=True, xalign=0, hexpand=True))
+        row.append(Gtk.Label(label=f'<span foreground="#ffffff"><b>{key}</b></span>', use_markup=True))
+        off = Gtk.Label(label=off_name, xalign=1, hexpand=True)
         switch = Gtk.Switch(active=active, valign=Gtk.Align.CENTER)
+        on = Gtk.Label(label=on_name, xalign=0, hexpand=True)
         switch.connect("state-set", lambda _s, state: handler(state))
-        row.append(switch)
+
+        def light(*_):
+            for label, lit in ((off, not switch.get_active()), (on, switch.get_active())):
+                label.set_css_classes([] if lit else ["dim-label"])
+        switch.connect("notify::active", light)
+        light()
+        for widget in (off, switch, on):
+            row.append(widget)
         box.append(row)
         return switch
 
