@@ -20,6 +20,7 @@
   packages = with pkgs; [
     openocd
     probe-rs-tools
+    python3 # shared_modules/scripts/prefix_binary.py (bankN.bin post-link step, stdlib only)
     picocom # UART console (eyebuds USART1 @ 2 Mbaud: picocom -b 2000000 /dev/ttyACM0)
     jdk17
     android-tools # adb / fastboot without depending on ~/Android/Sdk being on PATH

@@ -35,6 +35,14 @@ finish() {
 
 cd "$project" || finish 1 "Hittar inte $project"
 
+# vcpkg-shell activate brings ninja and the ARM gcc but not cmake, which vcpkg also downloaded.
+if ! command -v cmake >/dev/null; then
+    for d in "$HOME"/.vcpkg/downloads/artifacts/*/tools.kitware.cmake/*/bin; do
+        [ -x "$d/cmake" ] && PATH="$d:$PATH" && break
+    done
+    export PATH
+fi
+
 if [ "$mode" != flash ]; then
     echo ">>> make ${build}_${env}_bank${bank}"
     make "${build}_${env}_bank${bank}" || finish $? "Bygget misslyckades: $preset bank$bank"
