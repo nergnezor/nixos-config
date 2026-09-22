@@ -147,8 +147,9 @@ class MultiGraph(Gtk.DrawingArea):
     the name, the current value and the range seen, so the chart needs no legend beside it.
     """
 
-    def __init__(self, height=200, points=400, on_click=None):
+    def __init__(self, height=200, points=400, on_click=None, labels=True):
         super().__init__(content_height=height, hexpand=True, vexpand=True)
+        self.show_labels = labels
         self.points = points
         self.on_click = on_click
         self.series = {}
@@ -302,6 +303,8 @@ class MultiGraph(Gtk.DrawingArea):
             labels.append({"key": key, "series": series, "rgb": rgb, "text": text, "width": width,
                            "x": tx, "y": series["label_y"], "tip": (tip_x, series["y"])})
 
+        if not self.show_labels:
+            return # the table beside the chart names the lines instead
         self._separate(labels, h)
         for label in labels:
             series, rgb, tx, ly, width = (label["series"], label["rgb"], label["x"], label["y"],
@@ -502,19 +505,23 @@ class Window(Adw.ApplicationWindow):
         # Shared time axis: every graph spans the same session, so one line says it for all of them.
         self.axis = Gtk.Label(xalign=1, css_classes=["dim-label", "caption"], margin_end=8)
         self.session_start = None
-        self.graph = MultiGraph(on_click=self._mute_series)
+        self.graph = MultiGraph(on_click=self._mute_series, labels=False)
         self.next_color = 0
         # Every series' range in an aligned grid, so the chart only has to carry current values.
-        self.range_grid = Gtk.Grid(column_spacing=4, row_spacing=0, margin_start=8, margin_end=8,
-                                   visible=False, css_classes=["ranges"])
+        self.range_grid = Gtk.Grid(column_spacing=6, row_spacing=0, margin_start=6, margin_end=6,
+                                   margin_top=4, valign=Gtk.Align.START, css_classes=["ranges"],
+                                   hexpand=False)
         # Outliers worth a second look, listed only while there are any.
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
         self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
                                        css_classes=["caption"], visible=False)
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
-        top.append(self.graph)
-        top.append(self.range_grid)
+        # The table is the chart's legend, so they sit side by side and share colours and rows.
+        chart_row = Gtk.Box()
+        chart_row.append(self.graph)
+        chart_row.append(self.range_grid)
+        top.append(chart_row)
         top.append(self.outlier_label)
         top.append(self.axis)
         top.append(scroller)
@@ -884,31 +891,30 @@ class Window(Adw.ApplicationWindow):
         entries = self._worth_listing()
         while child := self.range_grid.get_first_child():
             self.range_grid.remove(child)
-        self.range_grid.set_visible(bool(entries))
         if not entries:
             return True
         # Name, min, now, max per entry, in as many columns as the width allows, so the block
         # stays a few rows tall however many fields the firmware reports.
-        columns = max(1, min(5, self.get_width() // 215))
-        rows = -(-len(entries) // columns)
-        for column in range(columns): # one header per column group, so the numbers read themselves
-            for offset, heading in ((1, "min"), (2, "now"), (3, "max")):
-                self.range_grid.attach(Gtk.Label(label=heading, xalign=1, width_chars=6,
-                                                 css_classes=["caption", "dim-label"]),
-                                       column * 4 + offset, 0, 1, 1)
-        for i, series in enumerate(sorted(entries, key=lambda s: (s["group"], s["label"]))):
-            column, row = divmod(i, rows)
-            row += 1 # below the headings
-            name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=18,
-                             css_classes=["caption"], hexpand=True)
-            name.set_markup(f'<span foreground="{series["color"]}">'
+        # A third of the window at most: the chart is what this row is for.
+        self.range_grid.set_size_request(self.get_width() // 3, -1)
+        for offset, heading in ((1, "min"), (2, "now"), (3, "max")):
+            self.range_grid.attach(Gtk.Label(label=heading, xalign=1, width_chars=6,
+                                             css_classes=["caption", "dim-label"]), offset, 0, 1, 1)
+        for row, series in enumerate(entries, start=1):
+            flagged = "! " if time.time() - series["flag"] < 10 else ""
+            name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=20,
+                             css_classes=["caption"], tooltip_text="click to mute")
+            name.set_markup(f'<span foreground="{series["color"]}">{flagged}'
                             f'{GLib.markup_escape_text(series["group"] + " " + series["label"])}</span>')
-            self.range_grid.attach(name, column * 4, row, 1, 1)
-            for offset, value, dim in ((1, series["lo"], True), (2, series["value"], False),
-                                       (3, series["hi"], True)):
+            cells = [name]
+            for value, dim in ((series["lo"], True), (series["value"], False), (series["hi"], True)):
                 classes = ["caption", "monospace"] + (["dim-label"] if dim else [])
-                self.range_grid.attach(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=6,
-                                                 css_classes=classes), column * 4 + offset, row, 1, 1)
+                cells.append(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=6, css_classes=classes))
+            for column, cell in enumerate(cells):
+                self.range_grid.attach(cell, column, row, 1, 1)
+            click = Gtk.GestureClick()
+            click.connect("released", lambda *_, s=series: self._set_muted(self.muted | {s["pattern"]}))
+            name.add_controller(click)
         return True
 
     def _worth_listing(self):
