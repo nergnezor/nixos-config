@@ -44,6 +44,7 @@ OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is c
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
 OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
+RANGE_ROWS = 12 # fields the range table has room to be useful about
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
 LABEL_GAP = 19 # how close two labels may sit before they push each other away
@@ -880,8 +881,7 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def _update_ranges(self):
-        entries = [s for s in self.graph.series.values()
-                   if s["lo"] is not None and s["hi"] > s["lo"]]
+        entries = self._worth_listing()
         while child := self.range_grid.get_first_child():
             self.range_grid.remove(child)
         self.range_grid.set_visible(bool(entries))
@@ -910,6 +910,24 @@ class Window(Adw.ApplicationWindow):
                 self.range_grid.attach(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=6,
                                                  css_classes=classes), column * 4 + offset, row, 1, 1)
         return True
+
+    def _worth_listing(self):
+        """The fields worth a row: still reporting, actually moving, most restless first."""
+        now = time.time()
+        scored = []
+        for series in self.graph.series.values():
+            if series["lo"] is None or series["hi"] <= series["lo"] or not series["t"]:
+                continue # never seen two different values, so there is nothing to compare
+            if series["t"][-1] < now - CHART_WINDOW:
+                continue # gone quiet, and its line has already slid off the chart
+            scale = max(abs(series["hi"]), abs(series["lo"]), 1e-9)
+            spread = (series["hi"] - series["lo"]) / scale
+            if spread < 0.02:
+                continue # near enough constant to be noise in a table
+            recent = now - series["flag"] < OUTLIER_TTL
+            scored.append((spread + (10 if recent else 0), series))
+        scored.sort(reverse=True, key=lambda pair: pair[0])
+        return [series for _, series in scored[:RANGE_ROWS]]
 
     def _update_outliers(self):
         cutoff = time.time() - OUTLIER_TTL
