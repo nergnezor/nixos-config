@@ -103,100 +103,65 @@ def heat_color(level, polarity=-1):
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
-class Sparkline(Gtk.DrawingArea):
-    """Every value of this session, scaled to the session min/max and coloured by level.
+SERIES_COLORS = ["#61afef", "#98c379", "#e5c07b", "#e06c75", "#c678dd", "#56b6c2",
+                 "#d19a66", "#7fd1b9", "#f08cc3", "#a3be8c", "#88c0d0", "#bf8bff"]
 
-    The x axis always spans the whole session: once the buffer is full, pairs of points are
-    averaged and each point comes to stand for twice as long.
-    """
 
-    def __init__(self, width=84, height=18, points=180, polarity=0):
-        super().__init__(content_width=width, content_height=height, valign=Gtk.Align.CENTER)
+class MultiGraph(Gtk.DrawingArea):
+    """Every tracked field in one chart: x is the session, y is each field's own 0…1 range."""
+
+    def __init__(self, height=200, points=400):
+        super().__init__(content_height=height, hexpand=True)
         self.points = points
-        self.polarity = polarity
-        self.values = []
-        self.bucket = 1 # samples per drawn point
-        self.acc = 0.0
-        self.acc_n = 0
-        self.lo = self.hi = None
-        self.shown = []      # eased copy of `values`, what actually gets drawn
-        self.tick_id = None
+        self.series = {} # key -> {"t": [...], "v": [...], "color": str, "n": int}
+        self.t0 = None
 
-    def set_range(self, lo, hi):
-        """All-time min/max, used for colour and for the warning threshold."""
-        self.lo, self.hi = lo, hi
+    def add_series(self, key, color):
+        self.series[key] = {"t": [], "v": [], "color": color}
 
-    def push(self, value, lo, hi):
-        self.acc += value
-        self.acc_n += 1
-        if self.acc_n >= self.bucket:
-            self.values.append(self.acc / self.acc_n)
-            self.acc, self.acc_n = 0.0, 0
-            if len(self.values) > self.points:
-                self.values = [(a + b) / 2 for a, b in zip(self.values[::2], self.values[1::2])]
-                self.bucket *= 2
-                self.shown = self.values[:] # decimation reshapes the curve, no point easing that
-        self.lo, self.hi = lo, hi
-        # Redrawn every frame while it catches up, so the curve slides instead of stepping.
-        if self.tick_id is None and self.get_mapped():
-            self.tick_id = self.add_tick_callback(self._ease)
+    def drop_series(self, key):
+        self.series.pop(key, None)
+        if not self.series:
+            self.t0 = None
 
-    def _ease(self, _widget, _clock):
-        if len(self.shown) != len(self.values):
-            # Grow towards the new point from the previous one so it slides in from the right.
-            self.shown = self.shown[-len(self.values):] + self.values[len(self.shown):len(self.values)]
-        done = True
-        for i, target in enumerate(self.values):
-            gap = target - self.shown[i]
-            if abs(gap) > (abs(target) + 1e-9) * 1e-4:
-                self.shown[i] += gap * 0.25
-                done = False
+    def push(self, key, level):
+        series = self.series.get(key)
+        if series is None:
+            return
+        now = time.time()
+        self.t0 = now if self.t0 is None else self.t0
+        series["t"].append(now)
+        series["v"].append(min(1.0, max(0.0, level)))
+        if len(series["v"]) > self.points: # halve the resolution, keep the whole session
+            series["t"] = series["t"][1::2]
+            series["v"] = [(a + b) / 2 for a, b in zip(series["v"][::2], series["v"][1::2])]
         self.queue_draw()
-        if done:
-            self.tick_id = None
-            return GLib.SOURCE_REMOVE
-        return GLib.SOURCE_CONTINUE
 
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
         cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
-        cr.set_source_rgba(1, 1, 1, 0.06)
+        cr.set_source_rgba(1, 1, 1, 0.04)
         cr.rectangle(0, 0, w, h)
         cr.fill()
-        values = self.shown if len(self.shown) == len(self.values) else self.values
-        if len(values) < 2 or self.hi is None:
-            return
-        # Scaled to what is on screen so the shape stays readable, coloured against the all-time
-        # range so the same colour always means the same thing.
-        vlo, vhi = min(values), max(values)
-        if vhi <= vlo:
-            vlo, vhi = vlo - 0.5, vhi + 0.5
-        span = vhi - vlo
-        step = w / (len(values) - 1)
-        points = [(i * step, h - 1 - (v - vlo) / span * (h - 2)) for i, v in enumerate(values)]
-        # Height maps to value, so a vertical gradient colours each point by its own level.
-        all_span = (self.hi - self.lo) or 1
-        gradient = cairo.LinearGradient(0, 1, 0, h - 1)
-        for i in range(5):
-            value = vhi - (i / 4) * span # stop 0 is the top of the graph
-            r, g, b = level_rgb((value - self.lo) / all_span, self.polarity)
-            gradient.add_color_stop_rgb(i / 4, r, g, b)
-        cr.move_to(0, h)
-        for x, y in points:
-            cr.line_to(x, y)
-        cr.line_to(points[-1][0], h)
-        cr.close_path()
-        cr.save()
-        cr.clip()
-        cr.set_source(gradient)
-        cr.paint_with_alpha(0.22)
-        cr.restore()
-        cr.move_to(*points[0])
-        for x, y in points[1:]:
-            cr.line_to(x, y)
-        cr.set_source(gradient)
-        cr.set_line_width(1.2)
+        cr.set_source_rgba(1, 1, 1, 0.07)
+        cr.set_line_width(1)
+        for i in range(1, 4): # quarter lines, something for the eye to measure against
+            cr.move_to(0, h * i / 4)
+            cr.line_to(w, h * i / 4)
         cr.stroke()
+        if self.t0 is None:
+            return
+        span = max(time.time() - self.t0, 1e-6)
+        for series in self.series.values():
+            if len(series["v"]) < 2:
+                continue
+            cr.set_source_rgb(*(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
+            cr.set_line_width(1.4)
+            for i, (t, v) in enumerate(zip(series["t"], series["v"])):
+                x = (t - self.t0) / span * (w - 2) + 1
+                y = h - 2 - v * (h - 4)
+                cr.line_to(x, y) if i else cr.move_to(x, y)
+            cr.stroke()
 
 
 def ts_seconds(ts):
@@ -368,8 +333,11 @@ class Window(Adw.ApplicationWindow):
         # Shared time axis: every graph spans the same session, so one line says it for all of them.
         self.axis = Gtk.Label(xalign=1, css_classes=["dim-label", "caption"], margin_end=8)
         self.session_start = None
+        self.graph = MultiGraph()
+        self.next_color = 0
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
+        top.append(self.graph)
         top.append(self.axis)
         # Wrapped so the flow gets the window width to wrap against, with no height cap of its own:
         # every metric stays visible and the log takes what is left.
@@ -599,6 +567,9 @@ class Window(Adw.ApplicationWindow):
         self.mute_box.set_visible(bool(self.muted))
 
     def _set_muted(self, muted):
+        for key in muted - self.muted:
+            for cell in self.rows.get(key, {}).get("cells", []):
+                self.graph.drop_series(cell["series"])
         self.muted = muted
         save_settings(muted=sorted(muted))
         self._rebuild_mute_chips()
@@ -657,7 +628,14 @@ class Window(Adw.ApplicationWindow):
                               ellipsize=3, css_classes=["dim-label"]) # 3 = Pango.EllipsizeMode.END
             value = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=9)
             polarity = polarity_of(text, field_unit(message[num.end():]))
-            bar = Sparkline(polarity=polarity)
+            series = f"{key}#{len(cells)}"
+            color = SERIES_COLORS[self.next_color % len(SERIES_COLORS)]
+            self.next_color += 1
+            self.graph.add_series(series, color)
+            bar = Gtk.DrawingArea(content_width=10, content_height=10, valign=Gtk.Align.CENTER)
+            bar.set_draw_func(lambda _a, cr, _w, _h, c=color: (
+                cr.set_source_rgb(*(int(c[i:i + 2], 16) / 255 for i in (1, 3, 5))),
+                cr.arc(5, 5, 4, 0, 6.2832), cr.fill()))
             for w in (tag, label, value, bar):
                 box.append(w)
             # Click anywhere on a cell mutes the whole pattern it came from.
@@ -667,15 +645,17 @@ class Window(Adw.ApplicationWindow):
             box.set_tooltip_text(f"{message.strip()}\n{location} · klicka för att muta")
             self.table.append(box)
             unit = field_unit(message[num.end():])
-            cells.append({"value": value, "bar": bar, "unit": unit, "polarity": polarity, "label": text})
+            cells.append({"value": value, "bar": bar, "unit": unit, "polarity": polarity, "label": text,
+                          "series": series})
             pos = num.end()
         if not cells: # no numbers: count, rate and how evenly the line arrives
             box = Gtk.Box(spacing=4)
             tag = Gtk.Label(css_classes=["monospace"], xalign=0)
             tag.set_markup(f'<span foreground="{color}"><b>{module}</b></span>')
-            text = Gtk.Label(label=message, xalign=0, hexpand=True, ellipsize=3)
+            text = Gtk.Label(label=message, xalign=0, hexpand=True, width_chars=8, max_width_chars=30,
+                             ellipsize=3, tooltip_text=message)
             count = Gtk.Label(css_classes=["monospace"], xalign=1, width_chars=10)
-            bar = Sparkline(polarity=0)
+            bar = Gtk.Label(label="", width_chars=2)
             for w in (tag, text, count, bar):
                 box.append(w)
             click = Gtk.GestureClick()
@@ -683,7 +663,8 @@ class Window(Adw.ApplicationWindow):
             box.add_controller(click)
             box.set_tooltip_text(f"{location} · klicka för att muta")
             self.table.append(box)
-            cells.append({"value": count, "bar": bar, "unit": "", "polarity": 0, "label": message[:30]})
+            cells.append({"value": count, "bar": bar, "unit": "", "polarity": 0, "label": message[:30],
+                          "series": None})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in cells])
         return {"cells": cells, "n": 0, "ranges": ranges, "key": key, "numeric": bool(NUMBERS.search(message))}
 
@@ -703,11 +684,10 @@ class Window(Adw.ApplicationWindow):
             gaps = state.setdefault("gaps", [None, None])
             gaps[0] = gap if gaps[0] is None else min(gaps[0], gap)
             gaps[1] = gap if gaps[1] is None else max(gaps[1], gap)
-            cell["bar"].push(gap, gaps[0], gaps[1])
             cell["value"].set_markup(
                 f"<b>×{state['n']}</b><span size=\"smaller\"> {1 / gap:.1f}/s</span>"
                 if gap > 0 else f"<b>×{state['n']}</b>")
-            cell["bar"].set_tooltip_text(f"intervall {gap:.2f}s · min {gaps[0]:.2f}s · max {gaps[1]:.2f}s")
+            cell["value"].set_tooltip_text(f"intervall {gap:.2f}s · min {gaps[0]:.2f}s · max {gaps[1]:.2f}s")
             return
         for i, (cell, num, rng) in enumerate(zip(state["cells"], NUMBERS.finditer(message), state["ranges"])):
             v = float(num.group())
@@ -717,20 +697,17 @@ class Window(Adw.ApplicationWindow):
                 self.ranges_dirty = True
             lo, hi = rng
             odd = self._check_outlier(state["key"], i, v, cell["label"], module)
-            cell["bar"].set_range(lo, hi)
             unit = f" {cell['unit']}" if cell["unit"] else ""
             if hi > lo:
                 t = (v - lo) / (hi - lo)
+                self.graph.push(cell["series"], t)
                 cell["value"].set_markup(
                     f'{"▲ " if odd else ""}'
                     f'<span foreground="{heat_color(t, cell["polarity"])}"><b>{num.group()}</b></span>'
                     f'<span size="smaller">{GLib.markup_escape_text(unit)}</span>')
-                cell["bar"].push(v, lo, hi)
                 cell["bar"].set_tooltip_text(f"min {lo:g} · max {hi:g}")
             else:
                 cell["value"].set_markup(f"<b>{num.group()}</b><span size=\"smaller\">{GLib.markup_escape_text(unit)}</span>")
-            if hi <= lo:
-                cell["bar"].push(v, lo, hi) # flat so far, keep the history going
 
     def _flush_ranges(self):
         if getattr(self, "ranges_dirty", False):
@@ -779,6 +756,8 @@ class Window(Adw.ApplicationWindow):
             self.table.remove(child)
         self.rows.clear()
         self.seen.clear()
+        self.graph.series.clear()
+        self.graph.t0 = None
 
     def _refilter(self):
         self.buffer.set_text("")
