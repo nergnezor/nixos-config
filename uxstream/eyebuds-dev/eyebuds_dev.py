@@ -417,7 +417,8 @@ class SerialReader(threading.Thread):
         self.logdir.mkdir(parents=True, exist_ok=True)
         logfile = self.logdir / f"{datetime.now():%Y%m%d-%H%M%S}-{Path(self.port).name}.log"
         with serial.Serial(self.port, self.baud, timeout=0.2) as ser, logfile.open("ab") as log:
-            self._emit(f"(connected {self.port} @ {self.baud}, log {logfile})\n", status=f"{self.port} @ {self.baud}")
+            # Only the subtitle says where we are connected; the log itself stays firmware output.
+            self._emit("", status=f"{self.port} @ {self.baud} → {logfile.name}")
             while True:
                 data = ser.read(4096)
                 if data:
@@ -490,7 +491,8 @@ class Window(Adw.ApplicationWindow):
                                     row_spacing=0, column_spacing=2, margin_start=6, margin_end=6)
         self.mute_box.set_visible(False)
         css = Gtk.CssProvider()
-        css.load_from_string(".telemetry { padding: 1px 6px; min-height: 0; }")
+        css.load_from_string(""".telemetry { padding: 1px 6px; min-height: 0; }
+            .ranges label { font-size: 0.78em; padding: 0; }""")
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.rows = {}   # pattern -> series state
         self.seen = {}   # pattern -> occurrences before it earns a place on the chart
@@ -502,8 +504,8 @@ class Window(Adw.ApplicationWindow):
         self.graph = MultiGraph(on_click=self._mute_series)
         self.next_color = 0
         # Every series' range in an aligned grid, so the chart only has to carry current values.
-        self.range_grid = Gtk.Grid(column_spacing=6, row_spacing=0, margin_start=8, margin_end=8,
-                                   margin_top=2, visible=False)
+        self.range_grid = Gtk.Grid(column_spacing=4, row_spacing=0, margin_start=8, margin_end=8,
+                                   visible=False, css_classes=["ranges"])
         # Outliers worth a second look, listed only while there are any.
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
         self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
@@ -887,11 +889,11 @@ class Window(Adw.ApplicationWindow):
             return True
         # Name, min, now, max per entry, in as many columns as the width allows, so the block
         # stays a few rows tall however many fields the firmware reports.
-        columns = max(1, min(4, self.get_width() // 260))
+        columns = max(1, min(5, self.get_width() // 215))
         rows = -(-len(entries) // columns)
         for i, series in enumerate(sorted(entries, key=lambda s: (s["group"], s["label"]))):
             column, row = divmod(i, rows)
-            name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=22,
+            name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=18,
                              css_classes=["caption"], hexpand=True)
             name.set_markup(f'<span foreground="{series["color"]}">'
                             f'{GLib.markup_escape_text(series["group"] + " " + series["label"])}</span>')
@@ -899,7 +901,7 @@ class Window(Adw.ApplicationWindow):
             for offset, value, dim in ((1, series["lo"], True), (2, series["value"], False),
                                        (3, series["hi"], True)):
                 classes = ["caption", "monospace"] + (["dim-label"] if dim else [])
-                self.range_grid.attach(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=7,
+                self.range_grid.attach(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=6,
                                                  css_classes=classes), column * 4 + offset, row, 1, 1)
         return True
 
