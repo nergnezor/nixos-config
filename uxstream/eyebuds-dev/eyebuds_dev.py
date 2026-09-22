@@ -167,6 +167,12 @@ class Window(Adw.ApplicationWindow):
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(log_header)
         top.append(scroller)
+        # Follow mode: new lines glide the view to the end, but only while it already sits there.
+        self.follow = True
+        self.scroll_anim = None
+        adj = self.scroller.get_vadjustment()
+        adj.connect("value-changed", self._on_scrolled)
+        adj.connect("notify::upper", lambda *_: self.follow and self._scroll_to_end())
         self.lines = collections.deque(maxlen=5000) # complete raw lines, colours included
         self.partial = ""
         self.filter = None
@@ -194,6 +200,7 @@ class Window(Adw.ApplicationWindow):
         row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
         self._button(row1, "[Q] Rotera kamera", "object-rotate-right-symbolic", lambda *_: self.rotate(90))
         self._button(row1, "[C] Rensa logg", "edit-clear-all-symbolic", lambda *_: self.clear_log())
+        self._button(row1, "[G] Till slutet", "go-bottom-symbolic", lambda *_: self.follow_end())
         controls.append(row1)
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -304,14 +311,34 @@ class Window(Adw.ApplicationWindow):
             if self._matches(line):
                 self._show_line(line)
         self._update_count()
-        self._scroll_to_end()
+        self.follow_end()
 
     def _update_count(self):
         self.filter_count.set_label(f"{self.shown}/{len(self.lines)}" if self.filter else "")
 
+    def _at_end(self, adj):
+        return adj.get_value() >= adj.get_upper() - adj.get_page_size() - 40
+
+    def _on_scrolled(self, adj):
+        if self.scroll_anim and self.scroll_anim.get_state() == Adw.AnimationState.PLAYING:
+            return # our own glide, not the user
+        self.follow = self._at_end(adj)
+
     def _scroll_to_end(self):
         adj = self.scroller.get_vadjustment()
-        adj.set_value(adj.get_upper())
+        target = adj.get_upper() - adj.get_page_size()
+        if target <= adj.get_value():
+            return
+        if self.scroll_anim:
+            self.scroll_anim.skip()
+        self.scroll_anim = Adw.TimedAnimation.new(
+            self.scroller, adj.get_value(), target, 150, Adw.PropertyAnimationTarget.new(adj, "value"))
+        self.scroll_anim.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+        self.scroll_anim.play()
+
+    def follow_end(self):
+        self.follow = True
+        self._scroll_to_end()
 
     def clear_log(self):
         self.lines.clear()
@@ -334,7 +361,6 @@ class Window(Adw.ApplicationWindow):
         if self.buffer.get_line_count() > 5000:
             self.buffer.delete(self.buffer.get_start_iter(), self.buffer.get_iter_at_line(1000)[1])
         self._update_count()
-        self._scroll_to_end()
         return False
 
     # --- plugin state -------------------------------------------------------
@@ -392,7 +418,7 @@ class Window(Adw.ApplicationWindow):
         key = chr(keyval).lower() if 32 <= keyval < 127 else ""
         actions = {
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
-            "q": lambda: self.rotate(90), "c": self.clear_log, "/": lambda: self.filter_entry.grab_focus(),
+            "q": lambda: self.rotate(90), "c": self.clear_log, "g": self.follow_end, "/": lambda: self.filter_entry.grab_focus(),
             "d": self.toggle_type, "e": self.toggle_env,
             "b": lambda: self.build("build"), "f": lambda: self.build("flash"), "a": lambda: self.build("both"),
             "o": lambda: send("open_log"),
