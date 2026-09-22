@@ -313,12 +313,12 @@ window-rule {
     open-on-output "DP-1"
 }
 
-// ST-Link panel helpers (usbcam / serial-log): keep the size they were tuned to.
+// ST-Link panel helpers (usbcam / serial-log). Stacking them into one column is done
+// by niri/noctalia/plugins/stlink/stack.sh after launch, rules cannot do that.
 window-rule {
     match app-id=r#"^usbcam$"#
     match app-id=r#"^kitty$"# title=r#"^picocom "#
     default-column-width { fixed 635; }
-    default-window-height { fixed 884; }
 }
 
 // Startup apps (steam, mouseless, …)

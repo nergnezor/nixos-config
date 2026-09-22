@@ -120,6 +120,7 @@ local function cameraApp()
     id = cfg("camera_desktop", "usbcam"),
     match = cfg("camera_match", "title=usbcam"),
     exact = false,
+    window = '(.app_id == "usbcam" or (.title | startswith("usbcam ")))',
     startedKey = "result.camera_started",
     stoppedKey = "result.camera_stopped",
   }
@@ -130,6 +131,7 @@ local function serialApp()
     id = cfg("serial_desktop", "serial-log"),
     match = cfg("serial_match", "picocom"),
     exact = true,
+    window = '(.app_id == "kitty" and (.title | startswith("picocom ")))',
     startedKey = "result.serial_started",
     stoppedKey = "result.serial_stopped",
   }
@@ -239,7 +241,7 @@ local function runAction(command, tclCommands, okKey)
   end, 20000)
 end
 
-local function toggleApp(command, app)
+local function toggleApp(command, app, partner)
   local flag = app.exact and "-x " or "-f "
   local pattern = shellQuote(app.exact and app.match or selfSafe(app.match))
   -- The shell decides running/not running itself, so a stale snapshot cannot turn a start into a kill.
@@ -251,6 +253,8 @@ local function toggleApp(command, app)
     "[ -f \"$f\" ] || { echo \"Error: no desktop entry " .. app.id .. "\" >&2; exit 1; }",
     "cmd=$(grep -m1 \"^Exec=\" \"$f\" | cut -d= -f2- | sed \"s/ %[a-zA-Z]//g\")",
     "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect sh -c \"$cmd\"; else setsid -f sh -c \"$cmd\" </dev/null >/dev/null 2>&1; fi",
+    -- Stacks the new window under its partner (stack.sh), detached so the toggle returns at once.
+    "setsid -f sh " .. shellQuote(noctalia.pluginDir() .. "/stack.sh") .. " " .. shellQuote(app.window) .. " " .. shellQuote(partner.window) .. " >/dev/null 2>&1",
     "echo started",
   }, "\n")
   noctalia.runAsync(script, function(res)
@@ -288,9 +292,9 @@ local function execute(command)
   elseif action == "reset_halt" then
     runAction(command, { "reset halt" }, "result.reset_halted")
   elseif action == "toggle_camera" then
-    toggleApp(command, cameraApp())
+    toggleApp(command, cameraApp(), serialApp())
   elseif action == "toggle_serial" then
-    toggleApp(command, serialApp())
+    toggleApp(command, serialApp(), cameraApp())
   else
     result(command, false, "Unknown action: " .. action)
   end
