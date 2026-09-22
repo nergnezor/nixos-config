@@ -891,8 +891,14 @@ class Window(Adw.ApplicationWindow):
         # stays a few rows tall however many fields the firmware reports.
         columns = max(1, min(5, self.get_width() // 215))
         rows = -(-len(entries) // columns)
+        for column in range(columns): # one header per column group, so the numbers read themselves
+            for offset, heading in ((1, "min"), (2, "now"), (3, "max")):
+                self.range_grid.attach(Gtk.Label(label=heading, xalign=1, width_chars=6,
+                                                 css_classes=["caption", "dim-label"]),
+                                       column * 4 + offset, 0, 1, 1)
         for i, series in enumerate(sorted(entries, key=lambda s: (s["group"], s["label"]))):
             column, row = divmod(i, rows)
+            row += 1 # below the headings
             name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=18,
                              css_classes=["caption"], hexpand=True)
             name.set_markup(f'<span foreground="{series["color"]}">'
