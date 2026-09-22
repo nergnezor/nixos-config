@@ -44,7 +44,8 @@ OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is c
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
 OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
-RANGE_ROWS = 12 # fields the range table has room to be useful about
+RANGE_ROWS = 18 # fields the range table has room to be useful about
+NUM_COLUMN = 52 # width of one number column in the table strip
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
 LABEL_GAP = 19 # how close two labels may sit before they push each other away
@@ -154,7 +155,8 @@ class MultiGraph(Gtk.DrawingArea):
         self.on_click = on_click
         self.series = {}
         self.t0 = None
-        self.label_hits = [] # (y0, y1, series key) for clicks
+        self.label_hits = [] # (x0, x1, y0, y1, series key) for clicks
+        self.visible = set() # the keys worth a label and a row, chosen by the window
         self.now = self.span = 0
         # Redrawn every frame: the curve slides with the clock instead of only when a sample lands.
         self.last_frame = None
@@ -171,7 +173,7 @@ class MultiGraph(Gtk.DrawingArea):
                     return
 
     def add_series(self, key, color, label, polarity, unit, pattern, group):
-        self.series[key] = {"t": [], "v": [], "color": color, "label": label, "polarity": polarity,
+        self.series[key] = {"key": key, "t": [], "v": [], "color": color, "label": label, "polarity": polarity,
                             "group": group,
                             "unit": unit, "pattern": pattern, "value": None, "lo": None, "hi": None,
                             "worst": None, "best": None, "flag": 0.0,
@@ -209,6 +211,9 @@ class MultiGraph(Gtk.DrawingArea):
         while series["t"] and series["t"][0] < cutoff: # what leaves the window is forgotten
             series["t"].pop(0)
             series["v"].pop(0)
+
+    def set_visible(self, keys):
+        self.visible = set(keys)
 
     def _tick(self, _widget, clock):
         now = clock.get_frame_time() / 1e6
@@ -249,7 +254,8 @@ class MultiGraph(Gtk.DrawingArea):
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
         cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
-        plot = w
+        table = 3 * NUM_COLUMN + 16 # the strip on the right, one row of numbers per line
+        plot = w - table
         self.label_hits = []
         if self.t0 is None:
             return
@@ -274,64 +280,72 @@ class MultiGraph(Gtk.DrawingArea):
                 continue # nothing left in the window: it has slid off to the left
             top, height = bands[series["group"]]
             series["band"] = (top, height)
+            shown = key in self.visible
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
             points = [(self._x(t, plot), top + height - 3 - v * (height - 6))
                       for t, v in zip(series["t"], series["v"])]
-            cr.set_source_rgb(*rgb)
-            cr.set_line_width(1.4)
+            cr.set_source_rgba(*rgb, 1 if shown else 0.35)
+            cr.set_line_width(1.4 if shown else 1)
             spline(cr, points)
             cr.stroke()
+            if not shown:
+                continue
             for kind, fill in (("worst", True), ("best", False)):
                 mark = series[kind]
                 if mark and len(series["v"]) > 4 and mark[2] > self.now - self.span:
                     cr.arc(self._x(mark[2], plot), top + height - 3 - mark[3] * (height - 6), 2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
-            # The label sticks to the value its line last showed; the physics step keeps labels
-            # from sitting on top of each other.
             series["y"] = points[-1][1]
             if series["label_y"] is None:
                 series["label_y"] = series["y"]
 
-            tip_x = points[-1][0]
-            unit = f" {series['unit']}" if series["unit"] else ""
-            text = (f"{'!' if time.time() - series['flag'] < 10 else ''}"
-                    f"{series['group']} {series['label']} {series['value']:g}{unit}")
-            width = cr.text_extents(text).width
-            # Right beside the last sample, on whichever side of it the label still fits.
-            tx = tip_x + 6 if tip_x + 6 + width < w - 4 else tip_x - 6 - width
-            tx = max(4, min(w - 4 - width, tx))
-            labels.append({"key": key, "series": series, "rgb": rgb, "text": text, "width": width,
-                           "x": tx, "y": series["label_y"], "tip": (tip_x, series["y"])})
+            flag = "! " if time.time() - series["flag"] < 10 else ""
+            text = f"{flag}{series['group']} {series['label']}" # the numbers live in the table
+            labels.append({"key": key, "series": series, "rgb": rgb, "text": text,
+                           "width": cr.text_extents(text).width, "y": series["label_y"],
+                           "tip": (points[-1][0], series["y"])})
 
-        if not self.show_labels:
-            return # the table beside the chart names the lines instead
         self._separate(labels, h)
+        cr.set_font_size(10)
+        cr.set_source_rgba(1, 1, 1, 0.35)
+        columns = [w - 8 - 2 * NUM_COLUMN, w - 8 - NUM_COLUMN, w - 8] # right edge of min, now, max
+        for heading, right in zip(("min", "now", "max"), columns):
+            cr.move_to(right - cr.text_extents(heading).width, 12)
+            cr.show_text(heading)
         for label in labels:
-            series, rgb, tx, ly, width = (label["series"], label["rgb"], label["x"], label["y"],
-                                          label["width"])
+            series, rgb, ly, width = label["series"], label["rgb"], label["y"], label["width"]
             series["label_y"] = ly # the simulation carries on from where the drawing settled
-            cr.set_source_rgba(*rgb, 0.4) # a leader line from the label back to its last sample
+            tip_x, tip_y = label["tip"]
+            tx = max(4, tip_x - 8 - width) # floating left of the newest value
+            cr.set_source_rgba(*rgb, 0.4)
             cr.set_line_width(1)
-            cr.move_to(*label["tip"])
-            cr.line_to(tx + (width + 6 if tx < label["tip"][0] else -6), ly + 2)
+            cr.move_to(tip_x, tip_y)
+            cr.line_to(tx + width + 4, ly + 2)
             cr.stroke()
-            cr.set_source_rgba(1, 1, 1, 0.10) # a dim rounded plate keeps the text readable
+            cr.set_source_rgba(1, 1, 1, 0.10) # a dim rounded plate keeps the value readable
             rounded_rect(cr, tx - 5, ly - 6, width + 10, LABEL_PLATE, 5)
             cr.fill()
             cr.set_source_rgb(*rgb)
+            cr.set_font_size(11)
             cr.move_to(tx, ly + 6)
-            cr.show_text(label["text"])
-            self.label_hits.append((tx - 5, tx + width + 5, ly - 6, ly + LABEL_PLATE - 6, label["key"]))
+            cr.show_text(text := label["text"])
+
+            # The numbers belonging to this line sit at the same height, in the strip on the right.
+            cr.set_font_size(10)
+            for value, right, dim in zip((series["lo"], series["value"], series["hi"]), columns,
+                                         (True, False, True)):
+                number = f"{value:g}"
+                cr.set_source_rgba(*rgb, 0.5 if dim else 1)
+                cr.move_to(right - cr.text_extents(number).width, ly + 5)
+                cr.show_text(number)
+            self.label_hits.append((plot, w, ly - 6, ly + LABEL_PLATE - 6, label["key"]))
 
     @staticmethod
     def _separate(labels, h):
-        """Last word on placement: plates whose x ranges meet may never share a y range."""
+        """Last word on placement: every label owns a row, since each one also names a table row."""
         labels.sort(key=lambda label: label["y"])
-        for i, label in enumerate(labels):
-            for other in labels[:i]:
-                if label["x"] > other["x"] + other["width"] + 10 or other["x"] > label["x"] + label["width"] + 10:
-                    continue # side by side, so their heights do not matter
-                label["y"] = max(label["y"], other["y"] + LABEL_PLATE + 2)
+        for i, label in enumerate(labels[1:], start=1):
+            label["y"] = max(label["y"], labels[i - 1]["y"] + LABEL_PLATE + 2)
         overflow = max((label["y"] + LABEL_PLATE - h for label in labels), default=0)
         if overflow > 0: # ran out of room at the bottom, so lift the whole stack
             for label in labels:
@@ -505,23 +519,15 @@ class Window(Adw.ApplicationWindow):
         # Shared time axis: every graph spans the same session, so one line says it for all of them.
         self.axis = Gtk.Label(xalign=1, css_classes=["dim-label", "caption"], margin_end=8)
         self.session_start = None
-        self.graph = MultiGraph(on_click=self._mute_series, labels=False)
+        self.graph = MultiGraph(on_click=self._mute_series)
         self.next_color = 0
-        # Every series' range in an aligned grid, so the chart only has to carry current values.
-        self.range_grid = Gtk.Grid(column_spacing=6, row_spacing=0, margin_start=6, margin_end=6,
-                                   margin_top=4, valign=Gtk.Align.START, css_classes=["ranges"],
-                                   hexpand=False)
         # Outliers worth a second look, listed only while there are any.
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
         self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
                                        css_classes=["caption"], visible=False)
         top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top.append(self.mute_box)
-        # The table is the chart's legend, so they sit side by side and share colours and rows.
-        chart_row = Gtk.Box()
-        chart_row.append(self.graph)
-        chart_row.append(self.range_grid)
-        top.append(chart_row)
+        top.append(self.graph) # the chart draws the table itself, so the rows line up with the lines
         top.append(self.outlier_label)
         top.append(self.axis)
         top.append(scroller)
@@ -888,33 +894,7 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def _update_ranges(self):
-        entries = self._worth_listing()
-        while child := self.range_grid.get_first_child():
-            self.range_grid.remove(child)
-        if not entries:
-            return True
-        # Name, min, now, max per entry, in as many columns as the width allows, so the block
-        # stays a few rows tall however many fields the firmware reports.
-        # A third of the window at most: the chart is what this row is for.
-        self.range_grid.set_size_request(self.get_width() // 3, -1)
-        for offset, heading in ((1, "min"), (2, "now"), (3, "max")):
-            self.range_grid.attach(Gtk.Label(label=heading, xalign=1, width_chars=6,
-                                             css_classes=["caption", "dim-label"]), offset, 0, 1, 1)
-        for row, series in enumerate(entries, start=1):
-            flagged = "! " if time.time() - series["flag"] < 10 else ""
-            name = Gtk.Label(xalign=0, use_markup=True, ellipsize=3, max_width_chars=20,
-                             css_classes=["caption"], tooltip_text="click to mute")
-            name.set_markup(f'<span foreground="{series["color"]}">{flagged}'
-                            f'{GLib.markup_escape_text(series["group"] + " " + series["label"])}</span>')
-            cells = [name]
-            for value, dim in ((series["lo"], True), (series["value"], False), (series["hi"], True)):
-                classes = ["caption", "monospace"] + (["dim-label"] if dim else [])
-                cells.append(Gtk.Label(label=f"{value:g}", xalign=1, width_chars=6, css_classes=classes))
-            for column, cell in enumerate(cells):
-                self.range_grid.attach(cell, column, row, 1, 1)
-            click = Gtk.GestureClick()
-            click.connect("released", lambda *_, s=series: self._set_muted(self.muted | {s["pattern"]}))
-            name.add_controller(click)
+        self.graph.set_visible(series["key"] for series in self._worth_listing())
         return True
 
     def _worth_listing(self):
@@ -932,8 +912,17 @@ class Window(Adw.ApplicationWindow):
                 continue # near enough constant to be noise in a table
             recent = now - series["flag"] < OUTLIER_TTL
             scored.append((spread + (10 if recent else 0), series))
-        scored.sort(reverse=True, key=lambda pair: pair[0])
-        return [series for _, series in scored[:RANGE_ROWS]]
+        # Round-robin over the log lines they came from, so one chatty message cannot fill the
+        # table with variations on itself before other messages get a row at all.
+        buckets = {}
+        for score, series in sorted(scored, reverse=True, key=lambda pair: pair[0]):
+            buckets.setdefault(series["pattern"], []).append(series)
+        chosen = []
+        while len(chosen) < RANGE_ROWS and any(buckets.values()):
+            for bucket in buckets.values():
+                if bucket and len(chosen) < RANGE_ROWS:
+                    chosen.append(bucket.pop(0))
+        return chosen
 
     def _update_outliers(self):
         cutoff = time.time() - OUTLIER_TTL
