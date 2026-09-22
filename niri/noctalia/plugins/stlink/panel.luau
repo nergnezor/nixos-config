@@ -16,6 +16,9 @@ local snapshot = noctalia.state.get(STATE_KEY) or {
   updatedAt = 0,
 }
 local feedback = ""
+-- Build selection lives here so it survives closing the panel while noctalia runs.
+local buildType = "debug"
+local buildEnv = "staging"
 local feedbackError = false
 local requestId = 0
 
@@ -23,9 +26,13 @@ local function tr(key, values)
   return noctalia.tr(key, values)
 end
 
-local function send(action)
+local function send(action, values)
   requestId += 1
-  noctalia.state.set(COMMAND_KEY, { action = action, requestId = `panel-{requestId}` })
+  local command = { action = action, requestId = `panel-{requestId}` }
+  for k, v in pairs(values or {}) do
+    command[k] = v
+  end
+  noctalia.state.set(COMMAND_KEY, command)
 end
 
 -- Button label with its keyboard shortcut, matching the chords handled in onKey.
@@ -116,6 +123,26 @@ local function render()
         onClick = "onSerial",
       }),
     }),
+    ui.row({ gap = 6, align = "center" }, {
+      ui.label({ text = tr("panel.build"), fontSize = 11, color = "on_surface_variant" }),
+      ui.button({
+        text = keyed("D", buildType == "debug" and tr("build.debug") or tr("build.release")),
+        glyph = buildType == "debug" and "bug" or "rocket",
+        variant = "outline",
+        onClick = "onToggleBuildType",
+      }),
+      ui.button({
+        text = keyed("E", buildEnv == "staging" and tr("build.staging") or tr("build.production")),
+        glyph = buildEnv == "staging" and "flask" or "building-factory-2",
+        variant = "outline",
+        onClick = "onToggleBuildEnv",
+      }),
+    }),
+    ui.row({ gap = 6 }, {
+      ui.button({ text = keyed("B", tr("actions.build")), glyph = "hammer", variant = "outline", onClick = "onBuild" }),
+      ui.button({ text = keyed("F", tr("actions.flash")), glyph = "bolt", variant = "outline", enabled = ready, onClick = "onFlash" }),
+      ui.button({ text = keyed("A", tr("actions.build_flash")), glyph = "player-track-next", variant = "primary", enabled = ready, onClick = "onBuildFlash" }),
+    }),
     ui.column({ gap = 3, align = "stretch" }, notes),
     ui.spacer({ flexGrow = 1 }),
     ui.label({
@@ -160,21 +187,37 @@ function onReset() send("reset") end
 function onResetHalt() send("reset_halt") end
 function onCamera() send("toggle_camera") end
 function onSerial() send("toggle_serial") end
+function onToggleBuildType()
+  buildType = buildType == "debug" and "release" or "debug"
+  render()
+end
+function onToggleBuildEnv()
+  buildEnv = buildEnv == "staging" and "production" or "staging"
+  render()
+end
+function onBuild() send("build", { mode = "build", build = buildType, env = buildEnv }) end
+function onFlash() send("build", { mode = "flash", build = buildType, env = buildEnv }) end
+function onBuildFlash() send("build", { mode = "both", build = buildType, env = buildEnv }) end
 
-local KEY_ACTIONS = {
-  s = "toggle",
-  r = "reset",
-  h = "reset_halt",
-  k = "toggle_camera",
-  l = "toggle_serial",
+local KEY_HANDLERS = {
+  s = function() send("toggle") end,
+  r = function() send("reset") end,
+  h = function() send("reset_halt") end,
+  k = onCamera,
+  l = onSerial,
+  d = onToggleBuildType,
+  e = onToggleBuildEnv,
+  b = onBuild,
+  f = onFlash,
+  a = onBuildFlash,
 }
 
 function onKey(chord, pressed)
   if not pressed then
     return
   end
-  local action = KEY_ACTIONS[string.lower(tostring(chord))]
-  if action then
-    send(action)
+  local handler = KEY_HANDLERS[string.lower(tostring(chord))]
+  if handler then
+    handler()
   end
 end

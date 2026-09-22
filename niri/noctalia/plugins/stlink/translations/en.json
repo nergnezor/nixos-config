@@ -16,10 +16,20 @@
     "reset": "Reset",
     "reset_halt": "Reset + halt",
     "camera": "Camera",
-    "serial": "Serial log"
+    "serial": "Serial log",
+    "build": "Build",
+    "flash": "Flash",
+    "build_flash": "Build + flash"
+  },
+  "build": {
+    "debug": "Debug",
+    "release": "Release",
+    "staging": "Staging",
+    "production": "Production"
   },
   "panel": {
-    "updated": "Updated {time}"
+    "updated": "Updated {time}",
+    "build": "Build:"
   },
   "result": {
     "halted": "MCU halted",
@@ -34,7 +44,8 @@
     "camera_started": "Camera started",
     "camera_stopped": "Camera stopped",
     "serial_started": "Serial log started",
-    "serial_stopped": "Serial log stopped"
+    "serial_stopped": "Serial log stopped",
+    "build_started": "Started: {what}"
   },
   "settings": {
     "refresh_interval": {
@@ -68,6 +79,18 @@
     "serial_match": {
       "label": "Serial log process name",
       "description": "Exact process name (pgrep -x) that identifies the running serial logger."
+    },
+    "project_dir": {
+      "label": "Project directory",
+      "description": "Directory with the Makefile whose <debug|release>_<staging|production>_bankN targets are built."
+    },
+    "chip": {
+      "label": "probe-rs chip",
+      "description": "Chip name passed to probe-rs download/reset."
+    },
+    "bank": {
+      "label": "Flash bank",
+      "description": "Which bank image to build and flash (0 or 1)."
     },
     "openocd_bin": {
       "label": "openocd binary",

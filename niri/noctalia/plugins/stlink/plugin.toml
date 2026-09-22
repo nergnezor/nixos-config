@@ -72,6 +72,29 @@ default = "picocom"
 advanced = true
 
 [[setting]]
+key = "project_dir"
+type = "string"
+label_key = "settings.project_dir.label"
+description_key = "settings.project_dir.description"
+default = "~/uxstream/embedded/client/projects/eyebuds"
+
+[[setting]]
+key = "chip"
+type = "string"
+label_key = "settings.chip.label"
+description_key = "settings.chip.description"
+default = "STM32U5G9BJ"
+
+[[setting]]
+key = "bank"
+type = "int"
+label_key = "settings.bank.label"
+description_key = "settings.bank.description"
+default = 0
+min = 0
+max = 1
+
+[[setting]]
 key = "openocd_bin"
 type = "string"
 label_key = "settings.openocd_bin.label"
@@ -94,13 +117,13 @@ entry = "widget.luau"
 id = "control"
 entry = "panel.luau"
 width = 400
-height = 240
+height = 330
 placement = "floating"
 position = "center"
 open_near_click = true
 keyboard_focus = "exclusive"
 dismiss_on_outside_click = true
-capture_keys = ["s", "r", "h", "k", "l"]
+capture_keys = ["s", "r", "h", "k", "l", "d", "e", "b", "f", "a"]
 
 [[service]]
 id = "service"

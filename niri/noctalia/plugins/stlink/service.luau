@@ -270,6 +270,31 @@ local function toggleApp(command, app, partner)
   end, 10000)
 end
 
+-- Build/flash runs in its own kitty (build-flash.sh) so the output is visible and survives a noctalia restart.
+local function runBuild(command)
+  local mode = tostring(command.mode or "build")
+  local build = tostring(command.build or "debug")
+  local env = tostring(command.env or "staging")
+  local bank = tostring(math.floor(tonumber(noctalia.getConfig("bank")) or 0))
+  local project = cfg("project_dir", "~/uxstream/embedded/client/projects/eyebuds"):gsub("^~", "$HOME")
+  local inner = table.concat({
+    "kitty", "--title", shellQuote(`eyebuds {build} {env} bank{bank}`),
+    "bash", shellQuote(noctalia.pluginDir() .. "/build-flash.sh"),
+    shellQuote(mode), shellQuote(build), shellQuote(env), shellQuote(bank), '"' .. project .. '"', shellQuote(cfg("chip", "STM32U5G9BJ")),
+  }, " ")
+  local script = "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect sh -c " .. shellQuote(inner)
+    .. "; else setsid -f sh -c " .. shellQuote(inner) .. " </dev/null >/dev/null 2>&1; fi"
+  noctalia.runAsync(script, function(res)
+    if res and res.exitCode == 0 then
+      result(command, true, noctalia.tr("result.build_started", { what = `{build} {env} bank{bank}` }))
+    else
+      local msg = noctalia.tr("result.failed", { error = errorText(res, "launch failed") })
+      result(command, false, msg)
+      noctalia.notifyError(noctalia.tr("title"), msg)
+    end
+  end, 10000)
+end
+
 local function execute(command)
   if type(command) ~= "table" or type(command.action) ~= "string" then
     return
@@ -295,6 +320,8 @@ local function execute(command)
     toggleApp(command, cameraApp(), serialApp())
   elseif action == "toggle_serial" then
     toggleApp(command, serialApp(), cameraApp())
+  elseif action == "build" then
+    runBuild(command)
   else
     result(command, false, "Unknown action: " .. action)
   end
@@ -313,11 +340,15 @@ function onConfigChanged()
   poll()
 end
 
--- `noctalia msg plugin erik/stlink:service service <halt|resume|toggle|reset|reset_halt|refresh>`
+-- `noctalia msg plugin erik/stlink:service all <halt|resume|toggle|reset|reset_halt|refresh|build> [json payload]`
 function onIpc(event, payload)
-  if type(payload) == "table" and type(payload.action) == "string" then
-    execute(payload)
-  else
-    execute({ action = tostring(event), requestId = "ipc-" .. tostring(event) })
+  if type(payload) == "string" and payload ~= "" then
+    payload = noctalia.json.decode(payload)
   end
+  if type(payload) ~= "table" then
+    payload = {}
+  end
+  payload.action = payload.action or tostring(event)
+  payload.requestId = payload.requestId or ("ipc-" .. tostring(event))
+  execute(payload)
 end

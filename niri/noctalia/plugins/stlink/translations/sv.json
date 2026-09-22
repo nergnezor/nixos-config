@@ -16,10 +16,20 @@
     "reset": "Reset",
     "reset_halt": "Reset + stopp",
     "camera": "Kamera",
-    "serial": "Serielogg"
+    "serial": "Serielogg",
+    "build": "Bygg",
+    "flash": "Flasha",
+    "build_flash": "Bygg + flasha"
+  },
+  "build": {
+    "debug": "Debug",
+    "release": "Release",
+    "staging": "Staging",
+    "production": "Production"
   },
   "panel": {
-    "updated": "Uppdaterad {time}"
+    "updated": "Uppdaterad {time}",
+    "build": "Bygge:"
   },
   "result": {
     "halted": "MCU stoppad",
@@ -34,7 +44,8 @@
     "camera_started": "Kameran startad",
     "camera_stopped": "Kameran stoppad",
     "serial_started": "Serieloggen startad",
-    "serial_stopped": "Serieloggen stoppad"
+    "serial_stopped": "Serieloggen stoppad",
+    "build_started": "Startat: {what}"
   },
   "settings": {
     "refresh_interval": {
@@ -68,6 +79,18 @@
     "serial_match": {
       "label": "Serieloggens processnamn",
       "description": "Exakt processnamn (pgrep -x) som känner igen den körande serieloggern."
+    },
+    "project_dir": {
+      "label": "Projektkatalog",
+      "description": "Katalog med Makefile vars <debug|release>_<staging|production>_bankN-mål byggs."
+    },
+    "chip": {
+      "label": "probe-rs-chip",
+      "description": "Chipnamn som skickas till probe-rs download/reset."
+    },
+    "bank": {
+      "label": "Flashbank",
+      "description": "Vilken bank-image som byggs och flashas (0 eller 1)."
     },
     "openocd_bin": {
       "label": "openocd-binär",
