@@ -47,6 +47,7 @@ OUTLIER_SHOWN = 6 # how many of them are listed at once
 RANGE_ROWS = 24 # fields the range table has room to be useful about
 NUM_COLUMN = 52 # width of one number column in the table strip
 BAND_FLOOR = 46 # smallest height a band is given before the rest is shared out
+EVENT_RAIL = 20 # height of the strip along the top where one-off events are marked
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
 LABEL_GAP = 19 # how close two labels may sit before they push each other away
@@ -178,6 +179,7 @@ class MultiGraph(Gtk.DrawingArea):
         self.t0 = None
         self.label_hits = [] # (x0, x1, y0, y1, series key) for clicks
         self.visible = set() # the keys worth a label and a row, chosen by the window
+        self.events = collections.deque() # one-off lines, drawn on the rail along the top
         self.now = self.span = 0
         # Redrawn every frame: the curve slides with the clock instead of only when a sample lands.
         self.last_frame = None
@@ -235,6 +237,14 @@ class MultiGraph(Gtk.DrawingArea):
 
     def set_visible(self, keys):
         self.visible = set(keys)
+
+    def add_event(self, text, color):
+        """A one-off line worth marking on the rail: a state change, a warning, an error."""
+        now = time.time()
+        self.events.append((now, text, color))
+        while self.events and self.events[0][0] < now - CHART_WINDOW:
+            self.events.popleft()
+        self.t0 = now if self.t0 is None else self.t0
 
     def _tick(self, _widget, clock):
         now = clock.get_frame_time() / 1e6
@@ -297,6 +307,7 @@ class MultiGraph(Gtk.DrawingArea):
             return
         self.now = time.time()
         self.span = CHART_WINDOW
+        h -= EVENT_RAIL # the top strip belongs to the events
         bands = self._bands(h)
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
         for i, (name, (top, height)) in enumerate(sorted(bands.items(), key=lambda kv: kv[1][0])):
@@ -313,12 +324,14 @@ class MultiGraph(Gtk.DrawingArea):
             cr.move_to(6, top + 11)
             cr.show_text(name)
 
+        self._draw_events(cr, plot, h)
         cr.set_font_size(11)
         labels = []
         for key, series in self.series.items():
             if len(series["v"]) < 2 or series["group"] not in bands:
                 continue # nothing left in the window, or nothing in its band worth a look
             top, height = bands[series["group"]]
+            top += EVENT_RAIL
             series["band"] = (top, height)
             shown = key in self.visible
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
@@ -379,6 +392,29 @@ class MultiGraph(Gtk.DrawingArea):
                 cr.move_to(right - cr.text_extents(number).width, ly + 5)
                 cr.show_text(number)
             self.label_hits.append((plot, w, ly - 6, ly + LABEL_PLATE - 6, label["key"]))
+
+    def _draw_events(self, cr, plot, h):
+        """Ticks along the top with a hairline down the chart, so a spike can be read against them."""
+        cr.set_font_size(9)
+        written = []
+        for when, text, color in self.events:
+            if when < self.now - self.span:
+                continue
+            x = self._x(when, plot)
+            rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+            cr.set_source_rgba(*rgb, 0.16) # down through the bands, faint enough to read past
+            cr.set_line_width(1)
+            cr.move_to(x, EVENT_RAIL)
+            cr.line_to(x, h + EVENT_RAIL)
+            cr.stroke()
+            cr.set_source_rgb(*rgb)
+            cr.rectangle(x - 1, 2, 2, EVENT_RAIL - 7)
+            cr.fill()
+            # Only name an event when the one before it left room, so the rail stays readable.
+            if not written or x - written[-1] > 90:
+                written.append(x)
+                cr.move_to(min(x + 3, plot - 80), EVENT_RAIL - 8)
+                cr.show_text(text[:22])
 
     @staticmethod
     def _separate(labels, h):
@@ -855,12 +891,20 @@ class Window(Adw.ApplicationWindow):
         """Route a repeating telemetry line to the chart. Returns False for lines the log keeps."""
         plain = ANSI.sub("", raw)
         m = LOG_LINE.match(plain.rstrip("\r\n"))
-        if not m or m.group(2).upper() in ("WARN", "WARNING", "ERROR", "FATAL"):
+        if not m:
+            return False
+        level, module, message = m.group(2).upper(), m.group(3), m.group(5)
+        if level in ("WARN", "WARNING", "ERROR", "FATAL"):
+            self.graph.add_event(f"{module} {message}", LEVELS.get(level, ("", "#e06c75"))[1])
             return False
         key = pattern_of(plain)
         if key not in self.rows:
             self.seen[key] = self.seen.get(key, 0) + 1
             if self.seen[key] < 2:
+                # Said once so far. Text without numbers is a state change worth marking; a line
+                # carrying numbers is probably telemetry that will earn its own line shortly.
+                if not NUMBERS.search(message):
+                    self.graph.add_event(f"{module} {message}", self._module_color(raw, module))
                 return False
             if self.session_start is None:
                 self.session_start = time.time()
