@@ -152,8 +152,9 @@ class MultiGraph(Gtk.DrawingArea):
                     self.on_click(key)
                     return
 
-    def add_series(self, key, color, label, polarity, unit, pattern):
+    def add_series(self, key, color, label, polarity, unit, pattern, group):
         self.series[key] = {"t": [], "v": [], "color": color, "label": label, "polarity": polarity,
+                            "group": group,
                             "unit": unit, "pattern": pattern, "value": None, "lo": None, "hi": None,
                             "worst": None, "best": None, "flag": 0.0}
 
@@ -193,33 +194,52 @@ class MultiGraph(Gtk.DrawingArea):
         """Time to x, with now at the right edge: a line starts there and trails off to the left."""
         return w - 1 - (self.now - t) / self.span * (w - 2)
 
+    def _bands(self, h):
+        """One band per module, stacked in y, in the order the modules first appeared."""
+        groups = []
+        for series in self.series.values():
+            if series["group"] not in groups:
+                groups.append(series["group"])
+        if not groups:
+            return {}
+        height = h / len(groups)
+        return {group: (i * height, height) for i, group in enumerate(groups)}
+
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
         cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
         plot = max(w - LABEL_WIDTH, 40)
-        cr.set_source_rgba(1, 1, 1, 0.04)
-        cr.rectangle(0, 0, plot, h)
-        cr.fill()
-        cr.set_source_rgba(1, 1, 1, 0.07)
-        cr.set_line_width(1)
-        for i in range(1, 4): # quarter lines, something for the eye to measure against
-            cr.move_to(0, h * i / 4)
-            cr.line_to(plot, h * i / 4)
-        cr.stroke()
         self.label_hits = []
         if self.t0 is None:
             return
         self.now = time.time()
         self.span = max(self.now - self.t0, MIN_SPAN)
+        bands = self._bands(h)
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+
+        for group, (top, height) in bands.items():
+            cr.set_source_rgba(1, 1, 1, 0.04)
+            cr.rectangle(0, top + 1, plot, height - 2)
+            cr.fill()
+            cr.set_source_rgba(1, 1, 1, 0.07)
+            cr.set_line_width(1)
+            cr.move_to(0, top + height / 2) # a mid line to read each band against
+            cr.line_to(plot, top + height / 2)
+            cr.stroke()
+            cr.set_font_size(10)
+            cr.set_source_rgba(1, 1, 1, 0.35)
+            cr.move_to(4, top + 12)
+            cr.show_text(group)
 
         placed = []
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
         cr.set_font_size(11)
         for key, series in self.series.items():
-            if len(series["v"]) < 2:
+            if len(series["v"]) < 2 or series["group"] not in bands:
                 continue
+            top, height = bands[series["group"]]
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
-            points = [(self._x(t, plot), h - 2 - v * (h - 4)) for t, v in zip(series["t"], series["v"])]
+            points = [(self._x(t, plot), top + height - 3 - v * (height - 6))
+                      for t, v in zip(series["t"], series["v"])]
             points = [p for p in points if p[0] > -plot]
             cr.set_source_rgb(*rgb)
             cr.set_line_width(1.4)
@@ -228,30 +248,27 @@ class MultiGraph(Gtk.DrawingArea):
             for kind, fill in (("worst", True), ("best", False)):
                 mark = series[kind]
                 if mark and len(series["v"]) > 4:
-                    cr.arc(self._x(mark[2], plot), h - 2 - mark[3] * (h - 4), 2.5, 0, 6.2832)
+                    cr.arc(self._x(mark[2], plot), top + height - 3 - mark[3] * (height - 6), 2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
-            placed.append((points[-1][1], key, series, rgb))
+            placed.append((points[-1][1], key, series, rgb, top, height))
 
-        # Direct labelling: each label starts at its line's height, then they are pushed apart
-        # just enough not to overlap, keeping their order.
+        # Direct labelling: each label starts at its line's height, then labels are pushed apart
+        # just enough not to overlap, without leaving their own band.
         placed.sort()
-        spacing = 24 # room for the name and the range line under it
-        y = spacing
-        for i, entry in enumerate(placed):
-            y = max(entry[0], y)
-            placed[i] = (y, *entry[1:])
-            y += spacing
-        overflow = placed[-1][0] - (h - 4) if placed else 0
-        if overflow > 0:
-            shift = 0
-            for i in range(len(placed) - 1, -1, -1):
-                shift = max(shift, placed[i][0] - (h - 4) - (len(placed) - 1 - i) * 0)
-                placed[i] = (min(placed[i][0], h - 4 - (len(placed) - 1 - i) * spacing), *placed[i][1:])
+        spacing = 22 # room for the name and the range line under it
+        for band_top, band_height in {(t, hh) for *_, t, hh in placed}:
+            rows = [p for p in placed if p[4] == band_top]
+            y = band_top + 12
+            for entry in rows:
+                y = max(entry[0], y)
+                placed[placed.index(entry)] = (min(y, band_top + band_height - 8), *entry[1:])
+                y += spacing
 
-        for y, key, series, rgb in placed:
+        for y, key, series, rgb, *_ in placed:
             unit = f" {series['unit']}" if series["unit"] else ""
-            text = f"{'▲ ' if time.time() - series['flag'] < 10 else ''}{series['label']} {series['value']:g}{unit}"
+            text = f"{'!' if time.time() - series['flag'] < 10 else ''}{series['label']} {series['value']:g}{unit}"
             cr.set_source_rgb(*rgb)
+            cr.set_font_size(11)
             cr.move_to(plot + 6, y + 4)
             cr.show_text(text)
             if series["lo"] is not None and series["hi"] > series["lo"]:
@@ -259,10 +276,9 @@ class MultiGraph(Gtk.DrawingArea):
                 cr.set_font_size(9)
                 cr.move_to(plot + 6, y + 13)
                 cr.show_text(f"{series['lo']:g} – {series['hi']:g}")
-                cr.set_font_size(11)
             cr.set_source_rgba(*rgb, 0.4) # a leader line back to where the curve ends
             cr.set_line_width(1)
-            cr.move_to(plot, series["v"] and h - 2 - series["v"][-1] * (h - 4))
+            cr.move_to(plot, series["v"] and y)
             cr.line_to(plot + 4, y + 1)
             cr.stroke()
             self.label_hits.append((y - 6, y + 16, key))
@@ -443,6 +459,7 @@ class Window(Adw.ApplicationWindow):
         self.follow = True
         self.gliding = False
         self.tick_id = None
+        self.last_value = None
         adj = self.scroller.get_vadjustment()
         adj.connect("value-changed", self._on_scrolled)
         adj.connect("notify::upper", lambda *_: self.follow and self._scroll_to_end())
@@ -737,8 +754,8 @@ class Window(Adw.ApplicationWindow):
             series = f"{key}#{i}"
             color = SERIES_COLORS[self.next_color % len(SERIES_COLORS)]
             self.next_color += 1
-            self.graph.add_series(series, color, f"{module} {text}".strip(),
-                                  polarity_of(text, unit), unit, key)
+            self.graph.add_series(series, color, text or message[:24],
+                                  polarity_of(text, unit), unit, key, module)
             fields_out.append({"series": series, "label": text, "unit": unit})
             at = num.end()
         ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
@@ -835,9 +852,16 @@ class Window(Adw.ApplicationWindow):
         return adj.get_value() >= adj.get_upper() - adj.get_page_size() - 40
 
     def _on_scrolled(self, adj):
+        value = adj.get_value()
+        previous, self.last_value = self.last_value, value
         if self.gliding:
             return # our own glide, not the user
-        self.follow = self._at_end(adj)
+        # Only scrolling back up leaves follow mode. Trimming the buffer and inserting text both
+        # move the value too, and those must not stop the log from following.
+        if previous is not None and value < previous - 2:
+            self.follow = False
+        elif self._at_end(adj):
+            self.follow = True
 
     def _scroll_to_end(self):
         # A per-frame glide: every frame closes part of the gap, so a stream of new lines
@@ -887,6 +911,8 @@ class Window(Adw.ApplicationWindow):
         if self.buffer.get_line_count() > 5000:
             self.buffer.delete(self.buffer.get_start_iter(), self.buffer.get_iter_at_line(1000)[1])
         self._update_count()
+        if self.follow:
+            self._scroll_to_end()
         return False
 
     # --- plugin state -------------------------------------------------------
