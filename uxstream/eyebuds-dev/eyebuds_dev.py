@@ -131,9 +131,6 @@ STATE_TEXT = {
     "debug-running": "Running", "unknown": "Unknown",
 }
 CAMERA_HEIGHT = 560
-PROBE_WIDTH, PROBE_HEIGHT = 64, 48 # thumbnail the screen-change probe works on
-PROBE_THRESHOLD = 1.2 # mean abs difference (0-255) above which the filmed screen counts as changed
-PROBE_GAPS = 90 # gaps between screen updates kept, to read the rate off the middle one
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
@@ -828,14 +825,16 @@ class SerialReader(threading.Thread):
     def __init__(self, baud, logdir, on_line):
         super().__init__(daemon=True)
         self.baud, self.logdir, self.on_line = baud, Path(logdir), on_line
-        self.port = None
+        self.port = "" # not None, so the first look with nothing plugged in still says so
         self.warned = False
 
     def run(self):
         while True:
             ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
             if not ports:
-                self._emit("(no serial port)\n", status="No port")
+                if self.port is not None: # said once, not once a second until something turns up
+                    self._emit("(no serial port)\n", status="No port")
+                    self.port = None
                 time.sleep(1)
                 continue
             self.port = ports[0]
@@ -881,13 +880,6 @@ class Window(Adw.ApplicationWindow):
         self.modes = camera_modes(args.device) if self.camera else CAMERA_SIZES
         self.size = self.settings.get("size", self.modes[0][0])
         self.pipeline = None
-        self.probe_frame = None  # previous camera thumbnail
-        self.probe_frames = 0    # thumbnails seen since the last tick, so the camera's own rate is known
-        self.probe_gaps = collections.deque(maxlen=PROBE_GAPS) # seconds between the screen's updates
-        self.probe_changed = None # when the filmed screen last changed
-        self.camera_rate = 0.0
-        self.camera_ranges = {} # series key -> the [min, max] its level is measured against
-        self.probe_tick = time.monotonic()
         self.build_type = self.settings.get("build_type", "debug")
         self.build_env = self.settings.get("build_env", "production")
         self.job_active = False
@@ -903,8 +895,6 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(1000, self._update_axis)
         GLib.timeout_add(5000, lambda: (self._update_outliers(), True)[1])
         GLib.timeout_add(2000, self._update_ranges)
-        if self.camera:
-            GLib.timeout_add(1000, self._publish_camera_rate)
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -1070,19 +1060,13 @@ class Window(Adw.ApplicationWindow):
                 f"v4l2src name=src device={self.args.device} ! video/x-raw,width={w},height={h} "
                 f"! queue max-size-buffers=1 leaky=downstream ! videoconvert "
                 # Caps the frame height, so the picture's natural size stays bounded.
-                f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! tee name=t "
-                f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
-                f"! video/x-raw,format=RGBA "
-                f"! appsink name=view emit-signals=true max-buffers=1 drop=true sync=false "
-                # A thumbnail branch to count how often the filmed screen actually changes.
-                f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert ! videoscale "
-                f"! video/x-raw,format=GRAY8,width={PROBE_WIDTH},height={PROBE_HEIGHT} "
-                f"! appsink name=probe emit-signals=true max-buffers=1 drop=true sync=false"
+                f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} "
+                f"! videoconvert ! video/x-raw,format=RGBA "
+                f"! appsink name=view emit-signals=true max-buffers=1 drop=true sync=false"
             )
         except GLib.Error as error:
             self._no_camera(error.message)
             return
-        self.pipeline.get_by_name("probe").connect("new-sample", self._on_camera_frame)
         self.pipeline.get_by_name("view").connect("new-sample", self._on_view_frame)
         self.pipeline.set_state(Gst.State.PLAYING)
 
@@ -1123,7 +1107,6 @@ class Window(Adw.ApplicationWindow):
             self.view.set_visible(True)
             self._start_camera()
             self._update_keys()
-            GLib.timeout_add(1000, self._publish_camera_rate)
             return
         body = "The picture needs " + ", ".join(missing) + "."
         # AlertDialog only arrived in libadwaita 1.5, and older distributions are the ones most
@@ -1147,66 +1130,6 @@ class Window(Adw.ApplicationWindow):
             GLib.idle_add(self._note, "Camera packages installed, restart EyeBuddy to use them."
                           if done else "That install did not go through.")
         threading.Thread(target=work, daemon=True).start()
-
-    def _on_camera_frame(self, sink):
-        """Mean absolute difference against the previous thumbnail: did the filmed screen change?"""
-        sample = sink.emit("pull-sample")
-        if sample is None:
-            return Gst.FlowReturn.OK
-        ok, info = sample.get_buffer().map(Gst.MapFlags.READ)
-        if not ok:
-            return Gst.FlowReturn.OK
-        try:
-            frame = bytes(info.data)
-        finally:
-            sample.get_buffer().unmap(info)
-        previous, self.probe_frame = self.probe_frame, frame
-        if previous is None or len(previous) != len(frame):
-            return Gst.FlowReturn.OK
-        # The camera samples at 30 fps, so this counts updates up to about 15 Hz; above that the
-        # rate folds back on itself. It is here to catch freezes and stutter, not to time a panel.
-        difference = sum(abs(a - b) for a, b in zip(frame, previous)) / len(frame)
-        now = time.monotonic()
-        self.probe_frames += 1
-        if difference > PROBE_THRESHOLD:
-            if self.probe_changed is not None:
-                self.probe_gaps.append(now - self.probe_changed)
-            self.probe_changed = now
-        return Gst.FlowReturn.OK
-
-    def _publish_camera_rate(self):
-        frames, self.probe_frames = self.probe_frames, 0
-        now = time.monotonic()
-        elapsed, self.probe_tick = now - self.probe_tick, now
-        if self.pipeline is None or elapsed <= 0:
-            return True
-        # Against the clock, not against the tick: a stalled main loop would otherwise look like
-        # a faster screen.
-        camera = frames / elapsed
-        gaps = sorted(gap for gap in self.probe_gaps if gap < 2)
-        # The middle gap between two updates, not a count per second: one dropped frame then shows
-        # as the stutter it is instead of being averaged away.
-        rate = 1 / gaps[len(gaps) // 2] if gaps else 0.0
-        self.camera_rate = self.camera_rate * 0.6 + rate * 0.4
-        if self.probe_changed is not None and now - self.probe_changed > 2:
-            self.camera_rate = 0.0 # a still picture is zero updates, not the last rate forever
-        GLib.idle_add(self._feed_camera_rate, self.camera_rate, camera)
-        return True
-
-    def _feed_camera_rate(self, rate, camera):
-        # The camera cannot see an update it did not film, so its own rate is the ceiling this
-        # measurement folds back at: above half of it, the screen rate reads too low.
-        for key, label, value in (("camera#updates", "CAM screen updates", rate),
-                                  ("camera#frames", "CAM camera frames", camera)):
-            if key not in self.graph.series:
-                index = len(self.camera_ranges)
-                self.graph.add_series(key, self._series_color("CAM", index), label, 1, "/s", "camera")
-                self.camera_ranges[key] = [value, value]
-            span = self.camera_ranges[key]
-            span[0], span[1] = min(span[0], value), max(span[1], value)
-            lo, hi = span
-            self.graph.push(key, (value - lo) / (hi - lo) if hi > lo else 0.5, value, lo, hi)
-        return False
 
     def next_size(self):
         if not self.camera or self.pipeline is None:
