@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """EyeBuddy app: camera, serial log and ST-Link controls in one window.
 
+One file. Run it on a Debian or Ubuntu machine and it installs the toolkit it needs, then
+starts. `--install` also puts it on PATH and in the launcher.
+
 The ST-Link noctalia plugin stays the backend. Actions go through `noctalia msg plugin`,
 state comes back through the plugin's state.json / job.json.
 """
@@ -11,22 +14,108 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
-import cairo
-import colorsys
+# GTK cannot be installed from PyPI, so the toolkit has to come from the distribution.
+PACKAGES = {
+    "apt-get": {"toolkit": ["python3-gi", "python3-gi-cairo", "gir1.2-gtk-4.0", "gir1.2-adw-1",
+                            "python3-serial"],
+                # gtk4paintablesink is left out on purpose: few archives carry it, and the
+                # picture falls back to painting the frames by hand without it.
+                "camera": ["gir1.2-gst-plugins-base-1.0", "gstreamer1.0-plugins-base",
+                           "gstreamer1.0-plugins-good"]},
+    "dnf": {"toolkit": ["python3-gobject", "gtk4", "libadwaita", "python3-pyserial"],
+            "camera": ["gstreamer1-plugins-base", "gstreamer1-plugins-good"]},
+    "pacman": {"toolkit": ["python-gobject", "gtk4", "libadwaita", "python-pyserial"],
+               "camera": ["gst-plugins-base", "gst-plugins-good"]},
+}
+DESKTOP_ENTRY = """[Desktop Entry]
+Type=Application
+Name=EyeBuddy
+Comment=Camera, serial log and ST-Link controls for the eyebuds bench
+Exec={command}
+Icon=camera-web
+Categories=Development;Utility;
+StartupWMClass=dev.uxstream.EyebudsDev
+"""
 
-import gi
+
+def package_manager():
+    return next((name for name in PACKAGES if shutil.which(name)), None)
+
+
+def install_packages(manager, packages):
+    """Install with the system package manager, asking for the password the way the session can."""
+    verb = ["-S", "--noconfirm"] if manager == "pacman" else ["install", "-y"]
+    # A terminal can ask for a password itself; a launcher-started window needs polkit to ask.
+    front = ["sudo"] if sys.stdin.isatty() and shutil.which("sudo") else ["pkexec"]
+    if front == ["pkexec"] and not shutil.which("pkexec"):
+        return False
+    return subprocess.run(front + [shutil.which(manager)] + verb + packages).returncode == 0
+
+
+def ensure_toolkit():
+    """Import the toolkit, and when it is not there, install it once and start again."""
+    try:
+        import cairo, gi, serial  # noqa: F401
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw, Gtk  # noqa: F401
+        return
+    except (ImportError, ValueError) as error:
+        manager = package_manager()
+        if manager is None or os.environ.get("EYEBUDDY_BOOTSTRAPPED"):
+            sys.exit(f"EyeBuddy needs GTK 4, libadwaita and pyserial for Python: {error}")
+        print(f"EyeBuddy needs a few packages from your distribution: {error}")
+        if not install_packages(manager, PACKAGES[manager]["toolkit"]):
+            packages = " ".join(PACKAGES[manager]["toolkit"])
+            sys.exit(f"That install did not go through. Try it yourself:\n"
+                     f"  sudo {manager} update && sudo {manager} install {packages}")
+        os.environ["EYEBUDDY_BOOTSTRAPPED"] = "1" # one attempt, so a bad install cannot loop
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
+
+
+def install_launcher():
+    """Copy the file onto PATH and write the desktop entry that starts it."""
+    target = Path.home() / ".local/bin/eyebuddy"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if Path(__file__).resolve() != target.resolve():
+        shutil.copy2(__file__, target)
+    target.chmod(0o755)
+    desktop = Path.home() / ".local/share/applications/eyebuddy.desktop"
+    desktop.parent.mkdir(parents=True, exist_ok=True)
+    desktop.write_text(DESKTOP_ENTRY.format(command=target))
+    subprocess.run(["update-desktop-database", str(desktop.parent)], check=False,
+                   stderr=subprocess.DEVNULL)
+    print(f"Installed {target}")
+    if str(target.parent) not in os.environ.get("PATH", "").split(":"):
+        print(f"Add {target.parent} to your PATH to start it by name.")
+
+
+ensure_toolkit()
+
+import cairo  # noqa: E402
+import colorsys  # noqa: E402
+
+import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-gi.require_version("Gst", "1.0")
 gi.require_version("Graphene", "1.0")
-from gi.repository import Adw, GLib, Graphene, Gst, Gtk  # noqa: E402
+gi.require_version("Gdk", "4.0")
+from gi.repository import Adw, Gdk, GLib, Graphene, Gtk  # noqa: E402
+
+try: # the log and the chart are the point, so a machine without GStreamer still runs the app
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst  # noqa: E402
+except (ImportError, ValueError):
+    Gst = None
 
 import serial  # noqa: E402
 
@@ -628,11 +717,33 @@ SGR_COLORS = {
 }
 
 
+def camera_needs(device):
+    """What is missing before there can be a picture, and whether it can be installed here."""
+    missing = []
+    if Gst is None:
+        missing.append("the GStreamer bindings for Python")
+    else:
+        Gst.init_check(None)
+        for element, what in (("v4l2src", "the v4l2 camera source"),
+                              ("videoflip", "the video rotation filter")):
+            if Gst.ElementFactory.find(element) is None:
+                missing.append(what)
+    if not Path(device).exists():
+        missing.append(f"a camera at {device}")
+    manager = package_manager()
+    # Only software can be installed. A camera that is not plugged in is not a package.
+    software = [need for need in missing if not need.startswith("a camera")]
+    return missing, manager if software else None
+
+
 def send(action, **payload):
     cmd = ["noctalia", "msg", "plugin", PLUGIN, "all", action]
     if payload:
         cmd.append(json.dumps(payload))
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass # no noctalia here, so there is no ST-Link backend to talk to either
 
 
 def read_json(path):
@@ -697,8 +808,11 @@ class Window(Adw.ApplicationWindow):
         self.args = args
         self.settings = read_json(SETTINGS) or {}
         self.rotation = self.settings.get("rotation", args.rotate)
-        self.modes = camera_modes(args.device)
+        # Without GStreamer or a camera node there is no picture, and the window is log and chart.
+        self.camera = Gst is not None and not args.no_camera and Path(args.device).exists()
+        self.modes = camera_modes(args.device) if self.camera else CAMERA_SIZES
         self.size = self.settings.get("size", self.modes[0][0])
+        self.pipeline = None
         self.probe_frame = None  # previous camera thumbnail
         self.probe_frames = 0    # thumbnails seen since the last tick, so the camera's own rate is known
         self.probe_lean = None   # (portrait, top-bottom, left-right) of the lit screen in the picture
@@ -726,8 +840,9 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(1000, self._update_axis)
         GLib.timeout_add(5000, lambda: (self._update_outliers(), True)[1])
         GLib.timeout_add(2000, self._update_ranges)
-        GLib.timeout_add(1000, self._publish_camera_rate)
-        GLib.timeout_add(1000, self._auto_rotate)
+        if self.camera:
+            GLib.timeout_add(1000, self._publish_camera_rate)
+            GLib.timeout_add(1000, self._auto_rotate)
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -754,6 +869,7 @@ class Window(Adw.ApplicationWindow):
         bottom = Gtk.Box(spacing=8, margin_top=6, margin_bottom=8, margin_start=8, margin_end=8, vexpand=False)
         self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=False)
         self.picture.add_css_class("card")
+        self.picture.set_visible(self.camera)
 
         self.textview = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, can_focus=False)
         self.textview.set_wrap_mode(Gtk.WrapMode.CHAR)
@@ -842,10 +958,11 @@ class Window(Adw.ApplicationWindow):
             self._keyed("R", "Reset"),
             self._keyed("H", "Reset + halt"),
             "",
-            self._keyed("Q", "Rotate camera"),
-            self._choice("W", "Turn by hand", "Turn itself", self.auto_rotate),
-            self._keyed("Z", f"{width}×{height} @ {fps} fps"),
-            "",
+            *([self._keyed("K", "Camera")] if not self.camera else []),
+            *([self._keyed("Q", "Rotate camera"),
+               self._choice("W", "Turn by hand", "Turn itself", self.auto_rotate),
+               self._keyed("Z", f"{width}×{height} @ {fps} fps"),
+               ""] if self.camera else []),
             self._choice("D", "Debug", "Release", self.build_type == "release"),
             self._choice("E", "Staging", "Production", self.build_env == "production"),
             self._keyed("B", "Build"),
@@ -864,23 +981,97 @@ class Window(Adw.ApplicationWindow):
     # --- camera -------------------------------------------------------------
 
     def _start_camera(self):
+        if not self.camera:
+            return
         Gst.init(None)
         w, h = self.size.split("x")
-        self.pipeline = Gst.parse_launch(
-            f"v4l2src name=src device={self.args.device} ! video/x-raw,width={w},height={h} "
-            f"! queue max-size-buffers=1 leaky=downstream ! videoconvert "
-            f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
-            # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
-            f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! tee name=t "
-            f"t. ! queue ! gtk4paintablesink name=sink "
-            # A thumbnail branch to count how often the filmed screen actually changes.
-            f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert ! videoscale "
-            f"! video/x-raw,format=GRAY8,width={PROBE_WIDTH},height={PROBE_HEIGHT} "
-            f"! appsink name=probe emit-signals=true max-buffers=1 drop=true sync=false"
-        )
+        # gtk4paintablesink hands its frames straight to GTK, which few archives ship. Without it
+        # the frames come back through an appsink and are painted as textures instead.
+        paintable = Gst.ElementFactory.find("gtk4paintablesink") is not None
+        view = "queue ! gtk4paintablesink name=sink" if paintable else (
+            "queue max-size-buffers=1 leaky=downstream ! videoconvert ! video/x-raw,format=RGBA "
+            "! appsink name=view emit-signals=true max-buffers=1 drop=true sync=false")
+        try:
+            self.pipeline = Gst.parse_launch(
+                f"v4l2src name=src device={self.args.device} ! video/x-raw,width={w},height={h} "
+                f"! queue max-size-buffers=1 leaky=downstream ! videoconvert "
+                f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
+                # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
+                f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! tee name=t "
+                f"t. ! {view} "
+                # A thumbnail branch to count how often the filmed screen actually changes.
+                f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert ! videoscale "
+                f"! video/x-raw,format=GRAY8,width={PROBE_WIDTH},height={PROBE_HEIGHT} "
+                f"! appsink name=probe emit-signals=true max-buffers=1 drop=true sync=false"
+            )
+        except GLib.Error as error:
+            self._no_camera(error.message)
+            return
         self.pipeline.get_by_name("probe").connect("new-sample", self._on_camera_frame)
-        self.picture.set_paintable(self.pipeline.get_by_name("sink").props.paintable)
+        if paintable:
+            self.picture.set_paintable(self.pipeline.get_by_name("sink").props.paintable)
+        else:
+            self.pipeline.get_by_name("view").connect("new-sample", self._on_view_frame)
         self.pipeline.set_state(Gst.State.PLAYING)
+
+    def _no_camera(self, why):
+        """Give up on the picture without giving up on the window."""
+        self.camera = False
+        self.pipeline = None
+        self.picture.set_visible(False)
+        self._update_keys()
+        self._note(f"No camera: {why}")
+
+    def _on_view_frame(self, sink):
+        """One RGBA frame into a texture, for when GStreamer cannot paint into GTK itself."""
+        sample = sink.emit("pull-sample")
+        if sample is None:
+            return Gst.FlowReturn.OK
+        caps = sample.get_caps().get_structure(0)
+        buffer = sample.get_buffer()
+        ok, info = buffer.map(Gst.MapFlags.READ)
+        if not ok:
+            return Gst.FlowReturn.OK
+        try:
+            data = GLib.Bytes.new(info.data)
+        finally:
+            buffer.unmap(info)
+        width, height = caps.get_value("width"), caps.get_value("height")
+        texture = Gdk.MemoryTexture.new(width, height, Gdk.MemoryFormat.R8G8B8A8, data, width * 4)
+        GLib.idle_add(self.picture.set_paintable, texture)
+        return Gst.FlowReturn.OK
+
+    def offer_camera(self):
+        """Say what the picture is missing, and offer to install the part that is a package."""
+        if self.camera:
+            return
+        missing, manager = camera_needs(self.args.device)
+        if not missing:
+            self.camera = True # everything is in place now, so bring the picture up
+            self.picture.set_visible(True)
+            self._start_camera()
+            self._update_keys()
+            GLib.timeout_add(1000, self._publish_camera_rate)
+            GLib.timeout_add(1000, self._auto_rotate)
+            return
+        body = "The picture needs " + ", ".join(missing) + "."
+        dialog = Adw.AlertDialog(heading="No camera", body=body)
+        dialog.add_response("close", "Close")
+        if manager:
+            dialog.add_response("install", "Install")
+            dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect("response", lambda _d, response: response == "install" and self._install_camera(manager))
+        dialog.present(self)
+
+    def _install_camera(self, manager):
+        """Run the install off the main loop, so the window keeps drawing while it works."""
+        self._note(f"Installing the camera packages with {manager}…")
+
+        def work():
+            done = install_packages(manager, PACKAGES[manager]["camera"])
+            GLib.idle_add(self._note, "Camera packages installed, restart EyeBuddy to use them."
+                          if done else "That install did not go through.")
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_camera_frame(self, sink):
         """Mean absolute difference against the previous thumbnail: did the filmed screen change?"""
@@ -1001,6 +1192,8 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def next_size(self):
+        if not self.camera:
+            return
         sizes = [size for size, _ in self.modes]
         index = sizes.index(self.size) + 1 if self.size in sizes else 0
         self.size = sizes[index % len(sizes)]
@@ -1010,6 +1203,8 @@ class Window(Adw.ApplicationWindow):
         self._start_camera()
 
     def rotate(self, delta, teach=True):
+        if not self.camera:
+            return
         # A turn made by hand is also the answer to which way up is right, so remember which half
         # of the screen ends up on top and let the automatic turns aim for the same.
         if teach and self.auto_rotate and self.probe_lean:
@@ -1342,6 +1537,15 @@ class Window(Adw.ApplicationWindow):
                 for when, text in reversed(self.outliers))
             self.outlier_label.set_markup(rows)
 
+    def _note(self, text):
+        """A line from the app itself, in among the firmware's own."""
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.recent.clear()
+        self.buffer.insert_with_tags(self.buffer.get_end_iter(), f"{stamp} · {text}\n",
+                                     self._style("#56b6c2"))
+        self.follow_end()
+        return False
+
     def _warn(self, text):
         self.outliers.append((time.time(), text))
         self._update_outliers()
@@ -1513,7 +1717,7 @@ class Window(Adw.ApplicationWindow):
         actions = {
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
             "q": lambda: self.rotate(90), "c": self.clear_log,
-            "w": self._toggle_auto_rotate, "z": self.next_size,
+            "w": self._toggle_auto_rotate, "z": self.next_size, "k": self.offer_camera,
             "g": self.follow_end, "v": self.toggle_pretty,
             "m": self.mute_last, "u": self.unmute_all,
             "d": lambda: self.toggle_type(), "e": lambda: self.toggle_env(),
@@ -1532,7 +1736,11 @@ def main():
     parser.add_argument("-r", "--rotate", type=int, default=270, choices=[0, 90, 180, 270])
     parser.add_argument("-b", "--baud", type=int, default=2000000)
     parser.add_argument("--logdir", default="/tmp/serial-logs")
+    parser.add_argument("--no-camera", action="store_true", help="log and chart only, no video")
+    parser.add_argument("--install", action="store_true", help="put it on PATH and in the launcher")
     args = parser.parse_args()
+    if args.install:
+        install_launcher()
 
     app = Adw.Application(application_id="dev.uxstream.EyebudsDev")
     app.connect("activate", lambda a: Window(a, args).present())
