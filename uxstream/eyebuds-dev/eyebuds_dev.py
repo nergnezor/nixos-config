@@ -318,14 +318,16 @@ class CameraView(Gtk.Widget):
         self.queue_draw()
 
     def _box(self):
-        """How much room the turned picture takes, in its own pixels."""
-        radians = math.radians(self.angle)
-        cos, sin = abs(math.cos(radians)), abs(math.sin(radians))
+        """The shape of the box, which follows the nearest quarter turn.
+
+        Letting it follow the angle itself would reshape the whole bottom of the window on every
+        degree, and a quarter turn is the only turn that changes which way the picture stands.
+        """
         width, height = self.texture.get_width(), self.texture.get_height()
-        return width * cos + height * sin, width * sin + height * cos
+        return (width, height) if round(self.angle / 90) % 2 == 0 else (height, width)
 
     def do_measure(self, orientation, for_size):
-        """Height for width: as tall as the turned picture needs to fill the width it is given."""
+        """Height for width: as tall as the picture needs to fill the width it is given."""
         if self.texture is None or orientation == Gtk.Orientation.HORIZONTAL:
             return 0, 0, -1, -1
         box_w, box_h = self._box()
@@ -336,9 +338,14 @@ class CameraView(Gtk.Widget):
         if self.texture is None:
             return
         width, height = self.get_width(), self.get_height()
-        box_w, box_h = self._box()
-        scale = min(width / box_w, height / box_h)
+        radians = math.radians(self.angle)
+        cos, sin = abs(math.cos(radians)), abs(math.sin(radians))
         texture_w, texture_h = self.texture.get_width(), self.texture.get_height()
+        # Turned about its middle and grown until it covers the box, so a few degrees crop the
+        # corners instead of shrinking the whole picture into a diamond of empty space.
+        scale = max((width * cos + height * sin) / texture_w,
+                    (width * sin + height * cos) / texture_h)
+        snapshot.push_clip(Graphene.Rect().init(0, 0, width, height))
         snapshot.save()
         snapshot.translate(Graphene.Point().init(width / 2, height / 2))
         snapshot.rotate(self.angle)
@@ -346,6 +353,7 @@ class CameraView(Gtk.Widget):
         snapshot.append_texture(self.texture, Graphene.Rect().init(-texture_w / 2, -texture_h / 2,
                                                                   texture_w, texture_h))
         snapshot.restore()
+        snapshot.pop()
 
 
 class MultiGraph(Gtk.DrawingArea):
@@ -818,6 +826,7 @@ class SerialReader(threading.Thread):
         super().__init__(daemon=True)
         self.baud, self.logdir, self.on_line = baud, Path(logdir), on_line
         self.port = None
+        self.warned = False
 
     def run(self):
         while True:
@@ -831,6 +840,10 @@ class SerialReader(threading.Thread):
                 self._pump()
             except (serial.SerialException, OSError) as exc:
                 self._emit(f"(port gone: {exc})\n", status="Disconnected")
+                if "Permission denied" in str(exc) and not self.warned:
+                    self.warned = True # the usual first-run trip-up on a distribution that is not NixOS
+                    self._emit(f"(reading {self.port} needs the dialout group: "
+                               f"sudo usermod -aG dialout $USER, then log out and in)\n")
                 time.sleep(1)
 
     def _pump(self):
@@ -872,6 +885,7 @@ class Window(Adw.ApplicationWindow):
         self.build_type = self.settings.get("build_type", "debug")
         self.build_env = self.settings.get("build_env", "production")
         self.job_active = False
+        self.stlink = shutil.which("noctalia") is not None # the ST-Link backend, absent elsewhere
         self.mcu_state = None
         self.mcu_text = ""
         self._build_ui()
@@ -989,9 +1003,12 @@ class Window(Adw.ApplicationWindow):
             controls.append(widget)
         self._update_keys()
 
-    def _keyed(self, key, name):
+    def _keyed(self, key, name, dim=False):
         """Label with the shortcut key picked out in white, so the binding reads as part of it."""
-        return f'<span foreground="#ffffff"><b>{key}</b></span>  {GLib.markup_escape_text(name)}'
+        text = GLib.markup_escape_text(name)
+        if dim: # a key that has no backend to talk to here, left visible but plainly not live
+            return f'<span alpha="40%"><b>{key}</b>  {text}</span>'
+        return f'<span foreground="#ffffff"><b>{key}</b></span>  {text}'
 
     def _choice(self, key, off_name, on_name, active):
         """Both sides of a toggle, the one in force lit and the other dimmed."""
@@ -1003,10 +1020,11 @@ class Window(Adw.ApplicationWindow):
         width, height = self.size.split("x")
         fps = dict(self.modes).get(self.size, "?")
         halted = getattr(self, "mcu_state", None) == "halted"
+        away = not self.stlink # no plugin to send to, so those keys do nothing here
         lines = [
-            self._keyed("S", "Resume" if halted else "Halt"),
-            self._keyed("R", "Reset"),
-            self._keyed("H", "Reset + halt"),
+            self._keyed("S", "Resume" if halted else "Halt", away),
+            self._keyed("R", "Reset", away),
+            self._keyed("H", "Reset + halt", away),
             "",
             *([self._keyed("K", "Camera")] if not self.camera else []),
             *([self._keyed("Q", f"Turn a quarter · {self.rotation}°"),
@@ -1015,10 +1033,10 @@ class Window(Adw.ApplicationWindow):
                ""] if self.camera else []),
             self._choice("D", "Debug", "Release", self.build_type == "release"),
             self._choice("E", "Staging", "Production", self.build_env == "production"),
-            self._keyed("B", "Build"),
-            self._keyed("F", "Flash"),
-            self._keyed("A", "Build + flash"),
-            self._keyed("O", "Log"),
+            self._keyed("B", "Build", away),
+            self._keyed("F", "Flash", away),
+            self._keyed("A", "Build + flash", away),
+            self._keyed("O", "Log", away),
             "",
             self._keyed("C", "Clear log"),
             self._keyed("G", "Follow the end"),
