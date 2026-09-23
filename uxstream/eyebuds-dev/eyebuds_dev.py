@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EyeBuds dev app: camera, serial log and ST-Link controls in one window.
+"""EyeBuddy app: camera, serial log and ST-Link controls in one window.
 
 The ST-Link noctalia plugin stays the backend. Actions go through `noctalia msg plugin`,
 state comes back through the plugin's state.json / job.json.
@@ -8,6 +8,7 @@ import argparse
 import collections
 import glob
 import json
+import math
 import os
 import re
 import subprocess
@@ -41,6 +42,10 @@ DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
 PROBE_WIDTH, PROBE_HEIGHT = 64, 48 # thumbnail the screen-change probe works on
 PROBE_THRESHOLD = 1.2 # mean abs difference (0-255) above which the filmed screen counts as changed
+PROBE_GAPS = 90 # gaps between screen updates kept, to read the rate off the middle one
+PROBE_EVERY = 5 # thumbnails between two looks at where the filmed screen sits and which way it leans
+LEAN_DEAD = 0.02 # difference between two halves of the screen below which it is called symmetric
+ROTATE_HOLD = 4 # ticks a turn has to keep being the right one before the picture is turned
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
@@ -48,10 +53,11 @@ OUTLIER_TTL = 300 # seconds an outlier stays listed under the chart
 OUTLIER_SHOWN = 6 # how many of them are listed at once
 RANGE_ROWS = 24 # fields the range table has room to be useful about
 NUM_COLUMN = 52 # width of one number column in the table strip
+NUM_ROW = 13 # smallest height one row of the table strip may have
+AXIS_GUTTER = 38 # left margin the bands write their y values in
+TIME_AXIS = 14 # bottom margin the clock ticks are written in
 BAND_FLOOR = 46 # smallest height a band is given before the rest is shared out
-EVENT_RAIL = 20 # height of the strip along the top where one-off events are marked
-CLUSTER_POINTS = 48 # samples each line is read off at when shapes are compared
-CLUSTER_MATCH = 0.8 # correlation above which two lines are judged to have the same shape
+EVENT_BAND = 72 # timeline of one-off events, kept off the metric chart
 CHART_WINDOW = 120 # seconds the chart shows; older samples slide out to the left and are dropped
 LABEL_PLATE = 17 # height of the rounded plate behind a label
 LABEL_GAP = 19 # how close two labels may sit before they push each other away
@@ -96,24 +102,66 @@ GOOD_LOW = re.compile(r"drop|err|fail|defer|queue|retry|lost|miss|latency|delay|
 GOOD_HIGH = re.compile(r"rate|fps|bitrate|rssi|signal|throughput|speed|bandwidth|kbps|mbps|level", re.IGNORECASE)
 
 
-# Lines are grouped by what they measure, not by which module printed them, so a band holds
-# things that are meaningful to compare with each other.
-FAMILIES = [
-    ("throughput", re.compile(r"kbps|mbps|bps|byte|bitrate|kb/s", re.IGNORECASE)),
-    ("frame rate", re.compile(r"\bfps\b|rendering", re.IGNORECASE)),
-    ("message rate", re.compile(r"^/s$")),
-    ("percent", re.compile(r"%|usage|load", re.IGNORECASE)),
-    ("signal", re.compile(r"rssi|\bdb\b|signal|channel|band", re.IGNORECASE)),
-    ("trouble", re.compile(r"drop|err|fail|defer|queue|retry|lost|miss|reject|nack", re.IGNORECASE)),
-]
+# Bands are scale groups: everything in one shares an axis, so a height reads as a real value.
+# (pattern the unit must match, band, factor into the band's base unit)
+UNIT_BANDS = (
+    (re.compile(r"^(/s|fps|hz)$", re.IGNORECASE), "per second", 1.0),
+    (re.compile(r"^(us|µs)$", re.IGNORECASE), "milliseconds", 0.001),
+    (re.compile(r"^ms$", re.IGNORECASE), "milliseconds", 1.0),
+    (re.compile(r"^(s|sec|secs)$", re.IGNORECASE), "milliseconds", 1000.0),
+    (re.compile(r"^%$"), "percent", 1.0),
+    (re.compile(r"^(db|dbm)$", re.IGNORECASE), "decibel", 1.0),
+    (re.compile(r"^(b|byte|bytes)$", re.IGNORECASE), "bytes", 1.0),
+    (re.compile(r"^(kb|kib)$", re.IGNORECASE), "bytes", 1024.0),
+    (re.compile(r"^mb$", re.IGNORECASE), "bytes", 1048576.0),
+    (re.compile(r"^bps$", re.IGNORECASE), "bits per second", 1.0),
+    (re.compile(r"^kbps$", re.IGNORECASE), "bits per second", 1000.0),
+    (re.compile(r"^mbps$", re.IGNORECASE), "bits per second", 1000000.0),
+)
+BAND_UNIT = {"per second": "/s", "milliseconds": "ms", "percent": "%", "decibel": "dB",
+             "bytes": "B", "bits per second": "bps", "count": ""}
+BAND_ORDER = ["per second", "bits per second", "milliseconds", "percent", "decibel", "bytes", "count"]
 
 
-def family_of(label, unit):
-    """Which band a field belongs in, from its name and unit."""
-    for name, pattern in FAMILIES:
-        if pattern.search(unit) or pattern.search(label):
-            return name
-    return "counters"
+def band_of(label, unit):
+    """The band a field belongs to, and the factor into that band's base unit."""
+    for pattern, band, factor in UNIT_BANDS:
+        if pattern.match(unit):
+            return band, factor
+    if re.search(r"\brate\b|\bfps\b", label, re.IGNORECASE):
+        return "per second", 1.0
+    if re.search(r"rssi|signal", label, re.IGNORECASE):
+        return "decibel", 1.0
+    if re.search(r"usage|percent", label, re.IGNORECASE):
+        return "percent", 1.0
+    return "count", 1.0
+
+
+def fmt_si(value):
+    """A number short enough for an axis tick or a table cell."""
+    size = abs(value)
+    for limit, suffix in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
+        if size >= limit:
+            return f"{value / limit:.3g}{suffix}"
+    if size >= 0.01 or value == 0:
+        return f"{value:.4g}"
+    return f"{value:.1e}"
+
+
+def spread(values, gap, low, high):
+    """Sorted values nudged apart to at least `gap`, kept inside [low, high] where they fit."""
+    out = list(values)
+    for i in range(1, len(out)):
+        out[i] = max(out[i], out[i - 1] + gap)
+    if out and out[-1] > high:
+        out[-1] = high
+        for i in range(len(out) - 2, -1, -1):
+            out[i] = min(out[i], out[i + 1] - gap)
+    if out and out[0] < low:
+        out[0] = low
+        for i in range(1, len(out)):
+            out[i] = max(out[i], out[i - 1] + gap)
+    return out
 
 
 def polarity_of(label, unit):
@@ -163,15 +211,12 @@ def spline(cr, points):
                     p2[0], p2[1])
 
 
-SERIES_COLORS = ["#61afef", "#98c379", "#e5c07b", "#e06c75", "#c678dd", "#56b6c2",
-                 "#d19a66", "#7fd1b9", "#f08cc3", "#a3be8c", "#88c0d0", "#bf8bff"]
-
-
 class MultiGraph(Gtk.DrawingArea):
     """Every tracked field in one chart, each line labelled where it ends.
 
-    x is the session (a minute at minimum), y is each field's own 0…1 range. The labels carry
-    the name, the current value and the range seen, so the chart needs no legend beside it.
+    x is the last CHART_WINDOW seconds, marked with clock ticks along the bottom. Lines are
+    grouped into bands by unit, and one band is one axis shared by its lines, so a curve's
+    height reads as a real value against the ticks in the left gutter.
     """
 
     def __init__(self, height=200, points=400, on_click=None, labels=True):
@@ -183,8 +228,11 @@ class MultiGraph(Gtk.DrawingArea):
         self.t0 = None
         self.label_hits = [] # (x0, x1, y0, y1, series key) for clicks
         self.visible = set() # the keys worth a label and a row, chosen by the window
-        self.events = collections.deque() # one-off lines, drawn on the rail along the top
+        self.events = collections.deque() # one-off lines, drawn on their own timeline
         self.now = self.span = 0
+        self.scales = {} # band -> the lo/hi/log axis its lines are drawn against
+        self.titles = {} # band -> what is written in its top left corner
+        self.plot_l, self.plot_r = AXIS_GUTTER, 0
         # Redrawn every frame: the curve slides with the clock instead of only when a sample lands.
         self.last_frame = None
         self.add_tick_callback(self._tick)
@@ -199,10 +247,10 @@ class MultiGraph(Gtk.DrawingArea):
                     self.on_click(key)
                     return
 
-    def add_series(self, key, color, label, polarity, unit, pattern, group):
+    def add_series(self, key, color, label, polarity, unit, pattern):
+        band, factor = band_of(label, unit)
         self.series[key] = {"key": key, "t": [], "v": [], "color": color, "label": label, "polarity": polarity,
-                            "group": group,
-                            "family": group, "unit": unit, "pattern": pattern,
+                            "group": band, "band_key": None, "factor": factor, "unit": unit, "pattern": pattern,
                             "value": None, "lo": None, "hi": None,
                             "worst": None, "best": None, "flag": 0.0,
                             "y": None, "label_y": None, "label_vy": 0.0, "band": None}
@@ -226,7 +274,9 @@ class MultiGraph(Gtk.DrawingArea):
         # excursion either way when the field has no direction.
         polarity = series["polarity"]
         badness = (1 - level) if polarity > 0 else level if polarity < 0 else abs(level - 0.5) * 2
-        sample = (badness, value, now, level)
+        factor = series["factor"] # everything in a band is stored in that band's base unit
+        value, lo, hi = value * factor, lo * factor, hi * factor
+        sample = (badness, value, now)
         if series["worst"] is None or badness > series["worst"][0]:
             series["worst"] = sample
         if series["best"] is None or badness < series["best"][0]:
@@ -234,7 +284,7 @@ class MultiGraph(Gtk.DrawingArea):
         series["value"], series["lo"], series["hi"] = value, lo, hi
         self.t0 = now if self.t0 is None else self.t0
         series["t"].append(now)
-        series["v"].append(min(1.0, max(0.0, level)))
+        series["v"].append(value)
         cutoff = now - CHART_WINDOW
         while series["t"] and series["t"][0] < cutoff: # what leaves the window is forgotten
             series["t"].pop(0)
@@ -242,62 +292,6 @@ class MultiGraph(Gtk.DrawingArea):
 
     def set_visible(self, keys):
         self.visible = set(keys)
-        self._recluster()
-
-    def _sampled(self, series, grid):
-        """The series read off at fixed times, so two of them can be compared point by point."""
-        out, i = [], 0
-        for t in grid:
-            while i + 1 < len(series["t"]) and series["t"][i + 1] <= t:
-                i += 1
-            out.append(series["v"][i] if series["t"] and series["t"][i] <= t else None)
-        return out
-
-    @staticmethod
-    def _correlation(a, b):
-        pairs = [(x, y) for x, y in zip(a, b) if x is not None and y is not None]
-        if len(pairs) < 8:
-            return 0.0
-        xs, ys = zip(*pairs)
-        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
-        dx = [x - mx for x in xs]
-        dy = [y - my for y in ys]
-        sx = sum(v * v for v in dx) ** 0.5
-        sy = sum(v * v for v in dy) ** 0.5
-        if sx < 1e-9 or sy < 1e-9:
-            return 0.0
-        return sum(p * q for p, q in zip(dx, dy)) / (sx * sy)
-
-    def _recluster(self):
-        """Group the shown lines by the shape they trace, falling back to what they measure.
-
-        Two fields that rise and fall together belong on the same baseline whatever their units;
-        a line that matches nothing keeps its own family's band.
-        """
-        live = [s for s in self.series.values() if s["key"] in self.visible and len(s["v"]) > 8]
-        for series in self.series.values():
-            series["group"] = series["family"]
-        if len(live) < 2 or self.t0 is None:
-            return
-        now = time.time()
-        grid = [now - self.span + i * self.span / CLUSTER_POINTS for i in range(CLUSTER_POINTS)]
-        curves = {s["key"]: self._sampled(s, grid) for s in live}
-        clusters = []
-        for series in live:
-            for members in clusters:
-                if all(self._correlation(curves[series["key"]], curves[m["key"]]) > CLUSTER_MATCH
-                       for m in members):
-                    members.append(series)
-                    break
-            else:
-                clusters.append([series])
-        for members in clusters:
-            if len(members) < 2:
-                continue
-            # Named after what most of its lines measure, so the band still says what it holds.
-            name = collections.Counter(m["family"] for m in members).most_common(1)[0][0]
-            for member in members:
-                member["group"] = f"{name} ×{len(members)}"
 
     def add_event(self, text, color):
         """A one-off line worth marking on the rail: a state change, a warning, an error."""
@@ -320,7 +314,8 @@ class MultiGraph(Gtk.DrawingArea):
         """Labels are beads on a thread: pulled to their line's height, pushed off each other."""
         bands = {}
         for series in self.series.values():
-            if series["y"] is not None and series["label_y"] is not None:
+            if (series["key"] in self.visible and series["y"] is not None
+                    and series["label_y"] is not None and series["band"] is not None):
                 bands.setdefault(series["band"], []).append(series)
         for band, beads in bands.items():
             beads.sort(key=lambda s: s["label_y"])
@@ -333,82 +328,152 @@ class MultiGraph(Gtk.DrawingArea):
             for bead in beads:
                 bead["label_vy"] += (bead["y"] - bead["label_y"]) * LABEL_SPRING * dt
                 bead["label_vy"] *= max(0.0, 1 - LABEL_DAMPING * dt)
-                bead["label_y"] = min(top + height - 6, max(top + 10, bead["label_y"] + bead["label_vy"] * dt))
+                bead["label_y"] += bead["label_vy"] * dt
+            # The spring alone lets labels pile up against a band edge, so separate them for real.
+            beads.sort(key=lambda s: s["label_y"])
+            placed = spread([b["label_y"] for b in beads], LABEL_GAP, top + 10, top + height - 6)
+            for bead, y in zip(beads, placed):
+                if abs(y - bead["label_y"]) > 0.05:
+                    bead["label_vy"] *= 0.5
+                bead["label_y"] = y
 
-    def _x(self, t, w):
+    def _x(self, t):
         """Time to x, with now at the right edge: samples drift left and off the chart."""
-        return w - 1 - (self.now - t) / self.span * (w - 2)
+        span = self.plot_r - self.plot_l
+        return self.plot_r - 1 - (self.now - t) / self.span * (span - 2)
+
+    def _scale(self, band, members):
+        """One axis for a band: the union of its lines, logarithmic when they span decades."""
+        lo = min(min(s["v"]) for s in members)
+        hi = max(max(s["v"]) for s in members)
+        tops = [top for top in (max(s["v"]) for s in members) if top > 0]
+        positive = [v for s in members for v in s["v"] if v > 0]
+        if band != "percent" and lo >= 0 and tops and (
+                max(tops) / min(tops) > 50 # lines that live on scales this far apart
+                or hi / min(positive) > 1000): # or one line that alone covers three decades
+            return {"lo": max(hi / 1e4, min(positive)), "hi": hi, "log": True} # four decades at most
+        if hi <= lo:
+            hi = lo + 1
+        if 0 < lo < hi * 0.25:
+            lo = 0.0 # a zero baseline where it costs almost nothing, so heights compare
+        return {"lo": lo, "hi": hi + (hi - lo) * 0.08, "log": False}
+
+    def _norm(self, band, value):
+        scale = self.scales[band]
+        lo, hi, v = scale["lo"], scale["hi"], value
+        if scale["log"]:
+            lo, hi, v = math.log10(lo), math.log10(hi), math.log10(max(value, lo))
+        return min(1.0, max(0.0, (v - lo) / (hi - lo))) if hi > lo else 0.5
+
+    def _ticks(self, band):
+        """Round values to draw a band's gridlines at."""
+        scale = self.scales[band]
+        if scale["log"]:
+            first = math.floor(math.log10(scale["lo"]))
+            decades = [10.0 ** e for e in range(first, math.ceil(math.log10(scale["hi"])) + 1)]
+            return [v for v in decades if scale["lo"] <= v <= scale["hi"]]
+        span = scale["hi"] - scale["lo"]
+        step = 10.0 ** math.floor(math.log10(span / 3)) if span > 0 else 1.0
+        for mult in (1, 2, 5, 10):
+            if span / (step * mult) <= 5:
+                step *= mult
+                break
+        first = math.ceil(scale["lo"] / step) * step
+        return [first + i * step for i in range(6) if first + i * step <= scale["hi"]]
 
     def _bands(self, h):
-        """A band per family, tall in proportion to how many of its lines are being shown."""
-        counts = collections.Counter(s["group"] for s in self.series.values()
-                                     if s["key"] in self.visible)
-        if not counts:
+        """A band per unit and per thousandfold within it, sized by how many lines it carries.
+
+        Splitting on magnitude is what keeps an axis readable: a line peaking at 30k and one
+        peaking at 10 cannot share a scale that either of them can be read off.
+        """
+        members = {}
+        for series in self.series.values():
+            if series["key"] in self.visible and len(series["v"]) >= 2:
+                decade = int(math.log10(max(abs(series["hi"]), 1)) // 3)
+                series["band_key"] = key = (series["group"], decade)
+                members.setdefault(key, []).append(series)
+        if not members:
             return {}
-        order = [name for name, _ in FAMILIES] + ["counters"]
-        live = sorted(counts, key=lambda name: next(
-            (i for i, family in enumerate(order) if name.startswith(family)), len(order)))
+        self.scales = {key: self._scale(key[0], group) for key, group in members.items()}
+        # A band says its unit, and how big its lines are too once a unit runs across several bands.
+        split = collections.Counter(band for band, _ in members)
+        self.titles = {(band, decade): (BAND_UNIT.get(band) or band)
+                       + (f" {fmt_si(1000.0 ** decade)}+" if split[band] > 1 else "")
+                       + (" · log" if self.scales[(band, decade)]["log"] else "")
+                       for band, decade in members}
+        live = sorted(members, key=lambda key: (BAND_ORDER.index(key[0]) if key[0] in BAND_ORDER
+                                                else len(BAND_ORDER), key[1]))
         # Each band gets a floor, then the rest is shared out by how many lines it carries.
         floor = min(BAND_FLOOR, h / len(live))
         spare = h - floor * len(live)
-        total = sum(counts[name] for name in live)
+        total = sum(len(members[band]) for band in live)
         bands, top = {}, 0.0
-        for name in live:
-            height = floor + spare * counts[name] / total
-            bands[name] = (top, height)
+        for band in live:
+            height = floor + spare * len(members[band]) / total
+            bands[band] = (top, height)
             top += height
         return bands
 
     def do_snapshot(self, snapshot):
         w, h = self.get_width(), self.get_height()
         cr = snapshot.append_cairo(Graphene.Rect().init(0, 0, w, h))
-        table = 3 * NUM_COLUMN + 16 # the strip on the right, one row of numbers per line
-        plot = w - table
+        table = 3 * NUM_COLUMN + 26 # the strip on the right, one row of numbers per line
+        self.plot_l, self.plot_r = AXIS_GUTTER, w - table
         self.label_hits = []
         if self.t0 is None:
             return
         self.now = time.time()
         self.span = CHART_WINDOW
-        h -= EVENT_RAIL # the top strip belongs to the events
-        bands = self._bands(h)
+        event_h = EVENT_BAND if any(when >= self.now - self.span for when, _, _ in self.events) else 0
+        bands = self._bands(h - event_h - TIME_AXIS)
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        for i, (name, (top, height)) in enumerate(sorted(bands.items(), key=lambda kv: kv[1][0])):
+        if event_h:
+            self._draw_events(cr, event_h)
+        for i, (band, (top, height)) in enumerate(sorted(bands.items(), key=lambda kv: kv[1][0])):
+            top += event_h
             cr.set_source_rgba(1, 1, 1, 0.05 if i % 2 else 0.03) # alternating, so bands separate
-            cr.rectangle(0, top, plot, height)
+            cr.rectangle(0, top, self.plot_r, height)
             cr.fill()
-            cr.set_source_rgba(1, 1, 1, 0.06)
-            cr.set_line_width(1)
-            cr.move_to(0, top + height / 2) # a mid line to read the band against
-            cr.line_to(plot, top + height / 2)
-            cr.stroke()
             cr.set_font_size(9)
-            cr.set_source_rgba(1, 1, 1, 0.3)
-            cr.move_to(6, top + 11)
-            cr.show_text(name)
+            for value in self._ticks(band):
+                y = top + height - 3 - self._norm(band, value) * (height - 6)
+                cr.set_source_rgba(1, 1, 1, 0.07)
+                cr.set_line_width(1)
+                cr.move_to(self.plot_l, y)
+                cr.line_to(self.plot_r, y)
+                cr.stroke()
+                if y > top + 18:
+                    text = fmt_si(value)
+                    cr.set_source_rgba(1, 1, 1, 0.4)
+                    cr.move_to(self.plot_l - 4 - cr.text_extents(text).width, y + 3)
+                    cr.show_text(text)
+            cr.set_source_rgba(1, 1, 1, 0.35)
+            cr.move_to(4, top + 11)
+            cr.show_text(self.titles[band])
+        self._draw_time_axis(cr, h)
 
-        self._draw_events(cr, plot, h)
         cr.set_font_size(11)
         labels = []
         for key, series in self.series.items():
-            if len(series["v"]) < 2 or series["group"] not in bands:
-                continue # nothing left in the window, or nothing in its band worth a look
-            top, height = bands[series["group"]]
-            top += EVENT_RAIL
+            if key not in self.visible or len(series["v"]) < 2 or series.get("band_key") not in bands:
+                continue # muted from the table, empty, or its band is gone
+            band = series["band_key"]
+            top, height = bands[band]
+            top += event_h
             series["band"] = (top, height)
-            shown = key in self.visible
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
-            points = [(self._x(t, plot), top + height - 3 - v * (height - 6))
+            points = [(self._x(t), top + height - 3 - self._norm(band, v) * (height - 6))
                       for t, v in zip(series["t"], series["v"])]
-            cr.set_source_rgba(*rgb, 1 if shown else 0.35)
-            cr.set_line_width(1.4 if shown else 1)
+            cr.set_source_rgb(*rgb)
+            cr.set_line_width(1.4)
             spline(cr, points)
             cr.stroke()
-            if not shown:
-                continue
             for kind, fill in (("worst", True), ("best", False)):
                 mark = series[kind]
                 if mark and len(series["v"]) > 4 and mark[2] > self.now - self.span:
-                    cr.arc(self._x(mark[2], plot), top + height - 3 - mark[3] * (height - 6), 2.5, 0, 6.2832)
+                    cr.arc(self._x(mark[2]), top + height - 3 - self._norm(band, mark[1]) * (height - 6),
+                           2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
             series["y"] = points[-1][1]
             if series["label_y"] is None:
@@ -420,74 +485,114 @@ class MultiGraph(Gtk.DrawingArea):
                            "width": cr.text_extents(text).width, "y": series["label_y"],
                            "tip": (points[-1][0], series["y"])})
 
-        self._separate(labels, h)
-        cr.set_font_size(10)
-        cr.set_source_rgba(1, 1, 1, 0.35)
-        columns = [w - 8 - 2 * NUM_COLUMN, w - 8 - NUM_COLUMN, w - 8] # right edge of min, now, max
-        for heading, right in zip(("min", "now", "max"), columns):
-            cr.move_to(right - cr.text_extents(heading).width, 12)
-            cr.show_text(heading)
         for label in labels:
-            series, rgb, ly, width = label["series"], label["rgb"], label["y"], label["width"]
-            series["label_y"] = ly # the simulation carries on from where the drawing settled
+            rgb, ly, width = label["rgb"], label["y"], label["width"]
             tip_x, tip_y = label["tip"]
-            tx = max(4, tip_x - 8 - width) # floating left of the newest value
-            cr.set_source_rgba(*rgb, 0.4)
-            cr.set_line_width(1)
-            cr.move_to(tip_x, tip_y)
-            cr.line_to(tx + width + 4, ly + 2)
-            cr.stroke()
+            tx = max(self.plot_l + 4, tip_x - 8 - width) # just left of the newest sample
+            if abs(ly - tip_y) > 1:
+                cr.set_source_rgba(*rgb, 0.4)
+                cr.set_line_width(1)
+                cr.move_to(tip_x, tip_y)
+                cr.line_to(tx + width + 4, ly + 2)
+                cr.stroke()
             cr.set_source_rgba(0, 0, 0, 0.45) # a dark rounded plate keeps the name readable
             rounded_rect(cr, tx - 5, ly - 6, width + 10, LABEL_PLATE, 5)
             cr.fill()
             cr.set_source_rgb(*rgb)
             cr.set_font_size(11)
             cr.move_to(tx, ly + 6)
-            cr.show_text(text := label["text"])
+            cr.show_text(label["text"])
+        self._draw_table(cr, w, h, labels)
 
-            # The numbers belonging to this line sit at the same height, in the strip on the right.
-            cr.set_font_size(10)
+    def _draw_table(self, cr, w, h, labels):
+        """The strip on the right: one row per line, in its colour, never two on the same height."""
+        cr.set_font_size(10)
+        cr.set_source_rgba(1, 1, 1, 0.35)
+        columns = [w - 8 - 2 * NUM_COLUMN, w - 8 - NUM_COLUMN, w - 8] # right edge of min, now, max
+        for heading, right in zip(("min", "now", "max"), columns):
+            cr.move_to(right - cr.text_extents(heading).width, 12)
+            cr.show_text(heading)
+        labels = sorted(labels, key=lambda label: label["y"])
+        swatch = self.plot_r + 6
+        for label, ry in zip(labels, spread([label["y"] for label in labels], NUM_ROW, 24, h - 6)):
+            series, rgb = label["series"], label["rgb"]
+            if abs(ry - label["y"]) > 2: # a leader back to the label, once the row has moved off it
+                cr.set_source_rgba(*rgb, 0.25)
+                cr.set_line_width(1)
+                cr.move_to(self.plot_r - 2, label["y"] + 1)
+                cr.line_to(swatch, ry + 1)
+                cr.stroke()
+            cr.set_source_rgba(*rgb, 0.9) # the row carries the line's colour, so the two pair up
+            cr.set_line_width(2.5)
+            cr.move_to(swatch, ry + 1)
+            cr.line_to(swatch + 8, ry + 1)
+            cr.stroke()
             for value, right, dim in zip((series["lo"], series["value"], series["hi"]), columns,
                                          (True, False, True)):
-                number = f"{value:g}"
+                number = fmt_si(value)
                 cr.set_source_rgba(*rgb, 0.5 if dim else 1)
-                cr.move_to(right - cr.text_extents(number).width, ly + 5)
+                cr.move_to(right - cr.text_extents(number).width, ry + 4)
                 cr.show_text(number)
-            self.label_hits.append((plot, w, ly - 6, ly + LABEL_PLATE - 6, label["key"]))
+            self.label_hits.append((self.plot_r, w, ry - 6, ry + 6, label["key"]))
 
-    def _draw_events(self, cr, plot, h):
-        """Ticks along the top with a hairline down the chart, so a spike can be read against them."""
+    def _draw_time_axis(self, cr, h):
+        """Clock ticks along the bottom, so a spike on the chart can be found in the log."""
         cr.set_font_size(9)
-        written = []
+        step = 30
+        marks = [t for t in (math.ceil((self.now - self.span) / step) * step + i * step
+                             for i in range(int(self.span / step) + 2)) if t <= self.now]
+        for t in marks:
+            x = self._x(t)
+            cr.set_source_rgba(1, 1, 1, 0.07)
+            cr.set_line_width(1)
+            cr.move_to(x, 0)
+            cr.line_to(x, h - TIME_AXIS)
+            cr.stroke()
+            text = datetime.fromtimestamp(t).strftime("%H:%M:%S")
+            cr.set_source_rgba(1, 1, 1, 0.4)
+            cr.move_to(min(x + 3, self.plot_r - cr.text_extents(text).width), h - 4)
+            cr.show_text(text)
+
+    def _draw_events(self, cr, height):
+        """A stem timeline of its own, so warnings do not stripe the metric chart."""
+        cr.set_source_rgba(1, 1, 1, 0.04)
+        cr.rectangle(0, 0, self.plot_r, height)
+        cr.fill()
+        cr.set_font_size(9)
+        cr.set_source_rgba(1, 1, 1, 0.3)
+        cr.move_to(4, 12)
+        cr.show_text("events")
+        base = height - 6
+        cap = 42 # dots sit here; names live in the rows above
+        cr.set_source_rgba(1, 1, 1, 0.12)
+        cr.set_line_width(1)
+        cr.move_to(0, base)
+        cr.line_to(self.plot_r, base)
+        cr.stroke()
+        rows = [[] for _ in range(3)] # x ranges already spoken for, per row of names
         for when, text, color in self.events:
             if when < self.now - self.span:
                 continue
-            x = self._x(when, plot)
+            x = self._x(when)
             rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
-            cr.set_source_rgba(*rgb, 0.16) # down through the bands, faint enough to read past
-            cr.set_line_width(1)
-            cr.move_to(x, EVENT_RAIL)
-            cr.line_to(x, h + EVENT_RAIL)
-            cr.stroke()
             cr.set_source_rgb(*rgb)
-            cr.rectangle(x - 1, 2, 2, EVENT_RAIL - 7)
+            cr.set_line_width(1.2)
+            cr.move_to(x, base)
+            cr.line_to(x, cap)
+            cr.stroke()
+            cr.arc(x, cap, 2.6, 0, 6.2832)
             cr.fill()
-            # Only name an event when the one before it left room, so the rail stays readable.
-            if not written or x - written[-1] > 90:
-                written.append(x)
-                cr.move_to(min(x + 3, plot - 80), EVENT_RAIL - 8)
-                cr.show_text(text[:22])
-
-    @staticmethod
-    def _separate(labels, h):
-        """Last word on placement: every label owns a row, since each one also names a table row."""
-        labels.sort(key=lambda label: label["y"])
-        for i, label in enumerate(labels[1:], start=1):
-            label["y"] = max(label["y"], labels[i - 1]["y"] + LABEL_PLATE + 2)
-        overflow = max((label["y"] + LABEL_PLATE - h for label in labels), default=0)
-        if overflow > 0: # ran out of room at the bottom, so lift the whole stack
-            for label in labels:
-                label["y"] = max(8, label["y"] - overflow)
+            text = text[:26]
+            width = cr.text_extents(text).width + 8
+            x0 = min(x + 5, self.plot_r - width)
+            if x0 < 46: # leave the band name alone
+                continue
+            for i, taken in enumerate(rows):
+                if all(x0 >= end or x0 + width <= start for start, end in taken):
+                    taken.append((x0, x0 + width))
+                    cr.move_to(x0, 13 + i * 12)
+                    cr.show_text(text)
+                    break
 
 
 def ts_seconds(ts):
@@ -588,16 +693,24 @@ class SerialReader(threading.Thread):
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, args):
-        super().__init__(application=app, title="EyeBuds dev", default_width=1400, default_height=900)
+        super().__init__(application=app, title="EyeBuddy", default_width=1400, default_height=900)
         self.args = args
         self.settings = read_json(SETTINGS) or {}
         self.rotation = self.settings.get("rotation", args.rotate)
         self.modes = camera_modes(args.device)
         self.size = self.settings.get("size", self.modes[0][0])
         self.probe_frame = None  # previous camera thumbnail
-        self.probe_changes = 0   # thumbnails that differed since the last tick
+        self.probe_frames = 0    # thumbnails seen since the last tick, so the camera's own rate is known
+        self.probe_lean = None   # (portrait, top-bottom, left-right) of the lit screen in the picture
+        self.auto_rotate = self.settings.get("auto_rotate", False)
+        # Which way up looks right, learned from the last turn made by hand: 1 when the brighter
+        # half of the screen belongs at the top, -1 when it belongs at the bottom.
+        self.upright_cue = self.settings.get("upright_cue", 0)
+        self.rotate_vote = (0, 0)
+        self.probe_gaps = collections.deque(maxlen=PROBE_GAPS) # seconds between the screen's updates
+        self.probe_changed = None # when the filmed screen last changed
         self.camera_rate = 0.0
-        self.camera_range = [0.0, 0.0]
+        self.camera_ranges = {} # series key -> the [min, max] its level is measured against
         self.probe_tick = time.monotonic()
         self.build_type = self.settings.get("build_type", "debug")
         self.build_env = self.settings.get("build_env", "production")
@@ -614,6 +727,7 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(5000, lambda: (self._update_outliers(), True)[1])
         GLib.timeout_add(2000, self._update_ranges)
         GLib.timeout_add(1000, self._publish_camera_rate)
+        GLib.timeout_add(1000, self._auto_rotate)
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -627,7 +741,7 @@ class Window(Adw.ApplicationWindow):
 
         header = Adw.HeaderBar()
         self.status_label = Gtk.Label(label="…", css_classes=["dim-label"])
-        header.set_title_widget(Adw.WindowTitle(title="EyeBuds dev", subtitle=""))
+        header.set_title_widget(Adw.WindowTitle(title="EyeBuddy", subtitle=""))
         self.title_widget = header.get_title_widget()
         root.append(header)
 
@@ -664,7 +778,7 @@ class Window(Adw.ApplicationWindow):
         self.axis = Gtk.Label(xalign=1, css_classes=["dim-label", "caption"], margin_end=8)
         self.session_start = None
         self.graph = MultiGraph(on_click=self._mute_series)
-        self.next_color = 0
+        self.module_hue = {} # module -> its hue on the chart, handed out as modules turn up
         # Outliers worth a second look, listed only while there are any.
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
         self.outlier_label = Gtk.Label(xalign=0, use_markup=True, margin_start=8, margin_end=8,
@@ -700,72 +814,52 @@ class Window(Adw.ApplicationWindow):
         controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.START)
         bottom.append(controls)
         bottom.append(self.picture)
-
-        row1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.btn_toggle = self._button(row1, "S", "Halt", lambda *_: send("toggle"))
-        self._button(row1, "R", "Reset", lambda *_: send("reset"))
-        self._button(row1, "H", "Reset + halt", lambda *_: send("reset_halt"))
-        row1.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        self._button(row1, "Q", "Rotate camera", lambda *_: self.rotate(90))
-        labels = [f"{w}×{h} @ {fps} fps" for (size, fps) in self.modes for (w, h) in [size.split("x")]]
-        self.size_combo = Gtk.DropDown.new_from_strings(labels)
-        sizes = [size for size, _ in self.modes]
-        self.size_combo.set_selected(sizes.index(self.size) if self.size in sizes else 0)
-        self.size_combo.connect("notify::selected", self._on_size_changed)
-        row1.append(self.size_combo)
-        controls.append(row1)
-
-        row2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        row2.append(Gtk.Label(label="Build", xalign=0, css_classes=["dim-label", "caption"]))
-        self.btn_type = self._switch(row2, "D", "Debug", "Release",
-                                     self.build_type == "release", self.toggle_type)
-        self.btn_env = self._switch(row2, "E", "Staging", "Production",
-                                    self.build_env == "production", self.toggle_env)
-        row2.append(Gtk.Separator(margin_top=6, margin_bottom=6))
-        self.btn_build = self._button(row2, "B", "Build", lambda *_: self.build("build"))
-        self.btn_flash = self._button(row2, "F", "Flash", lambda *_: self.build("flash"))
-        self.btn_both = self._button(row2, "A", "Build + flash", lambda *_: self.build("both"),
-                                     css="suggested-action")
-        self._button(row2, "O", "Log", lambda *_: send("open_log"))
-        controls.append(row2)
-
-        self.job_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=24, css_classes=["dim-label", "caption"])
+        # Every action is a key, so the column is a list of them rather than a column of buttons.
+        self.keys_label = Gtk.Label(xalign=0, use_markup=True, css_classes=["caption"])
+        self.job_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=24,
+                                   css_classes=["dim-label", "caption"])
         self.progress = Gtk.ProgressBar()
-        controls.append(self.job_label)
-        controls.append(self.progress)
+        for widget in (self.keys_label, self.job_label, self.progress):
+            controls.append(widget)
+        self._update_keys()
 
     def _keyed(self, key, name):
         """Label with the shortcut key picked out in white, so the binding reads as part of it."""
         return f'<span foreground="#ffffff"><b>{key}</b></span>  {GLib.markup_escape_text(name)}'
 
-    def _switch(self, box, key, off_name, on_name, active, handler):
-        """Both choices flank the switch, the active one lit, with the shortcut key on the left."""
-        row = Gtk.Box(spacing=6)
-        row.append(Gtk.Label(label=f'<span foreground="#ffffff"><b>{key}</b></span>', use_markup=True))
-        off = Gtk.Label(label=off_name, xalign=1, hexpand=True)
-        switch = Gtk.Switch(active=active, valign=Gtk.Align.CENTER)
-        on = Gtk.Label(label=on_name, xalign=0, hexpand=True)
-        switch.connect("state-set", lambda _s, state: handler(state))
+    def _choice(self, key, off_name, on_name, active):
+        """Both sides of a toggle, the one in force lit and the other dimmed."""
+        lit = lambda text, on: text if on else f'<span alpha="45%">{GLib.markup_escape_text(text)}</span>'
+        return self._keyed(key, "") + f"{lit(off_name, not active)} / {lit(on_name, active)}"
 
-        def light(*_):
-            for label, lit in ((off, not switch.get_active()), (on, switch.get_active())):
-                label.set_css_classes([] if lit else ["dim-label"])
-        switch.connect("notify::active", light)
-        light()
-        for widget in (off, switch, on):
-            row.append(widget)
-        box.append(row)
-        return switch
-
-    def _button(self, box, key, name, handler, css=None):
-        btn = Gtk.Button(child=Gtk.Label(label=self._keyed(key, name), use_markup=True, xalign=0,
-                                         hexpand=True))
-        if css:
-            btn.add_css_class(css)
-        btn.connect("clicked", handler)
-        box.append(btn)
-        return btn
+    def _update_keys(self):
+        """The key column, rewritten whenever one of the states it shows has moved."""
+        width, height = self.size.split("x")
+        fps = dict(self.modes).get(self.size, "?")
+        halted = getattr(self, "mcu_state", None) == "halted"
+        lines = [
+            self._keyed("S", "Resume" if halted else "Halt"),
+            self._keyed("R", "Reset"),
+            self._keyed("H", "Reset + halt"),
+            "",
+            self._keyed("Q", "Rotate camera"),
+            self._choice("W", "Turn by hand", "Turn itself", self.auto_rotate),
+            self._keyed("Z", f"{width}×{height} @ {fps} fps"),
+            "",
+            self._choice("D", "Debug", "Release", self.build_type == "release"),
+            self._choice("E", "Staging", "Production", self.build_env == "production"),
+            self._keyed("B", "Build"),
+            self._keyed("F", "Flash"),
+            self._keyed("A", "Build + flash"),
+            self._keyed("O", "Log"),
+            "",
+            self._keyed("C", "Clear log"),
+            self._keyed("G", "Follow the end"),
+            self._keyed("V", "Raw or pretty"),
+            self._keyed("M", "Mute last line"),
+            self._keyed("U", "Unmute every line"),
+        ]
+        self.keys_label.set_markup("\n".join(lines))
 
     # --- camera -------------------------------------------------------------
 
@@ -806,41 +900,127 @@ class Window(Adw.ApplicationWindow):
         # The camera samples at 30 fps, so this counts updates up to about 15 Hz; above that the
         # rate folds back on itself. It is here to catch freezes and stutter, not to time a panel.
         difference = sum(abs(a - b) for a, b in zip(frame, previous)) / len(frame)
-        self.probe_changes += difference > PROBE_THRESHOLD
+        now = time.monotonic()
+        self.probe_frames += 1
+        if self.probe_frames % PROBE_EVERY == 0:
+            self.probe_lean = self._probe_lean(frame)
+        if difference > PROBE_THRESHOLD:
+            if self.probe_changed is not None:
+                self.probe_gaps.append(now - self.probe_changed)
+            self.probe_changed = now
         return Gst.FlowReturn.OK
 
+    def _probe_lean(self, frame):
+        """The lit screen in the thumbnail: is it standing up, and which half of it is brighter?
+
+        The thumbnail is stretched to a fixed size, so the screen's shape is only recovered by
+        scaling the box back out by the real frame's aspect.
+        """
+        rows = [frame[y * PROBE_WIDTH:(y + 1) * PROBE_WIDTH] for y in range(PROBE_HEIGHT)]
+        floor = (min(frame) + max(frame)) / 2
+        lit_rows = [sum(v > floor for v in row) for row in rows]
+        lit_columns = [sum(row[x] > floor for row in rows) for x in range(PROBE_WIDTH)]
+        if max(lit_rows) < 3 or max(lit_columns) < 3:
+            return None # nothing bright enough to call a screen
+        span = lambda counts: (lambda live: (live[0], live[-1]))(
+            [i for i, n in enumerate(counts) if n > max(counts) * 0.25])
+        y0, y1 = span(lit_rows)
+        x0, x1 = span(lit_columns)
+        width, height = self.size.split("x")
+        if self.rotation in (90, 270):
+            width, height = height, width
+        box_w = (x1 - x0 + 1) / PROBE_WIDTH * int(width)
+        box_h = (y1 - y0 + 1) / PROBE_HEIGHT * int(height)
+        inside = [row[x0:x1 + 1] for row in rows[y0:y1 + 1]]
+        half = lambda part: sum(sum(row) for row in part) / max(1, sum(len(row) for row in part))
+        light = half(inside) or 1
+        top_bottom = (half(inside[:len(inside) // 2]) - half(inside[len(inside) // 2:])) / light
+        left_right = (half([row[:len(row) // 2] for row in inside])
+                      - half([row[len(row) // 2:] for row in inside])) / light
+        return box_h >= box_w, top_bottom, left_right
+
+    def _auto_rotate(self):
+        """Turn the picture in 90° steps until the screen stands up the way it was taught to."""
+        if not self.auto_rotate or self.pipeline is None or self.probe_lean is None:
+            return True
+        portrait, top_bottom, left_right = self.probe_lean
+        # A quarter turn clockwise brings the left edge up, a counter-clockwise one the right edge.
+        candidates = [(0, top_bottom), (180, -top_bottom)] if portrait else \
+                     [(90, left_right), (270, -left_right)]
+        if self.upright_cue:
+            delta, lean = max(candidates, key=lambda choice: choice[1] * self.upright_cue)
+            if abs(lean) < LEAN_DEAD:
+                delta = candidates[0][0] # too even to tell up from down, so only the shape counts
+        else:
+            delta = candidates[0][0]
+        held = self.rotate_vote[1] + 1 if self.rotate_vote[0] == delta else 1
+        self.rotate_vote = (delta, held)
+        if delta and held >= ROTATE_HOLD: # a steady reading, not one frame of somebody's hand
+            self.rotate(delta, teach=False)
+            self.rotate_vote = (0, 0)
+        return True
+
+    def _toggle_auto_rotate(self):
+        self.auto_rotate = not self.auto_rotate
+        self.rotate_vote = (0, 0)
+        self._update_keys()
+        save_settings(auto_rotate=self.auto_rotate)
+
     def _publish_camera_rate(self):
-        changes, self.probe_changes = self.probe_changes, 0
+        frames, self.probe_frames = self.probe_frames, 0
         now = time.monotonic()
         elapsed, self.probe_tick = now - self.probe_tick, now
         if self.pipeline is None or elapsed <= 0:
             return True
         # Against the clock, not against the tick: a stalled main loop would otherwise look like
         # a faster screen.
-        self.camera_rate = self.camera_rate * 0.6 + (changes / elapsed) * 0.4
-        GLib.idle_add(self._feed_camera_rate, self.camera_rate)
+        camera = frames / elapsed
+        gaps = sorted(gap for gap in self.probe_gaps if gap < 2)
+        # The middle gap between two updates, not a count per second: one dropped frame then shows
+        # as the stutter it is instead of being averaged away.
+        rate = 1 / gaps[len(gaps) // 2] if gaps else 0.0
+        self.camera_rate = self.camera_rate * 0.6 + rate * 0.4
+        if self.probe_changed is not None and now - self.probe_changed > 2:
+            self.camera_rate = 0.0 # a still picture is zero updates, not the last rate forever
+        GLib.idle_add(self._feed_camera_rate, self.camera_rate, camera)
         return True
 
-    def _feed_camera_rate(self, rate):
-        key = "camera#updates"
-        if key not in self.graph.series:
-            self.graph.add_series(key, "#f08cc3", "CAM screen updates", 1, "/s", "camera", "frame rate")
-            self.camera_range = [rate, rate]
-        self.camera_range[0] = min(self.camera_range[0], rate)
-        self.camera_range[1] = max(self.camera_range[1], rate)
-        lo, hi = self.camera_range
-        self.graph.push(key, (rate - lo) / (hi - lo) if hi > lo else 0.5, rate, lo, hi)
+    def _feed_camera_rate(self, rate, camera):
+        # The camera cannot see an update it did not film, so its own rate is the ceiling this
+        # measurement folds back at: above half of it, the screen rate reads too low.
+        for key, label, value in (("camera#updates", "CAM screen updates", rate),
+                                  ("camera#frames", "CAM camera frames", camera)):
+            if key not in self.graph.series:
+                index = len(self.camera_ranges)
+                self.graph.add_series(key, self._series_color("CAM", index), label, 1, "/s", "camera")
+                self.camera_ranges[key] = [value, value]
+            span = self.camera_ranges[key]
+            span[0], span[1] = min(span[0], value), max(span[1], value)
+            lo, hi = span
+            self.graph.push(key, (value - lo) / (hi - lo) if hi > lo else 0.5, value, lo, hi)
         return False
 
-    def _on_size_changed(self, combo, _param):
-        self.size = self.modes[combo.get_selected()][0]
+    def next_size(self):
+        sizes = [size for size, _ in self.modes]
+        index = sizes.index(self.size) + 1 if self.size in sizes else 0
+        self.size = sizes[index % len(sizes)]
+        self._update_keys()
         save_settings(size=self.size)
         self.pipeline.set_state(Gst.State.NULL) # caps on the source need a full renegotiation
         self._start_camera()
 
-    def rotate(self, delta):
+    def rotate(self, delta, teach=True):
+        # A turn made by hand is also the answer to which way up is right, so remember which half
+        # of the screen ends up on top and let the automatic turns aim for the same.
+        if teach and self.auto_rotate and self.probe_lean:
+            _, top_bottom, left_right = self.probe_lean
+            lands = {0: top_bottom, 180: -top_bottom, 90: left_right, 270: -left_right}[delta % 360]
+            if abs(lands) >= LEAN_DEAD:
+                self.upright_cue = 1 if lands > 0 else -1
+                save_settings(upright_cue=self.upright_cue)
         self.rotation = (self.rotation + delta) % 360
         self.pipeline.get_by_name("flip").set_property("video-direction", DIRECTIONS[self.rotation])
+        self.rotate_vote = (0, 0)
         save_settings(rotation=self.rotation)
 
     # --- serial -------------------------------------------------------------
@@ -1029,10 +1209,15 @@ class Window(Adw.ApplicationWindow):
         self._update_row(self.rows[key], m.groups())
         return True
 
+    def _series_color(self, module, index):
+        """Hue per module, lightness per field, so one log line's fields read as a family."""
+        hue = self.module_hue.setdefault(module, len(self.module_hue) * 0.618 % 1.0)
+        r, g, b = colorsys.hls_to_rgb(hue, (0.70, 0.55, 0.80, 0.46)[index % 4], 0.62)
+        return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
     def _make_row(self, key, raw, fields):
         """Register one series per numeric field. The chart labels them, so no widgets here."""
         ts, level, module, location, message = fields
-        color_of = self._module_color(raw, module)
         fields_out = []
         pos = ""
         unit = ""
@@ -1041,18 +1226,16 @@ class Window(Adw.ApplicationWindow):
             text = field_label(message[at:num.start()], unit)
             unit = field_unit(message[num.end():])
             series = f"{key}#{i}"
-            color = SERIES_COLORS[self.next_color % len(SERIES_COLORS)]
-            self.next_color += 1
-            self.graph.add_series(series, color, f"{module} {text}" if text else message[:24],
-                                  polarity_of(text, unit), unit, key, family_of(text, unit))
+            self.graph.add_series(series, self._series_color(module, i),
+                                  f"{module} {text}" if text else message[:24],
+                                  polarity_of(text, unit), unit, key)
             fields_out.append({"series": series, "label": text, "unit": unit})
             at = num.end()
         # How often this line arrives, so a stream that reports steady numbers still shows up.
         rate_series = f"{key}#rate"
-        self.graph.add_series(rate_series, SERIES_COLORS[self.next_color % len(SERIES_COLORS)],
+        self.graph.add_series(rate_series, self._series_color(module, len(fields_out)),
                               f"{module} {(fields_out[0]['label'] if fields_out else message)[:18]} rate",
-                              0, "/s", key, "message rate")
-        self.next_color += 1
+                              0, "/s", key)
         fields_out.append({"series": rate_series, "label": "rate", "unit": "/s"})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
         while len(ranges) < len(fields_out):
@@ -1127,13 +1310,14 @@ class Window(Adw.ApplicationWindow):
                 continue # never seen two different values, so there is nothing to compare
             if series["t"][-1] < now - CHART_WINDOW:
                 continue # gone quiet, and its line has already slid off the chart
-            scale = max(abs(series["hi"]), abs(series["lo"]), 1e-9)
-            spread = (series["hi"] - series["lo"]) / scale
+            low, high = min(series["v"]), max(series["v"])
+            scale = max(abs(high), abs(low), 1e-9)
+            movement = (high - low) / scale # what it does on the chart, not the whole session
             # A rate line earns its place only when the line's pace really changes.
-            if spread < (0.35 if series["key"].endswith("#rate") else 0.005):
+            if movement < (0.35 if series["key"].endswith("#rate") else 0.005):
                 continue
             recent = now - series["flag"] < OUTLIER_TTL
-            scored.append((spread + (10 if recent else 0), series))
+            scored.append((movement + (10 if recent else 0), series))
         # Round-robin over the log lines they came from, so one chatty message cannot fill the
         # table with variations on itself before other messages get a row at all.
         buckets = {}
@@ -1289,8 +1473,7 @@ class Window(Adw.ApplicationWindow):
                 text = f"{state['probe']} · {STATE_TEXT.get(self.mcu_state, self.mcu_state)}"
             self.mcu_text = text
             self._update_subtitle()
-            halted = self.mcu_state == "halted"
-            self.btn_toggle.get_child().set_label(self._keyed("S", "Resume" if halted else "Halt"))
+            self._update_keys()
         return True
 
     def _poll_job(self):
@@ -1303,22 +1486,20 @@ class Window(Adw.ApplicationWindow):
             self.progress.remove_css_class("error")
             if job.get("phase") == "error":
                 self.progress.add_css_class("error")
-        for btn in (self.btn_build, self.btn_flash, self.btn_both):
-            btn.set_sensitive(not self.job_active)
         return True
 
     # --- build --------------------------------------------------------------
 
     def toggle_type(self, state=None):
-        state = not self.btn_type.get_active() if state is None else state
+        state = self.build_type == "debug" if state is None else state
         self.build_type = "release" if state else "debug"
-        self.btn_type.set_active(state)
+        self._update_keys()
         save_settings(build_type=self.build_type)
 
     def toggle_env(self, state=None):
-        state = not self.btn_env.get_active() if state is None else state
+        state = self.build_env == "staging" if state is None else state
         self.build_env = "production" if state else "staging"
-        self.btn_env.set_active(state)
+        self._update_keys()
         save_settings(build_env=self.build_env)
 
     def build(self, mode):
@@ -1331,7 +1512,9 @@ class Window(Adw.ApplicationWindow):
         key = chr(keyval).lower() if 32 <= keyval < 127 else ""
         actions = {
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
-            "q": lambda: self.rotate(90), "c": self.clear_log, "g": self.follow_end, "v": self.toggle_pretty,
+            "q": lambda: self.rotate(90), "c": self.clear_log,
+            "w": self._toggle_auto_rotate, "z": self.next_size,
+            "g": self.follow_end, "v": self.toggle_pretty,
             "m": self.mute_last, "u": self.unmute_all,
             "d": lambda: self.toggle_type(), "e": lambda: self.toggle_env(),
             "b": lambda: self.build("build"), "f": lambda: self.build("flash"), "a": lambda: self.build("both"),

@@ -1,4 +1,4 @@
-# EyeBuds dev app: camera, serial log and ST-Link controls in one GTK4 window.
+# EyeBuddy app: camera, serial log and ST-Link controls in one GTK4 window.
 # wrapGAppsHook4 wires up the typelibs and GStreamer plugin paths the script needs.
 { lib, stdenv, python3, wrapGAppsHook4, gobject-introspection, gtk4, libadwaita, gst_all_1 }:
 let
