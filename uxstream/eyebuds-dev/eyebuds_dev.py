@@ -127,14 +127,10 @@ STATE_TEXT = {
     "running": "Running", "halted": "Halted", "reset": "In reset",
     "debug-running": "Running", "unknown": "Unknown",
 }
-DIRECTIONS = {0: "identity", 90: "90r", 180: "180", 270: "90l"}
 CAMERA_HEIGHT = 560
 PROBE_WIDTH, PROBE_HEIGHT = 64, 48 # thumbnail the screen-change probe works on
 PROBE_THRESHOLD = 1.2 # mean abs difference (0-255) above which the filmed screen counts as changed
 PROBE_GAPS = 90 # gaps between screen updates kept, to read the rate off the middle one
-PROBE_EVERY = 5 # thumbnails between two looks at where the filmed screen sits and which way it leans
-LEAN_DEAD = 0.02 # difference between two halves of the screen below which it is called symmetric
-ROTATE_HOLD = 4 # ticks a turn has to keep being the right one before the picture is turned
 RECENT_LINES = 12 # how far back a repeated line is still collapsed into its earlier one
 OUTLIER_SIGMA = 5 # how far from a field's mean a value has to be before it is called out
 OUTLIER_QUIET = 20 # seconds before the same field may warn again
@@ -298,6 +294,58 @@ def spline(cr, points):
         cr.curve_to(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
                     p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
                     p2[0], p2[1])
+
+
+class CameraView(Gtk.Widget):
+    """The camera picture, drawn at any angle and scaled to fit what is left of the box."""
+
+    def __init__(self):
+        super().__init__(hexpand=True, vexpand=False)
+        self.texture = None
+        self.angle = 0.0
+
+    def set_frame(self, texture):
+        size = None if self.texture is None else (self.texture.get_width(), self.texture.get_height())
+        self.texture = texture
+        if size != (texture.get_width(), texture.get_height()):
+            self.queue_resize()
+        self.queue_draw()
+        return False
+
+    def set_angle(self, angle):
+        self.angle = angle % 360
+        self.queue_resize() # the turned picture is a different shape, so it asks for another height
+        self.queue_draw()
+
+    def _box(self):
+        """How much room the turned picture takes, in its own pixels."""
+        radians = math.radians(self.angle)
+        cos, sin = abs(math.cos(radians)), abs(math.sin(radians))
+        width, height = self.texture.get_width(), self.texture.get_height()
+        return width * cos + height * sin, width * sin + height * cos
+
+    def do_measure(self, orientation, for_size):
+        """Height for width: as tall as the turned picture needs to fill the width it is given."""
+        if self.texture is None or orientation == Gtk.Orientation.HORIZONTAL:
+            return 0, 0, -1, -1
+        box_w, box_h = self._box()
+        height = box_h * for_size / box_w if for_size > 0 else box_h
+        return 0, min(round(height), CAMERA_HEIGHT), -1, -1
+
+    def do_snapshot(self, snapshot):
+        if self.texture is None:
+            return
+        width, height = self.get_width(), self.get_height()
+        box_w, box_h = self._box()
+        scale = min(width / box_w, height / box_h)
+        texture_w, texture_h = self.texture.get_width(), self.texture.get_height()
+        snapshot.save()
+        snapshot.translate(Graphene.Point().init(width / 2, height / 2))
+        snapshot.rotate(self.angle)
+        snapshot.scale(scale, scale)
+        snapshot.append_texture(self.texture, Graphene.Rect().init(-texture_w / 2, -texture_h / 2,
+                                                                  texture_w, texture_h))
+        snapshot.restore()
 
 
 class MultiGraph(Gtk.DrawingArea):
@@ -725,7 +773,7 @@ def camera_needs(device):
     else:
         Gst.init_check(None)
         for element, what in (("v4l2src", "the v4l2 camera source"),
-                              ("videoflip", "the video rotation filter")):
+                              ("videoconvert", "the video format converter")):
             if Gst.ElementFactory.find(element) is None:
                 missing.append(what)
     if not Path(device).exists():
@@ -807,7 +855,8 @@ class Window(Adw.ApplicationWindow):
         super().__init__(application=app, title="EyeBuddy", default_width=1400, default_height=900)
         self.args = args
         self.settings = read_json(SETTINGS) or {}
-        self.rotation = self.settings.get("rotation", args.rotate)
+        self.rotation = self.settings.get("rotation", args.rotate) % 360
+        self.angle_save = None # pending write of the angle, so a dragged slider writes once
         # Without GStreamer or a camera node there is no picture, and the window is log and chart.
         self.camera = Gst is not None and not args.no_camera and Path(args.device).exists()
         self.modes = camera_modes(args.device) if self.camera else CAMERA_SIZES
@@ -815,12 +864,6 @@ class Window(Adw.ApplicationWindow):
         self.pipeline = None
         self.probe_frame = None  # previous camera thumbnail
         self.probe_frames = 0    # thumbnails seen since the last tick, so the camera's own rate is known
-        self.probe_lean = None   # (portrait, top-bottom, left-right) of the lit screen in the picture
-        self.auto_rotate = self.settings.get("auto_rotate", False)
-        # Which way up looks right, learned from the last turn made by hand: 1 when the brighter
-        # half of the screen belongs at the top, -1 when it belongs at the bottom.
-        self.upright_cue = self.settings.get("upright_cue", 0)
-        self.rotate_vote = (0, 0)
         self.probe_gaps = collections.deque(maxlen=PROBE_GAPS) # seconds between the screen's updates
         self.probe_changed = None # when the filmed screen last changed
         self.camera_rate = 0.0
@@ -842,7 +885,6 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add(2000, self._update_ranges)
         if self.camera:
             GLib.timeout_add(1000, self._publish_camera_rate)
-            GLib.timeout_add(1000, self._auto_rotate)
         GLib.timeout_add(5000, self._flush_ranges)
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
@@ -867,9 +909,9 @@ class Window(Adw.ApplicationWindow):
 
         # Bottom half: a vertical button column on the left, the camera filling the rest.
         bottom = Gtk.Box(spacing=8, margin_top=6, margin_bottom=8, margin_start=8, margin_end=8, vexpand=False)
-        self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=False)
-        self.picture.add_css_class("card")
-        self.picture.set_visible(self.camera)
+        self.view = CameraView()
+        self.view.add_css_class("card")
+        self.view.set_visible(self.camera)
 
         self.textview = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, can_focus=False)
         self.textview.set_wrap_mode(Gtk.WrapMode.CHAR)
@@ -929,13 +971,21 @@ class Window(Adw.ApplicationWindow):
 
         controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.START)
         bottom.append(controls)
-        bottom.append(self.picture)
+        bottom.append(self.view)
         # Every action is a key, so the column is a list of them rather than a column of buttons.
         self.keys_label = Gtk.Label(xalign=0, use_markup=True, css_classes=["caption"])
+        self.angle_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 359, 1)
+        self.angle_scale.set_value(self.rotation)
+        self.angle_scale.set_draw_value(False)
+        self.angle_scale.set_visible(self.camera)
+        for mark in (0, 90, 180, 270):
+            self.angle_scale.add_mark(mark, Gtk.PositionType.BOTTOM, None)
+        self.angle_scale.connect("value-changed", lambda scale: self.set_angle(scale.get_value()))
+        self.view.set_angle(self.rotation) # the saved angle, which no slider movement has announced yet
         self.job_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=24,
                                    css_classes=["dim-label", "caption"])
         self.progress = Gtk.ProgressBar()
-        for widget in (self.keys_label, self.job_label, self.progress):
+        for widget in (self.keys_label, self.angle_scale, self.job_label, self.progress):
             controls.append(widget)
         self._update_keys()
 
@@ -959,8 +1009,8 @@ class Window(Adw.ApplicationWindow):
             self._keyed("H", "Reset + halt"),
             "",
             *([self._keyed("K", "Camera")] if not self.camera else []),
-            *([self._keyed("Q", "Rotate camera"),
-               self._choice("W", "Turn by hand", "Turn itself", self.auto_rotate),
+            *([self._keyed("Q", f"Turn a quarter · {self.rotation}°"),
+               self._keyed(",  .", "Turn one degree"),
                self._keyed("Z", f"{width}×{height} @ {fps} fps"),
                ""] if self.camera else []),
             self._choice("D", "Debug", "Release", self.build_type == "release"),
@@ -985,20 +1035,17 @@ class Window(Adw.ApplicationWindow):
             return
         Gst.init(None)
         w, h = self.size.split("x")
-        # gtk4paintablesink hands its frames straight to GTK, which few archives ship. Without it
-        # the frames come back through an appsink and are painted as textures instead.
-        paintable = Gst.ElementFactory.find("gtk4paintablesink") is not None
-        view = "queue ! gtk4paintablesink name=sink" if paintable else (
-            "queue max-size-buffers=1 leaky=downstream ! videoconvert ! video/x-raw,format=RGBA "
-            "! appsink name=view emit-signals=true max-buffers=1 drop=true sync=false")
+        # The frames come back as plain buffers and the view turns them into textures itself, which
+        # is what lets the picture sit at any angle and asks nothing of the archive but base plugins.
         try:
             self.pipeline = Gst.parse_launch(
                 f"v4l2src name=src device={self.args.device} ! video/x-raw,width={w},height={h} "
                 f"! queue max-size-buffers=1 leaky=downstream ! videoconvert "
-                f"! videoflip name=flip video-direction={DIRECTIONS[self.rotation]} "
-                # Caps the frame height so the picture's natural size, and with it the bottom part, stays bounded.
+                # Caps the frame height, so the picture's natural size stays bounded.
                 f"! videoscale ! video/x-raw,height={CAMERA_HEIGHT} ! tee name=t "
-                f"t. ! {view} "
+                f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert "
+                f"! video/x-raw,format=RGBA "
+                f"! appsink name=view emit-signals=true max-buffers=1 drop=true sync=false "
                 # A thumbnail branch to count how often the filmed screen actually changes.
                 f"t. ! queue max-size-buffers=1 leaky=downstream ! videoconvert ! videoscale "
                 f"! video/x-raw,format=GRAY8,width={PROBE_WIDTH},height={PROBE_HEIGHT} "
@@ -1008,22 +1055,19 @@ class Window(Adw.ApplicationWindow):
             self._no_camera(error.message)
             return
         self.pipeline.get_by_name("probe").connect("new-sample", self._on_camera_frame)
-        if paintable:
-            self.picture.set_paintable(self.pipeline.get_by_name("sink").props.paintable)
-        else:
-            self.pipeline.get_by_name("view").connect("new-sample", self._on_view_frame)
+        self.pipeline.get_by_name("view").connect("new-sample", self._on_view_frame)
         self.pipeline.set_state(Gst.State.PLAYING)
 
     def _no_camera(self, why):
         """Give up on the picture without giving up on the window."""
         self.camera = False
         self.pipeline = None
-        self.picture.set_visible(False)
+        self.view.set_visible(False)
         self._update_keys()
         self._note(f"No camera: {why}")
 
     def _on_view_frame(self, sink):
-        """One RGBA frame into a texture, for when GStreamer cannot paint into GTK itself."""
+        """One RGBA frame into a texture the view can draw at whatever angle it is set to."""
         sample = sink.emit("pull-sample")
         if sample is None:
             return Gst.FlowReturn.OK
@@ -1038,7 +1082,7 @@ class Window(Adw.ApplicationWindow):
             buffer.unmap(info)
         width, height = caps.get_value("width"), caps.get_value("height")
         texture = Gdk.MemoryTexture.new(width, height, Gdk.MemoryFormat.R8G8B8A8, data, width * 4)
-        GLib.idle_add(self.picture.set_paintable, texture)
+        GLib.idle_add(self.view.set_frame, texture)
         return Gst.FlowReturn.OK
 
     def offer_camera(self):
@@ -1048,11 +1092,10 @@ class Window(Adw.ApplicationWindow):
         missing, manager = camera_needs(self.args.device)
         if not missing:
             self.camera = True # everything is in place now, so bring the picture up
-            self.picture.set_visible(True)
+            self.view.set_visible(True)
             self._start_camera()
             self._update_keys()
             GLib.timeout_add(1000, self._publish_camera_rate)
-            GLib.timeout_add(1000, self._auto_rotate)
             return
         body = "The picture needs " + ", ".join(missing) + "."
         dialog = Adw.AlertDialog(heading="No camera", body=body)
@@ -1093,69 +1136,11 @@ class Window(Adw.ApplicationWindow):
         difference = sum(abs(a - b) for a, b in zip(frame, previous)) / len(frame)
         now = time.monotonic()
         self.probe_frames += 1
-        if self.probe_frames % PROBE_EVERY == 0:
-            self.probe_lean = self._probe_lean(frame)
         if difference > PROBE_THRESHOLD:
             if self.probe_changed is not None:
                 self.probe_gaps.append(now - self.probe_changed)
             self.probe_changed = now
         return Gst.FlowReturn.OK
-
-    def _probe_lean(self, frame):
-        """The lit screen in the thumbnail: is it standing up, and which half of it is brighter?
-
-        The thumbnail is stretched to a fixed size, so the screen's shape is only recovered by
-        scaling the box back out by the real frame's aspect.
-        """
-        rows = [frame[y * PROBE_WIDTH:(y + 1) * PROBE_WIDTH] for y in range(PROBE_HEIGHT)]
-        floor = (min(frame) + max(frame)) / 2
-        lit_rows = [sum(v > floor for v in row) for row in rows]
-        lit_columns = [sum(row[x] > floor for row in rows) for x in range(PROBE_WIDTH)]
-        if max(lit_rows) < 3 or max(lit_columns) < 3:
-            return None # nothing bright enough to call a screen
-        span = lambda counts: (lambda live: (live[0], live[-1]))(
-            [i for i, n in enumerate(counts) if n > max(counts) * 0.25])
-        y0, y1 = span(lit_rows)
-        x0, x1 = span(lit_columns)
-        width, height = self.size.split("x")
-        if self.rotation in (90, 270):
-            width, height = height, width
-        box_w = (x1 - x0 + 1) / PROBE_WIDTH * int(width)
-        box_h = (y1 - y0 + 1) / PROBE_HEIGHT * int(height)
-        inside = [row[x0:x1 + 1] for row in rows[y0:y1 + 1]]
-        half = lambda part: sum(sum(row) for row in part) / max(1, sum(len(row) for row in part))
-        light = half(inside) or 1
-        top_bottom = (half(inside[:len(inside) // 2]) - half(inside[len(inside) // 2:])) / light
-        left_right = (half([row[:len(row) // 2] for row in inside])
-                      - half([row[len(row) // 2:] for row in inside])) / light
-        return box_h >= box_w, top_bottom, left_right
-
-    def _auto_rotate(self):
-        """Turn the picture in 90° steps until the screen stands up the way it was taught to."""
-        if not self.auto_rotate or self.pipeline is None or self.probe_lean is None:
-            return True
-        portrait, top_bottom, left_right = self.probe_lean
-        # A quarter turn clockwise brings the left edge up, a counter-clockwise one the right edge.
-        candidates = [(0, top_bottom), (180, -top_bottom)] if portrait else \
-                     [(90, left_right), (270, -left_right)]
-        if self.upright_cue:
-            delta, lean = max(candidates, key=lambda choice: choice[1] * self.upright_cue)
-            if abs(lean) < LEAN_DEAD:
-                delta = candidates[0][0] # too even to tell up from down, so only the shape counts
-        else:
-            delta = candidates[0][0]
-        held = self.rotate_vote[1] + 1 if self.rotate_vote[0] == delta else 1
-        self.rotate_vote = (delta, held)
-        if delta and held >= ROTATE_HOLD: # a steady reading, not one frame of somebody's hand
-            self.rotate(delta, teach=False)
-            self.rotate_vote = (0, 0)
-        return True
-
-    def _toggle_auto_rotate(self):
-        self.auto_rotate = not self.auto_rotate
-        self.rotate_vote = (0, 0)
-        self._update_keys()
-        save_settings(auto_rotate=self.auto_rotate)
 
     def _publish_camera_rate(self):
         frames, self.probe_frames = self.probe_frames, 0
@@ -1192,7 +1177,7 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def next_size(self):
-        if not self.camera:
+        if not self.camera or self.pipeline is None:
             return
         sizes = [size for size, _ in self.modes]
         index = sizes.index(self.size) + 1 if self.size in sizes else 0
@@ -1202,21 +1187,23 @@ class Window(Adw.ApplicationWindow):
         self.pipeline.set_state(Gst.State.NULL) # caps on the source need a full renegotiation
         self._start_camera()
 
-    def rotate(self, delta, teach=True):
-        if not self.camera:
-            return
-        # A turn made by hand is also the answer to which way up is right, so remember which half
-        # of the screen ends up on top and let the automatic turns aim for the same.
-        if teach and self.auto_rotate and self.probe_lean:
-            _, top_bottom, left_right = self.probe_lean
-            lands = {0: top_bottom, 180: -top_bottom, 90: left_right, 270: -left_right}[delta % 360]
-            if abs(lands) >= LEAN_DEAD:
-                self.upright_cue = 1 if lands > 0 else -1
-                save_settings(upright_cue=self.upright_cue)
-        self.rotation = (self.rotation + delta) % 360
-        self.pipeline.get_by_name("flip").set_property("video-direction", DIRECTIONS[self.rotation])
-        self.rotate_vote = (0, 0)
+    def rotate(self, delta):
+        self.set_angle(self.rotation + delta)
+
+    def set_angle(self, angle):
+        """Any angle, not just the quarter turns a video filter can do."""
+        self.rotation = round(angle) % 360
+        self.view.set_angle(self.rotation)
+        if round(self.angle_scale.get_value()) != self.rotation:
+            self.angle_scale.set_value(self.rotation)
+        self._update_keys()
+        if self.angle_save is None: # a dragged slider would write the file on every step
+            self.angle_save = GLib.timeout_add(600, self._save_angle)
+
+    def _save_angle(self):
+        self.angle_save = None
         save_settings(rotation=self.rotation)
+        return False
 
     # --- serial -------------------------------------------------------------
 
@@ -1717,7 +1704,8 @@ class Window(Adw.ApplicationWindow):
         actions = {
             "s": lambda: send("toggle"), "r": lambda: send("reset"), "h": lambda: send("reset_halt"),
             "q": lambda: self.rotate(90), "c": self.clear_log,
-            "w": self._toggle_auto_rotate, "z": self.next_size, "k": self.offer_camera,
+            "z": self.next_size, "k": self.offer_camera,
+            ",": lambda: self.rotate(-1), ".": lambda: self.rotate(1),
             "g": self.follow_end, "v": self.toggle_pretty,
             "m": self.mute_last, "u": self.unmute_all,
             "d": lambda: self.toggle_type(), "e": lambda: self.toggle_env(),
@@ -1733,7 +1721,7 @@ class Window(Adw.ApplicationWindow):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-d", "--device", default="/dev/video0")
-    parser.add_argument("-r", "--rotate", type=int, default=270, choices=[0, 90, 180, 270])
+    parser.add_argument("-r", "--rotate", type=int, default=270, help="degrees to turn the picture")
     parser.add_argument("-b", "--baud", type=int, default=2000000)
     parser.add_argument("--logdir", default="/tmp/serial-logs")
     parser.add_argument("--no-camera", action="store_true", help="log and chart only, no video")
