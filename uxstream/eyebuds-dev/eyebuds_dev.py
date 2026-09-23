@@ -53,11 +53,14 @@ def package_manager():
 def install_packages(manager, packages):
     """Install with the system package manager, asking for the password the way the session can."""
     verb = ["-S", "--noconfirm"] if manager == "pacman" else ["install", "-y"]
-    # A terminal can ask for a password itself; a launcher-started window needs polkit to ask.
-    front = ["sudo"] if sys.stdin.isatty() and shutil.which("sudo") else ["pkexec"]
-    if front == ["pkexec"] and not shutil.which("pkexec"):
-        return False
-    return subprocess.run(front + [shutil.which(manager)] + verb + packages).returncode == 0
+    command = [shutil.which(manager)] + verb + packages
+    if os.geteuid():
+        # A terminal can ask for a password itself; a launcher-started window needs polkit to ask.
+        lift = "sudo" if sys.stdin.isatty() and shutil.which("sudo") else "pkexec"
+        if not shutil.which(lift):
+            return False
+        command = [shutil.which(lift)] + command
+    return subprocess.run(command).returncode == 0
 
 
 def ensure_toolkit():
@@ -866,6 +869,9 @@ class SerialReader(threading.Thread):
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, args):
         super().__init__(application=app, title="EyeBuddy", default_width=1400, default_height=900)
+        # The chart is drawn as white on dark, and the key letters are white, so the window asks
+        # for the dark scheme rather than taking whatever the desktop happens to prefer.
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         self.args = args
         self.settings = read_json(SETTINGS) or {}
         self.rotation = self.settings.get("rotation", args.rotate) % 360
@@ -939,8 +945,12 @@ class Window(Adw.ApplicationWindow):
                                     row_spacing=0, column_spacing=2, margin_start=6, margin_end=6)
         self.mute_box.set_visible(False)
         css = Gtk.CssProvider()
-        css.load_from_string(""".telemetry { padding: 1px 6px; min-height: 0; }
-            .ranges label { font-size: 0.78em; padding: 0; }""")
+        rules = """.telemetry { padding: 1px 6px; min-height: 0; }
+            .ranges label { font-size: 0.78em; padding: 0; }"""
+        if hasattr(css, "load_from_string"): # load_from_string is GTK 4.12, load_from_data is older
+            css.load_from_string(rules)
+        else:
+            css.load_from_data(rules.encode())
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.rows = {}   # pattern -> series state
         self.seen = {}   # pattern -> occurrences before it earns a place on the chart
@@ -1116,13 +1126,17 @@ class Window(Adw.ApplicationWindow):
             GLib.timeout_add(1000, self._publish_camera_rate)
             return
         body = "The picture needs " + ", ".join(missing) + "."
-        dialog = Adw.AlertDialog(heading="No camera", body=body)
+        # AlertDialog only arrived in libadwaita 1.5, and older distributions are the ones most
+        # likely to be missing the camera pieces in the first place.
+        modern = hasattr(Adw, "AlertDialog")
+        dialog = (Adw.AlertDialog(heading="No camera", body=body) if modern
+                  else Adw.MessageDialog(heading="No camera", body=body, transient_for=self))
         dialog.add_response("close", "Close")
         if manager:
             dialog.add_response("install", "Install")
             dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
         dialog.connect("response", lambda _d, response: response == "install" and self._install_camera(manager))
-        dialog.present(self)
+        dialog.present(self) if modern else dialog.present()
 
     def _install_camera(self, manager):
         """Run the install off the main loop, so the window keeps drawing while it works."""
