@@ -66,5 +66,11 @@
     # normally points NixOS builds at glibc's headers -- without this,
     # bindgen can't find things like endian.h (needed by rust_lwip).
     BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${pkgs.glibc.dev}/include";
+    # The eyebuds firmware Makefile (`make setup_vcpkg`) runs `npm i -g
+    # lv_font_conv`, which cannot write into the read-only nodejs store path.
+    # A user prefix makes that work; its bin/ is on sessionPath below.
+    NPM_CONFIG_PREFIX = "${homeDirectory}/.npm-global";
   };
+
+  sessionPath = [ "${homeDirectory}/.npm-global/bin" ];
 }

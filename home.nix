@@ -286,6 +286,7 @@ in
     # environment block also sets this so dbus-activated portals see it.
     GTK_THEME = "Adwaita:dark";
   } // uxstreamTools.sessionVariables;
+  home.sessionPath = uxstreamTools.sessionPath;
 
   # No theme/extensions picked here -- Marketplace is the in-app browser for
   # both, so pick visually from inside Spotify rather than guessing here.
