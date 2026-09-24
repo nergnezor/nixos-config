@@ -1194,7 +1194,7 @@ class EyeBuddyApp(App):
     # Each key with a Nerd Font icon (Kitty ships the symbols), all the minimised list (?) shows
     # beside the letter. Plain glyphs in the text colour, not emoji.
     KEYS = [
-        ("ST-Link", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
+        ("Debug", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
         ("Build", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
                    ("f", "\uf0e7", "flash"), ("a", "\uf135", "build + flash")]),
         ("Camera", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
@@ -1210,8 +1210,7 @@ class EyeBuddyApp(App):
         for group, keys in self.KEYS:
             if text:
                 text.append("\n")
-            if not self.keys_compact:
-                text.append(group + "\n", style="dim")
+            text.append(group + "\n", style="dim")
             for key, icon, what in keys:
                 text.append(icon + " ", style="#7f848e")
                 text.append(key.ljust(2 if self.keys_compact else 3), style="bold #e5c07b")
@@ -1221,11 +1220,17 @@ class EyeBuddyApp(App):
         text.rstrip()
         return text
 
+    def _size_keys(self):
+        # Minimised, a fixed 7 characters inside the frame: room for any group name, and the
+        # panels beside it do not shift when a name changes.
+        self.query_one("#keys").styles.width = 11 if self.keys_compact else "auto"
+
     def action_toggle_keys(self):
         self.keys_compact = not self.keys_compact
         save_settings(keys_compact=self.keys_compact)
         keys = self.query_one("#keys", Static)
         keys.update(self._keys_text())
+        self._size_keys()
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
@@ -1236,6 +1241,7 @@ class EyeBuddyApp(App):
                   "#outliers": "Outliers", "#keys": "Keys"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
+        self._size_keys()
         self._refresh_settings_panel()
         self._update_status()
         if self.camera_enabled:
