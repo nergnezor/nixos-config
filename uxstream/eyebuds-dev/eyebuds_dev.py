@@ -647,10 +647,10 @@ class StLink(threading.Thread):
         if holder == "openocd":
             return  # most likely the bar plugin's own look; keep what was last seen
         if holder:
-            return self._publish(f"{probe} · held by {holder}", None)
+            return self._publish(f"held by {holder} · {probe}", None)
         state, _ = self._openocd([])
         if state:
-            self._publish(f"{probe} · {STATE_TEXT[state]}", state)
+            self._publish(f"{STATE_TEXT[state]} · {probe}", state)
 
     def _act(self, action):
         if action == "toggle":
@@ -668,7 +668,7 @@ class StLink(threading.Thread):
             if not holder:
                 state, error = self._openocd([tcl])
                 if state:
-                    return self._publish(f"{probe} · {STATE_TEXT[state]}", state)
+                    return self._publish(f"{STATE_TEXT[state]} · {probe}", state)
             time.sleep(0.6)
         self.on_note(f"ST-Link {action} failed: {error or 'the probe stayed busy'}")
 
@@ -712,7 +712,7 @@ class SerialReader(threading.Thread):
         self.logdir.mkdir(parents=True, exist_ok=True)
         logfile = self.logdir / f"{datetime.now():%Y%m%d-%H%M%S}-{Path(self.port).name}.log"
         with serial.Serial(self.port, self.baud, timeout=0.2) as ser, logfile.open("ab") as log:
-            self.on_line("", f"{self.port} @ {self.baud} → {logfile.name}")
+            self.on_line("", f"{Path(self.port).name} @ {self.baud} → {logfile.name}")
             while True:
                 data = ser.read(4096)
                 if data:
@@ -1296,7 +1296,8 @@ class EyeBuddyApp(App):
     Screen { background: $surface; }
     * { scrollbar-size: 0 0; }
     #top { height: 1; background: $panel; }
-    #status { width: 1fr; color: $text; padding: 0 1; }
+    /* One line, cut short at the end: the MCU state comes first so it is never what is cut. */
+    #status { width: 1fr; color: $text; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
     #status-keys { width: auto; padding: 0 1; }
     #main { height: 1fr; }
     #bottom { height: 36; }
