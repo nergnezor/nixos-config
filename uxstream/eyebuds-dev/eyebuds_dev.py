@@ -112,6 +112,12 @@ def install_launcher():
 
 ensure_toolkit()
 
+# Kitty's graphics find their image by the exact RGB colour of the placeholder cells, and SSH
+# does not carry COLORTERM across -- without it Rich falls back to 16 colours, the colours no
+# longer name the image and the chart and camera come out blank. Kitty always does truecolor.
+if os.environ.get("TERM") == "xterm-kitty" or os.environ.get("KITTY_WINDOW_ID"):
+    os.environ.setdefault("COLORTERM", "truecolor")
+
 import cairo  # noqa: E402
 import serial  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -407,6 +413,7 @@ class SerialReader(threading.Thread):
         self.baud, self.logdir, self.on_line = baud, Path(logdir), on_line
         self.port = ""  # not None, so the first look with nothing plugged in still says so
         self.warned = False
+        self.last_error = None
 
     def run(self):
         while True:
@@ -421,7 +428,9 @@ class SerialReader(threading.Thread):
             try:
                 self._pump()
             except (serial.SerialException, OSError) as exc:
-                self.on_line(f"(port gone: {exc})\n", "Disconnected")
+                if str(exc) != self.last_error:  # a port stuck failing says so once, not every second
+                    self.last_error = str(exc)
+                    self.on_line(f"(port gone: {exc})\n", "Disconnected")
                 if "Permission denied" in str(exc) and not self.warned:
                     self.warned = True  # the usual first-run trip-up on a distribution that is not NixOS
                     self.on_line(f"(reading {self.port} needs the dialout group: "
@@ -436,6 +445,7 @@ class SerialReader(threading.Thread):
             while True:
                 data = ser.read(4096)
                 if data:
+                    self.last_error = None
                     log.write(data)
                     log.flush()
                     self.on_line(data.decode("utf-8", "replace"), None)
