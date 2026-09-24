@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=EyeBuddy
-Comment=Camera, serial log and ST-Link controls for the eyebuds bench
+Comment=Camera, serial log and ST-Link controls for the eyebuds bench, in a terminal
 Exec=eyebuds-dev
-Icon=camera-web
+Icon=utilities-terminal
+Terminal=true
 Categories=Development;Utility;
-StartupWMClass=dev.uxstream.EyebudsDev
