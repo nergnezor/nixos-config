@@ -436,7 +436,9 @@ class CameraCapture(threading.Thread):
                     self.history.append((now, thumb))
                 buf = b""
         self.proc.stdout.close()
-        if not self._stop.is_set():
+        if self._stop.is_set():
+            self._end_ffmpeg()  # stopped before ffmpeg was even started: it is ours to end
+        else:
             # ffmpeg gave up -- most often "Device or resource busy", another program holding it
             lines = self.proc.stderr.read().decode(errors="replace").strip().splitlines()
             self.error = lines[-1] if lines else f"ffmpeg exited ({self.proc.wait()})"
@@ -450,9 +452,20 @@ class CameraCapture(threading.Thread):
             return [(t, thumb) for t, thumb in self.history if start <= t <= end]
 
     def stop(self):
+        """Stop, and wait until ffmpeg has let go of the camera -- the next capture opens the same
+        device straight away, and finds it busy if the old one is still closing."""
         self._stop.set()
-        if self.proc:
-            self.proc.terminate()
+        self._end_ffmpeg()
+
+    def _end_ffmpeg(self):
+        proc = self.proc
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
 
 def picture_change(frames, t0, end):
