@@ -6,8 +6,9 @@ starts. `--install` also puts it on PATH and in the launcher. It is a Textual TU
 it streams over a plain SSH session (e.g. from the bench machine to wherever you are sitting),
 no X11 forwarding or GPU needed.
 
-The ST-Link noctalia plugin stays the backend. Actions go through `noctalia msg plugin`,
-state comes back through the plugin's state.json / job.json.
+It talks to the ST-Link itself: one-shot openocd runs for the MCU state and halt/resume/reset,
+and build-flash.sh (shared with the noctalia bar plugin) for building and flashing -- so nothing
+here needs a desktop session, and it works the same over SSH.
 """
 import argparse
 import collections
@@ -134,8 +135,21 @@ from textual_image.renderable import Image as _AutoRenderable  # noqa: E402
 from textual_image.renderable.tgp import Image as _TGPRenderable  # noqa: E402
 from textual_image.widget import AutoImage  # noqa: E402
 
-PLUGIN = "erik/stlink:service"
-DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "noctalia/plugins/data/erik/stlink"
+# Build/flash progress (job.json) and its full output (job.log).
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "eyebuds-dev"
+# The ST-Link side, with the same defaults as the noctalia bar plugin (uxstream/noctalia-plugins/stlink).
+OPENOCD_INTERFACE = "interface/stlink.cfg"
+OPENOCD_TARGET = "target/stm32u5x.cfg"
+OPENOCD_CPU = "stm32u5x.cpu"
+CHIP = "STM32U5G9BJ"  # for probe-rs, which flashes
+FLASH_BANK = 0
+PROJECT_DIR = Path(os.environ.get("EYEBUDS_PROJECT", Path.home() / "uxstream/embedded/client/projects/eyebuds"))
+STLINK_POLL = 2.0  # seconds between looks at the probe and the MCU state
+# USB product ids of every ST-Link generation (vendor 0483).
+STLINK_PIDS = {"3744": "V1", "3748": "V2", "374b": "V2-1", "374a": "V2-1", "374d": "V3", "374e": "V3",
+               "374f": "V3", "3752": "V2-1", "3753": "V3", "3754": "V3", "3755": "V3", "3757": "V3"}
+# Anything holding the probe open; a one-shot openocd would fail against it.
+DEBUGGERS = ["openocd", "ST-LINK_gdbserver", "probe-rs", "STM32_Programmer_CLI", "st-util", "pyocd"]
 # Remembered between runs: camera rotation and size, raw/pretty view.
 SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
@@ -363,43 +377,6 @@ def pattern_of(plain):
     return NUMBERS.sub("#", body)
 
 
-def noctalia_env():
-    """The environment `noctalia msg` needs to find the running noctalia.
-
-    It looks for $XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock, and an SSH session has neither
-    variable -- so they are filled in from the socket that is actually there.
-    """
-    env = dict(os.environ)
-    runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    if not env.get("WAYLAND_DISPLAY"):
-        for sock in sorted(Path(runtime).glob("noctalia-*.sock")):
-            name = sock.name[len("noctalia-"):-len(".sock")]
-            if (Path(runtime) / name).exists():  # the compositor's own socket, not a helper's
-                env["WAYLAND_DISPLAY"] = name
-                break
-    return env
-
-
-def send(action, on_error=None, **payload):
-    """Hand an action to the ST-Link plugin; `on_error(text)` hears it if noctalia refuses."""
-    cmd = ["noctalia", "msg", "plugin", PLUGIN, "all", action]
-    if payload:
-        cmd.append(json.dumps(payload))
-
-    def run():
-        try:
-            result = subprocess.run(cmd, env=noctalia_env(), capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.SubprocessError) as exc:
-            result = None
-            reply = str(exc)
-        else:
-            reply = (result.stdout + result.stderr).strip()
-        if on_error and (result is None or result.returncode or reply.startswith("error")):
-            on_error(f"{action}: {reply or 'no answer from noctalia'}")
-
-    threading.Thread(target=run, daemon=True).start()
-
-
 def read_json(path):
     try:
         return json.loads(path.read_text())
@@ -517,6 +494,138 @@ class AdbSwiper(threading.Thread):
             self.failed = False
             self.on_note("Swiping again.")
         return True
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except (TypeError, ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def build_flash_script():
+    """build-flash.sh: next to this file in the Nix package, else in the plugin's repo folder."""
+    for path in (os.environ.get("EYEBUDDY_BUILD_FLASH"),
+                 Path(__file__).resolve().parent / "build-flash.sh",
+                 Path(__file__).resolve().parent.parent / "noctalia-plugins/stlink/build-flash.sh"):
+        if path and Path(path).is_file():
+            return Path(path)
+    return None
+
+
+class StLink(threading.Thread):
+    """The probe and the MCU behind it, through one-shot openocd runs.
+
+    Every STLINK_POLL seconds: is an ST-Link plugged in (sysfs, without touching it), is some
+    debugger holding it, and if neither -- what state is the core in. Actions queue up and run
+    between polls. `on_state(text, state)` hears every change, `on_note(text)` failures.
+    """
+
+    def __init__(self, on_state, on_note):
+        super().__init__(daemon=True)
+        self.on_state, self.on_note = on_state, on_note
+        self.actions = collections.deque()
+        self._wake = threading.Event()
+        self.state = None
+        self.shown = None
+
+    def request(self, action):
+        self.actions.append(action)
+        self._wake.set()
+
+    def run(self):
+        while True:
+            self._wake.wait(STLINK_POLL)
+            self._wake.clear()
+            while self.actions:
+                self._act(self.actions.popleft())
+            self._poll()
+
+    @staticmethod
+    def probe():
+        for vendor in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+            try:
+                if Path(vendor).read_text().strip() != "0483":
+                    continue
+                pid = (Path(vendor).parent / "idProduct").read_text().strip().lower()
+            except OSError:
+                continue
+            if pid in STLINK_PIDS:
+                return f"ST-Link {STLINK_PIDS[pid]}"
+        return None
+
+    @staticmethod
+    def holder():
+        """Name of a debugger process holding the probe, if any."""
+        try:
+            out = subprocess.run(["pgrep", "-x", "-l", "|".join(DEBUGGERS)],
+                                 capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] in DEBUGGERS:
+                return parts[1]
+        return None
+
+    def _openocd(self, commands):
+        """(state, error) after running `commands`; state is None when openocd could not say."""
+        cmd = ["openocd", "-d0", "-f", OPENOCD_INTERFACE, "-f", OPENOCD_TARGET, "-c", "init"]
+        for c in commands + [f"puts [{OPENOCD_CPU} curstate]", "shutdown"]:
+            cmd += ["-c", c]
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        except FileNotFoundError:
+            return None, "openocd not found"
+        except subprocess.SubprocessError as exc:
+            return None, str(exc)
+        for line in res.stdout.splitlines():
+            if line.strip() in STATE_TEXT:
+                return line.strip(), None
+        errors = [l.strip() for l in (res.stderr + res.stdout).splitlines() if l.strip().startswith("Error")]
+        return None, errors[-1] if errors else f"openocd exited {res.returncode}"
+
+    def _publish(self, text, state):
+        self.state = state
+        if (text, state) != self.shown:
+            self.shown = (text, state)
+            self.on_state(text, state)
+
+    def _poll(self):
+        probe = self.probe()
+        if not probe:
+            return self._publish("No ST-Link", None)
+        holder = self.holder()
+        if holder == "openocd":
+            return  # most likely the bar plugin's own look; keep what was last seen
+        if holder:
+            return self._publish(f"{probe} · held by {holder}", None)
+        state, _ = self._openocd([])
+        if state:
+            self._publish(f"{probe} · {STATE_TEXT[state]}", state)
+
+    def _act(self, action):
+        if action == "toggle":
+            action = "resume" if self.state == "halted" else "halt"
+        tcl = {"halt": "halt", "resume": "resume", "reset": "reset run", "reset_halt": "reset halt"}[action]
+        probe = self.probe()
+        if not probe:
+            return self.on_note("ST-Link: no probe plugged in.")
+        error = None
+        # The bar plugin polls the probe with its own openocd, so a first try can find it busy.
+        for _ in range(5):
+            holder = self.holder()
+            if holder and holder != "openocd":
+                return self.on_note(f"ST-Link: the probe is held by {holder}.")
+            if not holder:
+                state, error = self._openocd([tcl])
+                if state:
+                    return self._publish(f"{probe} · {STATE_TEXT[state]}", state)
+            time.sleep(0.6)
+        self.on_note(f"ST-Link {action} failed: {error or 'the probe stayed busy'}")
 
 
 class SerialReader(threading.Thread):
@@ -1176,9 +1285,9 @@ class EyeBuddyApp(App):
         self.build_type = self.settings.get("build_type", "debug")
         self.build_env = self.settings.get("build_env", "production")
         self.job_active = False
-        self.stlink = shutil.which("noctalia") is not None  # the ST-Link backend, absent elsewhere
         self.mcu_state = None
-        self.mcu_text = "No ST-Link" if not self.stlink else "…"
+        self.mcu_text = "…"
+        self.job = None  # the build/flash process, while one runs
         self.serial_state = ""
         self.pretty = self.settings.get("pretty", True)
         self.keys_compact = self.settings.get("keys_compact", False)
@@ -1284,7 +1393,9 @@ class EyeBuddyApp(App):
         self.camera_timer = self.set_interval(1 / self.camera_fps, self._redraw_camera)
         self.set_interval(1 / CHART_FPS, self._redraw_chart)
         self.set_interval(2.0, self._update_chart_visible)
-        self.set_interval(1.0, self._poll_state)
+        self.stlink = StLink(lambda text, state: self.call_from_thread(self._on_mcu, text, state),
+                             lambda text: self.call_from_thread(self._note, text))
+        self.stlink.start()
         self.set_interval(0.5, self._poll_job)
         self.set_interval(2.0, self._flush_recent)
         self.set_interval(5.0, self._update_outliers)
@@ -1635,20 +1746,26 @@ class EyeBuddyApp(App):
 
     # --- ST-Link / build -----------------------------------------------------
 
-    def _send(self, action, **payload):
-        send(action, on_error=lambda text: self.call_from_thread(self._note, f"ST-Link {text}"), **payload)
+    def _on_mcu(self, text, state):
+        self.mcu_text, self.mcu_state = text, state
+        self._update_status()
 
     def action_toggle_mcu(self):
-        self._send("toggle")
+        self.stlink.request("toggle")
 
     def action_reset_mcu(self):
-        self._send("reset")
+        self.stlink.request("reset")
 
     def action_reset_halt(self):
-        self._send("reset_halt")
+        self.stlink.request("reset_halt")
 
     def action_open_log(self):
-        self._send("open_log")
+        """The last build's full output, in `less` in this same terminal (so also over SSH)."""
+        log = STATE_DIR / "job.log"
+        if not log.exists():
+            return self._note("No build log yet.")
+        with self.suspend():
+            subprocess.run(["less", "+G", str(log)])
 
     def action_toggle_build_type(self):
         self.build_type = "release" if self.build_type == "debug" else "debug"
@@ -1670,27 +1787,30 @@ class EyeBuddyApp(App):
         self._build("both")
 
     def _build(self, mode):
-        if not self.job_active:
-            self._send("build", mode=mode, build=self.build_type, env=self.build_env)
-
-    def _poll_state(self):
-        state = read_json(DATA_DIR / "state.json")
-        if state:
-            self.mcu_state = state.get("state")
-            if not state.get("probe"):
-                text = "No ST-Link"
-            elif state.get("debugger"):
-                text = f"Held by {state['debugger']}"
-            else:
-                text = f"{state['probe']} · {STATE_TEXT.get(self.mcu_state, self.mcu_state)}"
-            self.mcu_text = text
-            self._update_status()
-            self._refresh_settings_panel()
+        if self.job_active:
+            return self._note("A build or flash is already running.")
+        script = build_flash_script()
+        if not script:
+            return self._note("build-flash.sh not found.")
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / "job.json").unlink(missing_ok=True)
+        # Its own session, so the build finishes even if this app (or its SSH session) goes away.
+        self.job = subprocess.Popen(
+            ["bash", str(script), mode, self.build_type, self.build_env, str(FLASH_BANK), str(PROJECT_DIR),
+             CHIP, str(STATE_DIR)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.job_active = True
+        self.query_one("#build-info", Static).update("Starting…")
 
     def _poll_job(self):
-        job = read_json(DATA_DIR / "job.json")
+        job = read_json(STATE_DIR / "job.json")
+        if self.job and self.job.poll() is not None and self.job_active and not job:
+            self.job_active = False  # ended before saying anything
+            self.query_one("#build-info", Static).update(
+                Text(f"build-flash.sh exited {self.job.returncode}", style="bold $error"))
         if job:
-            self.job_active = job.get("phase") in ("build", "flash")
+            # Running only while its process is alive -- a job.json left by a killed run says "build".
+            self.job_active = job.get("phase") in ("build", "flash") and pid_alive(job.get("pid"))
             percent = max(0, min(100, int(job.get("percent") or 0)))
             self.query_one("#progress", ProgressBar).update(progress=percent)
             msg = job.get("message", "") + (f" · {percent}%" if self.job_active else "")
