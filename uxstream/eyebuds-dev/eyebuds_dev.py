@@ -126,14 +126,14 @@ from rich.text import Text  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Horizontal, Vertical  # noqa: E402
-from textual.widgets import Footer, ProgressBar, RichLog, Static  # noqa: E402
+from textual.widgets import ProgressBar, RichLog, Static  # noqa: E402
 from textual_image._terminal import get_cell_size  # noqa: E402
 from textual_image.renderable import Image as _AutoRenderable  # noqa: E402
 from textual_image.widget import AutoImage  # noqa: E402
 
 PLUGIN = "erik/stlink:service"
 DATA_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "noctalia/plugins/data/erik/stlink"
-# Remembered between runs: camera rotation and size, mutes, raw/pretty view.
+# Remembered between runs: camera rotation and size, raw/pretty view.
 SETTINGS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "eyebuds-dev/settings.json"
 STATE_TEXT = {
     "running": "Running", "halted": "Halted", "reset": "In reset",
@@ -160,6 +160,13 @@ LABEL_DAMPING = 11  # how quickly that motion settles
 CAMERA_FPS = 6  # the terminal redraws the picture this often; SSH bandwidth is the limit, not the sensor
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
+# Swiping the companion app's touch pad over adb: the pad fills the lower screen, so a stroke
+# around this point (fractions of the screen) and this long stays on it in either direction,
+# and well past the app's 15% swipe threshold.
+SWIPE_CENTER = (0.5, 0.62)
+SWIPE_SPAN = 0.3  # of the screen width, for both directions
+SWIPE_MS = 150
+SWIPE_INTERVALS = [0.5, 1, 2, 5, 10]  # seconds between swipes, cycled with I
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
 
 
@@ -402,6 +409,62 @@ class CameraCapture(threading.Thread):
             self.proc.terminate()
 
 
+class AdbSwiper(threading.Thread):
+    """Swipes the phone's touch pad over adb on a timer, back and forth along one axis so the
+    app ends where it started. `axis` is None (idle), "vertical" or "horizontal".
+    """
+
+    def __init__(self, interval, on_note):
+        super().__init__(daemon=True)
+        self.axis, self.interval, self.on_note = None, interval, on_note
+        self.screen = None  # (width, height) in pixels, asked for once a device answers
+        self.failed = False
+        self._wake = threading.Event()
+
+    def set(self, axis, interval):
+        self.axis, self.interval = axis, interval
+        self._wake.set()
+
+    def run(self):
+        forward = True
+        while True:
+            self._wake.wait(self.interval if self.axis else None)
+            self._wake.clear()
+            if self.axis and self._swipe(self.axis, forward):
+                forward = not forward
+
+    def _adb(self, *args):
+        result = subprocess.run(["adb", "shell", *args], capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            raise OSError((result.stderr or result.stdout).strip() or f"adb exited {result.returncode}")
+        return result.stdout
+
+    def _swipe(self, axis, forward):
+        try:
+            if not self.screen:
+                # "Physical size: WxH", then "Override size: WxH" if set -- the last one is in effect
+                sizes = re.findall(r"(\d+)x(\d+)", self._adb("wm", "size"))
+                if not sizes:
+                    raise OSError("adb: could not read the screen size")
+                self.screen = tuple(int(v) for v in sizes[-1])
+            w, h = self.screen
+            cx, cy, half = w * SWIPE_CENTER[0], h * SWIPE_CENTER[1], w * SWIPE_SPAN / 2
+            sign = 1 if forward else -1
+            dx, dy = (sign * half, 0) if axis == "horizontal" else (0, sign * half)
+            self._adb("input", "swipe", *(str(round(v)) for v in (cx - dx, cy - dy, cx + dx, cy + dy)),
+                      str(SWIPE_MS))
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.screen = None  # another phone may be plugged in by the next try
+            if not self.failed:  # said once, not on every tick until a phone turns up
+                self.failed = True
+                self.on_note(f"Swipe failed: {exc}")
+            return False
+        if self.failed:
+            self.failed = False
+            self.on_note("Swiping again.")
+        return True
+
+
 class SerialReader(threading.Thread):
     """Reads the first ttyACM/ttyUSB port, logs to a file and hands lines to the UI.
 
@@ -479,12 +542,6 @@ class MultiGraph:
                             "value": None, "lo": None, "hi": None,
                             "worst": None, "best": None, "flag": 0.0,
                             "y": None, "label_y": None, "label_vy": 0.0, "band": None}
-
-    def drop_pattern(self, pattern):
-        for key in [k for k, s in self.series.items() if s["pattern"] == pattern]:
-            del self.series[key]
-        if not self.series:
-            self.t0 = None
 
     def flag(self, key):
         if key in self.series:
@@ -710,7 +767,7 @@ class MultiGraph:
         labels = []
         for key, series in self.series.items():
             if key not in self.visible or len(series["v"]) < 2 or series.get("band_key") not in bands:
-                continue  # muted from the table, empty, or its band is gone
+                continue  # not listed in the table, empty, or its band is gone
             band = series["band_key"]
             top, height = bands[band]
             top += event_h
@@ -889,6 +946,12 @@ class CameraView(AutoImage, Renderable=_AutoRenderable):
         left = (img.width - box_w) // 2
         top = (img.height - box_h) // 2
         self.image = img.crop((left, top, left + box_w, top + box_h))
+        # Beside the panels the band's height is fixed, so the width follows the picture's
+        # shape: just wide enough, with the panels taking whatever is left.
+        cell_w, cell_h = get_cell_size()
+        cols = max(1, round(self.size.height * cell_h * box_w / box_h / cell_w))
+        if self.parent.styles.width != cols + 2:  # + the frame's two border columns
+            self.parent.styles.width = cols + 2
 
 
 class ChartView(AutoImage, Renderable=_AutoRenderable):
@@ -919,17 +982,20 @@ class EyeBuddyApp(App):
     CSS = """
     Screen { background: $surface; }
     #status { height: 1; background: $panel; color: $text; padding: 0 1; }
-    #body { height: 1fr; }
-    #main { width: 1fr; }
+    #main { height: 1fr; }
+    #bottom { height: 24; }
     #chart { height: 1fr; min-height: 12; border: round $boost; }
     #log { height: 1fr; border: round $boost; }
-    #sidebar { width: 34; }
-    #camera-wrap { height: 24; border: round $boost; align: center middle; }
-    #camera { height: 1fr; width: auto; }
-    #settings { height: auto; padding: 0 1; border: round $boost; }
+    #sidebar { width: 1fr; min-width: 34; }
+    #camera-wrap { width: 40; border: round $boost; }
+    #camera { height: 1fr; width: 1fr; }
+    #build { height: auto; border: round $boost; }
+    #settings { height: auto; padding: 0 1; }
+    #swipe { height: auto; padding: 0 1; border: round $boost; }
     #build-info { height: auto; padding: 0 1; }
     #progress { height: 1; margin: 0 1; }
-    #mutes { height: auto; padding: 0 1; }
+    /* Each box names the keys that act on it along its bottom edge, instead of one long footer. */
+    #build, #swipe, #log, #camera-wrap, #outliers { border-subtitle-color: $text-muted; border-title-color: $text; }
     #outliers { height: 1fr; padding: 0 1; border: round $boost; }
     """
     BINDINGS = [
@@ -950,10 +1016,10 @@ class EyeBuddyApp(App):
         Binding("c", "clear_log", "Clear log"),
         Binding("g", "follow_end", "Follow end"),
         Binding("v", "toggle_pretty", "Raw/pretty"),
-        Binding("m", "mute_last", "Mute last"),
-        Binding("u", "unmute_all", "Unmute all"),
+        Binding("w", "cycle_swipe", "Swipe"),
+        Binding("i", "cycle_swipe_interval", "Swipe interval", show=False),
         Binding("question_mark", "toggle_dark", "Theme", show=False),
-    ] + [Binding(str(n), f"unmute_index({n})", f"Unmute {n}", show=False) for n in range(1, 10)]
+    ]
 
     def __init__(self, args):
         super().__init__()
@@ -973,7 +1039,8 @@ class EyeBuddyApp(App):
         self.mcu_text = "No ST-Link" if not self.stlink else "…"
         self.serial_state = ""
         self.pretty = self.settings.get("pretty", True)
-        self.muted = set(self.settings.get("muted", []))
+        self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
+        self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
         self.ranges_dirty = False
         self.stats = {}  # (pattern, field index) -> [n, mean, m2, last_warning], for outliers
@@ -981,7 +1048,7 @@ class EyeBuddyApp(App):
         self.seen = {}  # pattern -> occurrences before it earns a place on the chart
         self.module_hue = {}  # module -> its hue on the chart, handed out as modules turn up
         self.chart = MultiGraph()
-        self.lines = collections.deque(maxlen=5000)  # complete raw backlog, mute-independent
+        self.lines = collections.deque(maxlen=5000)  # complete raw backlog, replayed on raw/pretty
         self.partial = ""
         self.recent = collections.OrderedDict()  # pattern -> pending repeat count, for the log
         self.outliers = collections.deque(maxlen=OUTLIER_SHOWN)
@@ -990,29 +1057,39 @@ class EyeBuddyApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
-        with Horizontal(id="body"):
-            with Vertical(id="main"):
-                yield ChartView(self.chart, id="chart")
-                yield RichLog(id="log", max_lines=5000, wrap=False, highlight=False, markup=False)
+        # Chart and log get the full width; the panels share the bottom band with the camera,
+        # which takes only the width its aspect ratio needs and leaves the rest to them.
+        with Vertical(id="main"):
+            yield ChartView(self.chart, id="chart")
+            yield RichLog(id="log", max_lines=5000, wrap=False, highlight=False, markup=False)
+        with Horizontal(id="bottom"):
             with Vertical(id="sidebar"):
-                yield Static(id="settings")
-                yield Static(id="build-info")
-                yield ProgressBar(id="progress", total=100, show_eta=False)
-                yield Static(id="mutes")
+                with Vertical(id="build"):
+                    yield Static(id="settings")
+                    yield Static(id="build-info")
+                    yield ProgressBar(id="progress", total=100, show_eta=False)
+                yield Static(id="swipe")
                 yield Static(id="outliers")
-        # Full terminal width, not squeezed into the sidebar, and centered since the image keeps
-        # its own aspect ratio rather than being stretched to fill the band.
-        with Vertical(id="camera-wrap"):
-            yield CameraView(self.camera_capture, id="camera")
-        yield Footer()
+            with Vertical(id="camera-wrap"):
+                yield CameraView(self.camera_capture, id="camera")
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
         self.camera_view = self.query_one("#camera", CameraView)
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
+        hints = {
+            "#build": ("Build", "d type · e env · b build · f flash · a both"),
+            "#swipe": ("Phone touch pad", "w direction · i interval"),
+            "#log": ("Log", "v raw/pretty · c clear · g end · o open"),
+            "#camera-wrap": (None, "q 90° · ,. 1° · z size · k cam"),
+            "#outliers": ("Outliers", None),
+        }
+        for selector, (title, keys) in hints.items():
+            widget = self.query_one(selector)
+            widget.border_title = title
+            widget.border_subtitle = keys
         self._refresh_settings_panel()
-        self._refresh_mutes_panel()
         self._update_status()
         if self.camera_enabled:
             self._restart_camera()
@@ -1022,6 +1099,8 @@ class EyeBuddyApp(App):
         self.serial = SerialReader(self.args.baud, self.args.logdir,
                                    lambda text, status: self.call_from_thread(self._on_serial, text, status))
         self.serial.start()
+        self.swiper = AdbSwiper(self.swipe_interval, lambda text: self.call_from_thread(self._note, text))
+        self.swiper.start()
         self.set_interval(1 / CAMERA_FPS, self._redraw_camera)
         self.set_interval(1 / CHART_FPS, self._redraw_chart)
         self.set_interval(2.0, self._update_chart_visible)
@@ -1055,6 +1134,24 @@ class EyeBuddyApp(App):
             self._restart_camera()
         else:
             self._note("No camera: ffmpeg or the camera device is missing.")
+        self._refresh_settings_panel()
+
+    # --- adb swipes on the phone's touch pad ------------------------------------
+
+    def action_cycle_swipe(self):
+        order = [None, "vertical", "horizontal"]
+        self.swipe_axis = order[(order.index(self.swipe_axis) + 1) % len(order)]
+        if self.swipe_axis and not shutil.which("adb"):
+            self.swipe_axis = None
+            self._note("No adb on PATH.")
+        self.swiper.set(self.swipe_axis, self.swipe_interval)
+        self._refresh_settings_panel()
+
+    def action_cycle_swipe_interval(self):
+        index = SWIPE_INTERVALS.index(self.swipe_interval) + 1 if self.swipe_interval in SWIPE_INTERVALS else 0
+        self.swipe_interval = SWIPE_INTERVALS[index % len(SWIPE_INTERVALS)]
+        save_settings(swipe_interval=self.swipe_interval)
+        self.swiper.set(self.swipe_axis, self.swipe_interval)
         self._refresh_settings_panel()
 
     def action_next_size(self):
@@ -1101,12 +1198,8 @@ class EyeBuddyApp(App):
         for line in complete:
             line += "\n"
             self.lines.append(line)
-            if self._matches(line):
-                self._show_line(line)
+            self._show_line(line)
         self._update_status()
-
-    def _matches(self, line):
-        return not (self.muted and pattern_of(ANSI.sub("", line)) in self.muted)
 
     def _show_line(self, line):
         if self.pretty and self._to_table(line):
@@ -1296,28 +1389,7 @@ class EyeBuddyApp(App):
         stamp = datetime.now().strftime("%H:%M:%S")
         self.log_view.write(Text(f"{stamp} ▲ {text}", style=Style(color="#e5c07b", bold=True)))
 
-    # --- mute / view toggles -----------------------------------------------
-
-    def _set_muted(self, muted):
-        for pattern in muted - self.muted:
-            self.chart.drop_pattern(pattern)
-            self.rows.pop(pattern, None)
-        self.muted = muted
-        save_settings(muted=sorted(muted))
-        self._refresh_mutes_panel()
-        self._refilter()
-
-    def action_mute_last(self):
-        if self.lines:
-            self._set_muted(self.muted | {pattern_of(ANSI.sub("", self.lines[-1]))})
-
-    def action_unmute_all(self):
-        self._set_muted(set())
-
-    def action_unmute_index(self, n):
-        ordered = sorted(self.muted)
-        if 0 < n <= len(ordered):
-            self._set_muted(self.muted - {ordered[n - 1]})
+    # --- view toggles --------------------------------------------------------
 
     def action_toggle_pretty(self):
         self.pretty = not self.pretty
@@ -1345,17 +1417,8 @@ class EyeBuddyApp(App):
         self.recent.clear()
         self._clear_table()
         for line in self.lines:
-            if self._matches(line):
-                self._show_line(line)
+            self._show_line(line)
         self._update_status()
-
-    def _refresh_mutes_panel(self):
-        panel = self.query_one("#mutes", Static)
-        if not self.muted:
-            panel.update("")
-            return
-        rows = [f"{i}: {p[:36]}" for i, p in enumerate(sorted(self.muted), start=1)]
-        panel.update("Muted (press the number to unmute):\n" + "\n".join(rows))
 
     # --- ST-Link / build -----------------------------------------------------
 
@@ -1422,18 +1485,20 @@ class EyeBuddyApp(App):
 
     def _update_status(self):
         parts = [self.mcu_text, self.serial_state]
-        if self.muted:
-            parts.append(f"{len(self.muted)} muted")
-        self.query_one("#status", Static).update("EyeBuddy — " + " · ".join(p for p in parts if p))
+        status = Text("EyeBuddy — " + " · ".join(p for p in parts if p))
+        status.append("  │  s halt/resume · r reset · h reset+halt", style="dim")
+        self.query_one("#status", Static).update(status)
 
     def _refresh_settings_panel(self):
-        lines = [f"Build: {self.build_type} / {self.build_env}"]
+        self.query_one("#settings", Static).update(f"{self.build_type} / {self.build_env}")
+        camera = self.query_one("#camera-wrap")
         if self.camera_enabled:
             fps = dict(self.modes).get(self.camera_size, "?")
-            lines.append(f"Camera: {self.camera_size} @ {fps}fps · {self.angle:.0f}°")
+            camera.border_title = f"{self.camera_size} @ {fps}fps · {self.angle:.0f}°"
         else:
-            lines.append("Camera: off")
-        self.query_one("#settings", Static).update("\n".join(lines))
+            camera.border_title = "Camera off"
+        self.query_one("#swipe", Static).update(
+            f"{self.swipe_axis or 'off'} · every {self.swipe_interval:g}s")
 
 
 def main():
