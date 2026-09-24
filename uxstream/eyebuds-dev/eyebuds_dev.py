@@ -449,6 +449,11 @@ class CameraCapture(threading.Thread):
         with self._lock:
             return [(t, thumb) for t, thumb in self.history if start <= t <= end]
 
+    def stop(self):
+        self._stop.set()
+        if self.proc:
+            self.proc.terminate()
+
 
 def picture_change(frames, t0, end):
     """(first change, picture complete) in seconds after `t0`, from the camera's frames.
@@ -477,11 +482,6 @@ def picture_change(frames, t0, end):
             return onset - t0, last_change - t0
         previous = thumb
     return (onset - t0, None) if onset is not None else None
-
-    def stop(self):
-        self._stop.set()
-        if self.proc:
-            self.proc.terminate()
 
 
 class AdbSwiper(threading.Thread):
