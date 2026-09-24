@@ -533,11 +533,11 @@ class AdbSwiper(threading.Thread):
             self.screen = None  # another phone may be plugged in by the next try
             if not self.failed:  # said once, not on every tick until a phone turns up
                 self.failed = True
-                self.on_note(f"Swipe failed: {exc}")
+                self.on_note(f"failed: {exc}")
             return False
         if self.failed:
             self.failed = False
-            self.on_note("Swiping again.")
+            self.on_note("swiping again")
         return True
 
 
@@ -754,6 +754,12 @@ def key_markup(key):
 
 def key_text(key):
     return Text(key + " ", style=KEY_STYLE)
+
+
+def icon_keys(pairs):
+    """Plain actions as a Nerd Font icon (Kitty ships the symbols) and the letter each. The
+    space after an icon is where Kitty draws the rest of it, across both cells."""
+    return "  ".join(f"[#7f848e]{icon}[/] [{KEY_STYLE}]{key}[/]" for icon, key in pairs)
 
 
 def relative(value, lo, hi):
@@ -1227,7 +1233,7 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
 
     def redraw(self):
         frame = self.capture.latest() if self.capture else None
-        if not frame or frame is self.shown:
+        if not frame or frame is self.shown or self.parent is None:  # None: being torn down
             return
         self.shown = frame
         fw, fh, data = frame
@@ -1324,7 +1330,6 @@ class EyeBuddyApp(App):
         Binding("e", "toggle_build_env", "Staging/Prod"),
         Binding("n", "toggle_bank", "Bank 0/1"),
         Binding("b", "build_flash", "Build+flash"),
-        Binding("o", "open_log", "Open log"),
         Binding("c", "clear_log", "Clear log"),
         Binding("g", "follow_end", "Follow end"),
         Binding("v", "toggle_pretty", "Raw/pretty"),
@@ -1358,6 +1363,7 @@ class EyeBuddyApp(App):
         self.pretty = self.settings.get("pretty", True)
         self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
         self.swipe_latencies = collections.deque(maxlen=50)  # seconds, swipe sent to new picture done
+        self.swipe_last = None  # how the last timed swipe went, in words
         self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
         self.ranges_dirty = False
@@ -1396,13 +1402,12 @@ class EyeBuddyApp(App):
     # Keys that set something sit right in front of the text showing it (see key()); the rest --
     # plain actions -- are listed as icon + letter in the top bar's right-hand corner. The
     # command palette (^p) has every key spelled out.
-    ACTIONS = [("\uf021", "r"), ("\uf04d", "h"), ("\uf135", "b"), ("\uf030", "k"), ("\uf12d", "c"),
-               ("\uf103", "g"), ("\uf0f6", "o"), ("\uf120", "^p"), ("\uf011", "^q")]
+    ACTIONS = [("\uf021", "r"), ("\uf04d", "h"), ("\uf135", "b"), ("\uf120", "^p"), ("\uf011", "^q")]
 
     def _actions_hint(self):
         # A Nerd Font icon (Kitty ships the symbols) followed by a space, which Kitty draws over
         # both cells, then the letter.
-        return "  ".join(f"[#7f848e]{icon}[/] [{KEY_STYLE}]{k}[/]" for icon, k in self.ACTIONS)
+        return icon_keys(self.ACTIONS)
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
@@ -1422,7 +1427,7 @@ class EyeBuddyApp(App):
         self.serial = SerialReader(self.args.baud, self.args.logdir,
                                    lambda text, status: self.call_from_thread(self._on_serial, text, status))
         self.serial.start()
-        self.swiper = AdbSwiper(self.swipe_interval, lambda text: self.call_from_thread(self._note, text),
+        self.swiper = AdbSwiper(self.swipe_interval, lambda text: self.call_from_thread(self._swipe_status, text),
                                 self._measure_swipe)
         self.swiper.start()
         self.camera_timer = self.set_interval(1 / self.camera_fps, self._redraw_camera)
@@ -1501,16 +1506,19 @@ class EyeBuddyApp(App):
 
         threading.Timer(window + 0.1, measure).start()
 
+    def _swipe_status(self, text):
+        self.swipe_last = text
+        self._refresh_settings_panel()
+
     def _swipe_measured(self, result):
+        """Shown in the phone panel only -- the log stays the firmware's."""
         if result is None:
-            self._note("Swipe: the camera saw no change on the display.")
-            return
-        onset, complete = result
-        if complete is None:
-            self._note(f"Swipe: display changed after {onset * 1000:.0f} ms, still changing when timing stopped.")
-            return
-        self.swipe_latencies.append(complete)
-        self._note(f"Swipe: first change {onset * 1000:.0f} ms, new picture complete {complete * 1000:.0f} ms.")
+            self.swipe_last = "no change seen"
+        elif result[1] is None:
+            self.swipe_last = f"first change {result[0] * 1000:.0f} ms, still changing"
+        else:
+            self.swipe_latencies.append(result[1])
+            self.swipe_last = f"first change {result[0] * 1000:.0f} ms, done {result[1] * 1000:.0f} ms"
         self._refresh_settings_panel()
 
     def action_cycle_swipe(self):
@@ -1518,7 +1526,7 @@ class EyeBuddyApp(App):
         self.swipe_axis = order[(order.index(self.swipe_axis) + 1) % len(order)]
         if self.swipe_axis and not shutil.which("adb"):
             self.swipe_axis = None
-            self._note("No adb on PATH.")
+            self.swipe_last = "no adb on PATH"
         self.swiper.set(self.swipe_axis, self.swipe_interval)
         self._refresh_settings_panel()
 
@@ -1820,14 +1828,6 @@ class EyeBuddyApp(App):
     def action_reset_halt(self):
         self.stlink.request("reset_halt")
 
-    def action_open_log(self):
-        """The last build's full output, in `less` in this same terminal (so also over SSH)."""
-        log = STATE_DIR / "job.log"
-        if not log.exists():
-            return self._note("No build log yet.")
-        with self.suspend():
-            subprocess.run(["less", "+G", str(log)])
-
     def action_toggle_build_type(self):
         self.build_type = "release" if self.build_type == "debug" else "debug"
         save_settings(build_type=self.build_type)
@@ -1891,21 +1891,24 @@ class EyeBuddyApp(App):
         self.query_one("#settings", Static).update(
             f"{key_markup('d')}{self.build_type} / {key_markup('e')}{self.build_env}"
             f" / {key_markup('n')}bank {self.flash_bank}")
-        self.query_one("#log").border_title = f"Log · {key_markup('v')}{'pretty' if self.pretty else 'raw'}"
+        self.query_one("#log").border_title = (f"Log · {key_markup('v')}{'pretty' if self.pretty else 'raw'}  "
+                                               + icon_keys([("\uf12d", "c"), ("\uf103", "g")]))
         camera = self.query_one("#camera-wrap")
         if self.camera_enabled:
             sensor = dict(self.modes).get(self.camera_size)
             shown = min(self.camera_fps, sensor) if sensor else self.camera_fps
-            camera.border_title = (f"Camera: {escape(self.camera_error[:40])}" if self.camera_error
-                                   else f"{key_markup('z')}{self.camera_size} · {key_markup('x')}{shown} fps"
-                                        f" · {key_markup('q ,.')}{self.angle:.0f}°")
+            camera.border_title = key_markup("k") + (
+                f"camera: {escape(self.camera_error[:40])}" if self.camera_error
+                else f"on · {key_markup('z')}{self.camera_size} · {key_markup('x')}{shown} fps"
+                     f" · {key_markup('q ,.')}{self.angle:.0f}°")
         else:
-            camera.border_title = "Camera off"
+            camera.border_title = f"{key_markup('k')}camera off"
         swipe = f"{key_markup('w')}{self.swipe_axis or 'off'} · {key_markup('i')}every {self.swipe_interval:g}s"
+        if self.swipe_last:
+            swipe += f"\nlast: {self.swipe_last}"
         if self.swipe_latencies:
             ms = sorted(self.swipe_latencies)
-            swipe += (f"\nto new picture: {self.swipe_latencies[-1] * 1000:.0f} ms"
-                      f" · median {ms[len(ms) // 2] * 1000:.0f} ms (n={len(ms)})")
+            swipe += f"\nmedian to new picture: {ms[len(ms) // 2] * 1000:.0f} ms (n={len(ms)})"
         self.query_one("#swipe", Static).update(swipe)
 
 
