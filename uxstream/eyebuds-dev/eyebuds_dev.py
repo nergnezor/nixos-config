@@ -1300,7 +1300,10 @@ class ChartView(AutoImage, Renderable=_AutoRenderable):
             self.model.step_labels(dt)
         # Drawn in proportion to the terminal's own text: the Cairo sizes were picked for a
         # CHART_TEXT_CELL-high line, so a taller cell scales the whole chart up with it.
-        self.image = self.model.render(w * cell_w, h * cell_h, max(1.0, cell_h / CHART_TEXT_CELL))
+        image = self.model.render(w * cell_w, h * cell_h, max(1.0, cell_h / CHART_TEXT_CELL))
+        # A chart is a handful of colours plus their anti-aliasing: as a 256-colour PNG it looks
+        # the same and is about a third of the bytes -- it goes over SSH a few times a second.
+        self.image = image.quantize(256, dither=Image.Dither.NONE)
 
 
 class EyeBuddyApp(App):
