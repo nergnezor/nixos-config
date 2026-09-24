@@ -149,7 +149,7 @@ OUTLIER_TTL = 300  # seconds an outlier stays listed
 OUTLIER_SHOWN = 6  # how many of them are listed at once
 RANGE_ROWS = 24  # fields the stats table has room to be useful about
 CHART_WINDOW = 120  # seconds the chart shows; older samples slide out and are dropped
-NUM_COLUMN = 52  # width of one number column in the table strip
+NUM_GAP = 7  # space between two number columns in the table strip; each is as wide as its widest number
 NUM_ROW = 13  # smallest height one row of the table strip may have
 AXIS_GUTTER = 38  # left margin the bands write their y values in
 TIME_AXIS = 14  # bottom margin the clock ticks are written in
@@ -579,13 +579,14 @@ class MultiGraph:
         self.scales = {}  # band -> the lo/hi/log axis its lines are drawn against
         self.titles = {}  # band -> what is written in its top left corner
         self.plot_l, self.plot_r = AXIS_GUTTER, 0
+        self.num_column = 0
 
     def add_series(self, key, color, label, polarity, unit, pattern):
         band, factor = band_of(label, unit)
         self.series[key] = {"key": key, "t": collections.deque(), "v": collections.deque(), "color": color,
                             "label": label, "polarity": polarity, "group": band, "band_key": None,
                             "factor": factor, "unit": unit, "pattern": pattern,
-                            "value": None, "lo": None, "hi": None,
+                            "value": None, "lo": None, "hi": None, "ever_lo": None, "ever_hi": None,
                             "worst": None, "best": None, "flag": 0.0,
                             "y": None, "label_y": None, "label_vy": 0.0, "band": None}
 
@@ -593,7 +594,7 @@ class MultiGraph:
         if key in self.series:
             self.series[key]["flag"] = time.time()
 
-    def push(self, key, level, value, lo, hi):
+    def push(self, key, level, value, lo, hi, ever_lo=None, ever_hi=None):
         series = self.series.get(key)
         if series is None:
             return
@@ -604,6 +605,8 @@ class MultiGraph:
         badness = (1 - level) if polarity > 0 else level if polarity < 0 else abs(level - 0.5) * 2
         factor = series["factor"]  # everything in a band is stored in that band's base unit
         value, lo, hi = value * factor, lo * factor, hi * factor
+        series["ever_lo"] = None if ever_lo is None else ever_lo * factor
+        series["ever_hi"] = None if ever_hi is None else ever_hi * factor
         sample = (badness, value, now)
         if series["worst"] is None or badness > series["worst"][0]:
             series["worst"] = sample
@@ -775,9 +778,16 @@ class MultiGraph:
         w, h = pw / scale, ph / scale
         cr.set_source_rgb(0.086, 0.09, 0.106)  # opaque backdrop -- the terminal behind it never shows
         cr.paint()
-        table = 3 * NUM_COLUMN + 26  # the strip on the right, one row of numbers per line
-        self.plot_l, self.plot_r = AXIS_GUTTER, w - table
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        # The strip on the right, one row of numbers per line: columns just as wide as the widest
+        # number now in them, so the chart keeps every pixel the numbers do not need.
+        cr.set_font_size(10)
+        texts = ["ever", "min", "now", "max"] + [fmt_si(s[k]) for s in self.series.values()
+                                                 if s["key"] in self.visible
+                                                 for k in ("ever_lo", "lo", "value", "hi", "ever_hi")]
+        self.num_column = max(cr.text_extents(t).width for t in texts) + NUM_GAP
+        table = 5 * self.num_column + 22
+        self.plot_l, self.plot_r = AXIS_GUTTER, w - table
         if self.t0 is None:
             cr.set_source_rgba(1, 1, 1, 0.35)
             cr.set_font_size(12)
@@ -884,8 +894,9 @@ class MultiGraph:
         """The strip on the right: one row per line, in its colour, never two on the same height."""
         cr.set_font_size(10)
         cr.set_source_rgba(1, 1, 1, 0.35)
-        columns = [w - 8 - 2 * NUM_COLUMN, w - 8 - NUM_COLUMN, w - 8]  # right edge of min, now, max
-        for heading, right in zip(("min", "now", "max"), columns):
+        # Right edges of: all-time min, this session's min, now, its max, all-time max.
+        columns = [w - 6 - i * self.num_column for i in (4, 3, 2, 1, 0)]
+        for heading, right in zip(("ever", "min", "now", "max", "ever"), columns):
             cr.move_to(right - cr.text_extents(heading).width, 12)
             cr.show_text(heading)
         labels = sorted(labels, key=lambda label: label["y"])
@@ -904,9 +915,15 @@ class MultiGraph:
             cr.line_to(swatch + 8, ry + 1)
             cr.stroke()
             # min is as cold and max as hot as it gets; now is coloured by where it sits between.
+            # The all-time columns only speak up where earlier runs went further than this one.
             now_heat = relative(series["value"], series["lo"], series["hi"])
-            for value, right, level, alpha in zip((series["lo"], series["value"], series["hi"]), columns,
-                                                  (0.0, now_heat, 1.0), (0.55, 1, 0.55)):
+            ever_lo = series["ever_lo"] if fmt_si(series["ever_lo"]) != fmt_si(series["lo"]) else None
+            ever_hi = series["ever_hi"] if fmt_si(series["ever_hi"]) != fmt_si(series["hi"]) else None
+            for value, right, level, alpha in zip(
+                    (ever_lo, series["lo"], series["value"], series["hi"], ever_hi), columns,
+                    (0.0, 0.0, now_heat, 1.0, 1.0), (0.42, 0.6, 1, 0.6, 0.42)):
+                if value is None:
+                    continue
                 number = fmt_si(value)
                 cr.set_source_rgba(*heat(level), alpha)
                 cr.move_to(right - cr.text_extents(number).width, ry + 4)
@@ -1414,7 +1431,9 @@ class EyeBuddyApp(App):
         ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
         while len(ranges) < len(fields_out):
             ranges.append([None, None])
-        return {"fields": fields_out, "ranges": ranges, "key": key, "module": module, "last_ts": None,
+        # `ranges` is every run's (saved); `session` only this one's -- the table shows both.
+        return {"fields": fields_out, "ranges": ranges, "session": [[None, None] for _ in fields_out],
+                "key": key, "module": module, "last_ts": None,
                 "message": message, "numeric": len(fields_out) > 1, "rate": None}
 
     def _update_row(self, state, fields):
@@ -1427,23 +1446,27 @@ class EyeBuddyApp(App):
             rate = 1 / (now - previous)
             state["rate"] = rate if state["rate"] is None else state["rate"] * 0.7 + rate * 0.3
             rate = state["rate"]
-            rng = state["ranges"][-1]
-            rng[0] = rate if rng[0] is None else min(rng[0], rate)
-            rng[1] = rate if rng[1] is None else max(rng[1], rate)
-            lo, hi = rng
-            self.chart.push(rate_field["series"], (rate - lo) / (hi - lo) if hi > lo else 0.5, rate, lo, hi)
+            for rng in (state["ranges"][-1], state["session"][-1]):
+                rng[0] = rate if rng[0] is None else min(rng[0], rate)
+                rng[1] = rate if rng[1] is None else max(rng[1], rate)
+            lo, hi = state["session"][-1]
+            self.chart.push(rate_field["series"], (rate - lo) / (hi - lo) if hi > lo else 0.5, rate, lo, hi,
+                            *state["ranges"][-1])
         if not state["numeric"]:
             return
-        for i, (field, num, rng) in enumerate(zip(state["fields"], NUMBERS.finditer(message), state["ranges"])):
+        for i, (field, num, rng, ses) in enumerate(zip(state["fields"], NUMBERS.finditer(message),
+                                                       state["ranges"], state["session"])):
             v = float(num.group())
             if rng[0] is None or v < rng[0] or rng[1] is None or v > rng[1]:
                 rng[0] = v if rng[0] is None else min(rng[0], v)
                 rng[1] = v if rng[1] is None else max(rng[1], v)
                 self.ranges_dirty = True
-            lo, hi = rng
+            ses[0] = v if ses[0] is None else min(ses[0], v)
+            ses[1] = v if ses[1] is None else max(ses[1], v)
+            lo, hi = ses
             if self._check_outlier(state["key"], i, v, field["label"], module):
                 self.chart.flag(field["series"])
-            self.chart.push(field["series"], (v - lo) / (hi - lo) if hi > lo else 0.5, v, lo, hi)
+            self.chart.push(field["series"], (v - lo) / (hi - lo) if hi > lo else 0.5, v, lo, hi, *rng)
 
     def _check_outlier(self, key, index, value, label, module):
         """Welford mean/variance per field; a value far outside it is worth saying out loud."""
