@@ -1230,7 +1230,9 @@ class EyeBuddyApp(App):
     CSS = """
     Screen { background: $surface; }
     * { scrollbar-size: 0 0; }
-    #status { height: 1; background: $panel; color: $text; padding: 0 1; }
+    #top { height: 1; background: $panel; }
+    #status { width: 1fr; color: $text; padding: 0 1; }
+    #status-keys { width: auto; padding: 0 1; }
     #main { height: 1fr; }
     #bottom { height: 36; }
     #chart { height: 1fr; border: round $boost; }  /* yields to the camera band when short */
@@ -1246,9 +1248,7 @@ class EyeBuddyApp(App):
     #build-info { height: auto; padding: 0 1; }
     #progress { height: 1; margin: 0 1; }
     /* Each box names the keys that act on it along its bottom edge, instead of one long footer. */
-    /* No frame: the widest key line ("X ^p") is four cells, and four is all the list takes. */
-    #keys { width: auto; height: 1fr; padding: 1 0 0 0; background: $boost; }
-    #build, #swipe, #log, #outliers, #keys, #camera-wrap { border-title-color: $text; }
+    #build, #swipe, #log, #outliers, #camera-wrap { border-title-color: $text; }
     #outliers { height: 1fr; padding: 0 1; border: round $boost; }
     """
     BINDINGS = [
@@ -1272,7 +1272,6 @@ class EyeBuddyApp(App):
         Binding("v", "toggle_pretty", "Raw/pretty"),
         Binding("w", "cycle_swipe", "Swipe"),
         Binding("i", "cycle_swipe_interval", "Swipe interval", show=False),
-        Binding("question_mark", "toggle_keys", "Spell out keys"),
     ]
 
     def __init__(self, args):
@@ -1296,7 +1295,6 @@ class EyeBuddyApp(App):
         self.job = None  # the build/flash process, while one runs
         self.serial_state = ""
         self.pretty = self.settings.get("pretty", True)
-        self.keys_full = self.settings.get("keys_full", False)  # icons only unless asked
         self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
         self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
@@ -1314,14 +1312,15 @@ class EyeBuddyApp(App):
     # --- layout ---------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static(id="status")
+        with Horizontal(id="top"):
+            yield Static(id="status")
+            yield Static(self._hint("#top"), id="status-keys")
         # Chart and log get the full width; the panels share the bottom band with the camera,
         # which takes only the width its aspect ratio needs and leaves the rest to them.
         with Vertical(id="main"):
             yield ChartView(self.chart, id="chart")
             yield RichLog(id="log", max_lines=5000, wrap=True, highlight=False, markup=False)
         with Horizontal(id="bottom"):
-            yield Static(self._keys_text(), id="keys")
             with Vertical(id="sidebar"):
                 with Vertical(id="build"):
                     yield Static(id="settings")
@@ -1332,47 +1331,21 @@ class EyeBuddyApp(App):
             with Vertical(id="camera-wrap"):
                 yield CameraView(self.camera_capture, id="camera")
 
-    # Every key in one list at the left of the bottom band, grouped by what it acts on.
-    # Each group and key with a Nerd Font icon (Kitty ships the symbols): by default the list is
-    # just those icons and the letters, as narrow as it gets; ? spells everything out.
-    KEYS = [
-        ("Debug", "\U000f061a", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
-        ("Build", "\U000f1322", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
-                   ("f", "\uf0e7", "flash"), ("a", "\uf135", "build + flash")]),
-        ("Camera", "\U000f0567", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
-                    ("x", "\uf008", "frame rate"), ("k", "\uf030", "on / off")]),
-        ("Log", "\U000f0279", [("v", "\uf06e", "raw / pretty"), ("c", "\uf12d", "clear"), ("g", "\uf103", "follow end"),
-                 ("o", "\uf0f6", "open file")]),
-        ("Phone", "\U000f011c", [("w", "\uf25a", "swipe direction"), ("i", "\uf017", "swipe interval")]),
-        ("App", "\U000f003b", [("?", "\uf11c", "spell out keys"), ("^p", "\uf120", "palette"), ("^q", "\uf011", "quit")]),
-    ]
+    # Each box names the keys that act on it, as an icon and the letter, along its bottom right
+    # edge; the top bar, which has no frame, carries the ST-Link's and the app's on its right.
+    # The command palette (^p) has every key spelled out.
+    HINTS = {
+        "#top": [("\uf04c", "s"), ("\uf021", "r"), ("\uf04d", "h"), ("\uf120", "^p"), ("\uf011", "^q")],
+        "#build": [("\uf188", "d"), ("\uf0ac", "e"), ("\uf0ad", "b"), ("\uf0e7", "f"), ("\uf135", "a")],
+        "#camera-wrap": [("\uf01e", "q"), ("\uf14e", ",."), ("\uf00e", "z"), ("\uf008", "x"), ("\uf030", "k")],
+        "#log": [("\uf06e", "v"), ("\uf12d", "c"), ("\uf103", "g"), ("\uf0f6", "o")],
+        "#swipe": [("\uf25a", "w"), ("\uf017", "i")],
+    }
 
-    def _keys_text(self):
-        # The heading is the first line, not the frame's title: a frame this narrow has no room
-        # to print one. A keyboard, big and centred like the group icons; spelled out, named too.
-        heading = "\U000f030c  Keys\n" if self.keys_full else " \U000f030c \n"
-        text = Text(heading, style="bold")
-        for group, group_icon, keys in self.KEYS:
-            text.append("\n")
-            # A group opens with its icon, drawn big: Kitty spreads a symbol followed by a space
-            # over both cells. Spelled out, the group's name follows.
-            # Centred over the column of keys below it when the list is just icons.
-            text.append(("" if self.keys_full else " ") + group_icon + " ", style="bold #56b6c2")
-            text.append((" " + group if self.keys_full else "") + "\n", style="dim")
-            for key, icon, what in keys:
-                text.append(icon + " ", style="#7f848e")
-                text.append(key.ljust(3) if self.keys_full else key, style="bold #e5c07b")
-                if self.keys_full:
-                    text.append(what)
-                text.append("\n")
-        text.rstrip()
-        return text
-
-    def action_toggle_keys(self):
-        self.keys_full = not self.keys_full
-        save_settings(keys_full=self.keys_full)
-        keys = self.query_one("#keys", Static)
-        keys.update(self._keys_text())
+    def _hint(self, place):
+        # A Nerd Font icon (Kitty ships the symbols) followed by a space, which Kitty draws over
+        # both cells, then the letter.
+        return " ".join(f"[#7f848e]{icon}[/] [bold #e5c07b]{key}[/]" for icon, key in self.HINTS[place])
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
@@ -1383,6 +1356,9 @@ class EyeBuddyApp(App):
                   "#outliers": "Outliers"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
+        for place in self.HINTS:
+            if place != "#top":
+                self.query_one(place).border_subtitle = self._hint(place)
         self._refresh_settings_panel()
         self._update_status()
         if self.camera_enabled:
