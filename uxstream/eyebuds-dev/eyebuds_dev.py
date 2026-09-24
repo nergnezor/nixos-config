@@ -677,19 +677,26 @@ class SerialReader(threading.Thread):
                     self.on_line(data.decode("utf-8", "replace"), None)
 
 
-# Cold to hot, for where a value sits within its own range: blue at its low, red at its high.
-HEAT_STOPS = [(0.0, (0.30, 0.55, 1.00)), (0.35, (0.25, 0.85, 0.85)),
-              (0.65, (0.95, 0.85, 0.30)), (1.0, (1.00, 0.35, 0.30))]
+# Cold to hot, for where a value sits within its own range: each line keeps its own colour, and
+# its hue turns toward red at its high and toward blue at its low -- by at most half of this, the
+# blue-to-red swing of a full heat map, so the lines stay told apart.
+HEAT_HUE_SWING = 107
+HEAT_HOT, HEAT_COLD = 0.0, 220 / 360  # red and blue, the hues a line leans toward
+HEAT_STOPS = [0.0, 0.25, 0.5, 0.75, 1.0]  # where a line's gradient gets its colour stops
 
 
-def heat(t):
-    """The HEAT_STOPS colour at `t` in 0..1."""
+def heat(rgb, t):
+    """`rgb` leaning warmer for a value high in its range (`t` near 1), cooler for a low one."""
     t = min(1.0, max(0.0, t))
-    for (t0, c0), (t1, c1) in zip(HEAT_STOPS, HEAT_STOPS[1:]):
-        if t <= t1:
-            f = (t - t0) / (t1 - t0)
-            return tuple(a + (b - a) * f for a, b in zip(c0, c1))
-    return HEAT_STOPS[-1][1]
+    h, l, s = colorsys.rgb_to_hls(*rgb)
+    step = (t - 0.5) * HEAT_HUE_SWING / 360  # > 0 warmer, < 0 cooler
+    if h <= HEAT_COLD:
+        # red .. yellow .. green .. cyan .. blue: warmer is a lower hue, down to red at 0
+        h = min(HEAT_COLD, max(HEAT_HOT, h - step))
+    else:
+        # blue .. purple .. magenta .. red: warmer is a higher hue, up to red at 1
+        h = min(1.0, max(HEAT_COLD, h + step)) % 1.0
+    return colorsys.hls_to_rgb(h, l, s)
 
 
 def relative(value, lo, hi):
@@ -981,18 +988,18 @@ class MultiGraph:
             y_high = top + height - 3 - self._norm(band, high) * (height - 6)
             if y_low - y_high > 1:
                 gradient = cairo.LinearGradient(0, y_low, 0, y_high)
-                for stop, color in HEAT_STOPS:
-                    gradient.add_color_stop_rgb(stop, *color)
+                for stop in HEAT_STOPS:
+                    gradient.add_color_stop_rgb(stop, *heat(rgb, stop))
                 cr.set_source(gradient)
             else:
-                cr.set_source_rgb(*heat(0.5))
+                cr.set_source_rgb(*rgb)
             cr.set_line_width(1.8)
             spline(cr, points)
             cr.stroke()
             for kind, fill in (("worst", True), ("best", False)):
                 mark = series[kind]
                 if mark and len(series["v"]) > 4 and mark[2] > self.now - self.span:
-                    cr.set_source_rgb(*heat(relative(mark[1], low, high)))
+                    cr.set_source_rgb(*heat(rgb, relative(mark[1], low, high)))
                     cr.arc(self._x(mark[2]), top + height - 3 - self._norm(band, mark[1]) * (height - 6),
                            2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
@@ -1061,7 +1068,7 @@ class MultiGraph:
                 if value is None:
                     continue
                 number = fmt_si(value)
-                cr.set_source_rgba(*heat(level), alpha)
+                cr.set_source_rgba(*heat(rgb, level), alpha)
                 cr.move_to(right - cr.text_extents(number).width, ry + 4)
                 cr.show_text(number)
 
@@ -1266,7 +1273,7 @@ class EyeBuddyApp(App):
         Binding("v", "toggle_pretty", "Raw/pretty"),
         Binding("w", "cycle_swipe", "Swipe"),
         Binding("i", "cycle_swipe_interval", "Swipe interval", show=False),
-        Binding("question_mark", "toggle_keys", "Minimise keys"),
+        Binding("question_mark", "toggle_keys", "Spell out keys"),
     ]
 
     def __init__(self, args):
@@ -1290,7 +1297,7 @@ class EyeBuddyApp(App):
         self.job = None  # the build/flash process, while one runs
         self.serial_state = ""
         self.pretty = self.settings.get("pretty", True)
-        self.keys_compact = self.settings.get("keys_compact", False)
+        self.keys_full = self.settings.get("keys_full", False)  # icons only unless asked
         self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
         self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
@@ -1327,46 +1334,42 @@ class EyeBuddyApp(App):
                 yield CameraView(self.camera_capture, id="camera")
 
     # Every key in one list at the left of the bottom band, grouped by what it acts on.
-    # Each key with a Nerd Font icon (Kitty ships the symbols), all the minimised list (?) shows
-    # beside the letter. Plain glyphs in the text colour, not emoji.
+    # Each group and key with a Nerd Font icon (Kitty ships the symbols): by default the list is
+    # just those icons and the letters, as narrow as it gets; ? spells everything out.
     KEYS = [
-        ("Debug", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
-        ("Build", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
+        ("Debug", "\uf2db", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
+        ("Build", "\uf085", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
                    ("f", "\uf0e7", "flash"), ("a", "\uf135", "build + flash")]),
-        ("Camera", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
+        ("Camera", "\uf03d", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
                     ("x", "\uf008", "frame rate"), ("k", "\uf030", "on / off")]),
-        ("Log", [("v", "\uf06e", "raw / pretty"), ("c", "\uf12d", "clear"), ("g", "\uf103", "follow end"),
+        ("Log", "\uf03a", [("v", "\uf06e", "raw / pretty"), ("c", "\uf12d", "clear"), ("g", "\uf103", "follow end"),
                  ("o", "\uf0f6", "open file")]),
-        ("Phone", [("w", "\uf25a", "swipe direction"), ("i", "\uf017", "swipe interval")]),
-        ("App", [("?", "\uf11c", "minimise keys"), ("^p", "\uf120", "palette"), ("^q", "\uf011", "quit")]),
+        ("Phone", "\uf10b", [("w", "\uf25a", "swipe direction"), ("i", "\uf017", "swipe interval")]),
+        ("App", "\uf009", [("?", "\uf11c", "spell out keys"), ("^p", "\uf120", "palette"), ("^q", "\uf011", "quit")]),
     ]
 
     def _keys_text(self):
         text = Text()
-        for group, keys in self.KEYS:
+        for group, group_icon, keys in self.KEYS:
             if text:
                 text.append("\n")
-            text.append(group + "\n", style="dim")
+            # A group opens with its icon on a rule; spelled out, its name follows.
+            text.append(group_icon + " ", style="bold #56b6c2")
+            text.append(group + "\n" if self.keys_full else "──\n", style="dim")
             for key, icon, what in keys:
                 text.append(icon + " ", style="#7f848e")
-                text.append(key.ljust(2 if self.keys_compact else 3), style="bold #e5c07b")
-                if not self.keys_compact:
+                text.append(key.ljust(3) if self.keys_full else key, style="bold #e5c07b")
+                if self.keys_full:
                     text.append(what)
                 text.append("\n")
         text.rstrip()
         return text
 
-    def _size_keys(self):
-        # Minimised, a fixed 7 characters inside the frame: room for any group name, and the
-        # panels beside it do not shift when a name changes.
-        self.query_one("#keys").styles.width = 11 if self.keys_compact else "auto"
-
     def action_toggle_keys(self):
-        self.keys_compact = not self.keys_compact
-        save_settings(keys_compact=self.keys_compact)
+        self.keys_full = not self.keys_full
+        save_settings(keys_full=self.keys_full)
         keys = self.query_one("#keys", Static)
         keys.update(self._keys_text())
-        self._size_keys()
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
@@ -1377,7 +1380,6 @@ class EyeBuddyApp(App):
                   "#outliers": "Outliers", "#keys": "Keys"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
-        self._size_keys()
         self._refresh_settings_panel()
         self._update_status()
         if self.camera_enabled:
