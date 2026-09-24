@@ -125,6 +125,7 @@ import serial  # noqa: E402
 from PIL import Image  # noqa: E402
 from rich.style import Style  # noqa: E402
 from rich.table import Table  # noqa: E402
+from rich.markup import escape  # noqa: E402
 from rich.text import Text  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
@@ -697,6 +698,18 @@ def heat(rgb, t):
     return colorsys.hls_to_rgb(h, l, s)
 
 
+KEY_STYLE = "bold #e5c07b"
+
+
+def key_markup(key):
+    """A key as it is shown in front of what it changes, in Textual markup."""
+    return f"[{KEY_STYLE}]{key}[/] "
+
+
+def key_text(key):
+    return Text(key + " ", style=KEY_STYLE)
+
+
 def relative(value, lo, hi):
     return 0.5 if value is None or lo is None or hi is None or hi <= lo else (value - lo) / (hi - lo)
 
@@ -1263,9 +1276,7 @@ class EyeBuddyApp(App):
         Binding("k", "toggle_camera", "Cam on/off"),
         Binding("d", "toggle_build_type", "Debug/Release"),
         Binding("e", "toggle_build_env", "Staging/Prod"),
-        Binding("b", "build", "Build"),
-        Binding("f", "flash", "Flash"),
-        Binding("a", "build_flash", "Build+flash"),
+        Binding("b", "build_flash", "Build+flash"),
         Binding("o", "open_log", "Open log"),
         Binding("c", "clear_log", "Clear log"),
         Binding("g", "follow_end", "Follow end"),
@@ -1314,7 +1325,7 @@ class EyeBuddyApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
             yield Static(id="status")
-            yield Static(self._hint("#top"), id="status-keys")
+            yield Static(self._actions_hint(), id="status-keys")
         # Chart and log get the full width; the panels share the bottom band with the camera,
         # which takes only the width its aspect ratio needs and leaves the rest to them.
         with Vertical(id="main"):
@@ -1331,34 +1342,25 @@ class EyeBuddyApp(App):
             with Vertical(id="camera-wrap"):
                 yield CameraView(self.camera_capture, id="camera")
 
-    # Each box names the keys that act on it, as an icon and the letter, along its bottom right
-    # edge; the top bar, which has no frame, carries the ST-Link's and the app's on its right.
-    # The command palette (^p) has every key spelled out.
-    HINTS = {
-        "#top": [("\uf04c", "s"), ("\uf021", "r"), ("\uf04d", "h"), ("\uf120", "^p"), ("\uf011", "^q")],
-        "#build": [("\uf188", "d"), ("\uf0ac", "e"), ("\uf0ad", "b"), ("\uf0e7", "f"), ("\uf135", "a")],
-        "#camera-wrap": [("\uf01e", "q"), ("\uf14e", ",."), ("\uf00e", "z"), ("\uf008", "x"), ("\uf030", "k")],
-        "#log": [("\uf06e", "v"), ("\uf12d", "c"), ("\uf103", "g"), ("\uf0f6", "o")],
-        "#swipe": [("\uf25a", "w"), ("\uf017", "i")],
-    }
+    # Keys that set something sit right in front of the text showing it (see key()); the rest --
+    # plain actions -- are listed as icon + letter in the top bar's right-hand corner. The
+    # command palette (^p) has every key spelled out.
+    ACTIONS = [("\uf021", "r"), ("\uf04d", "h"), ("\uf135", "b"), ("\uf030", "k"), ("\uf12d", "c"),
+               ("\uf103", "g"), ("\uf0f6", "o"), ("\uf120", "^p"), ("\uf011", "^q")]
 
-    def _hint(self, place):
+    def _actions_hint(self):
         # A Nerd Font icon (Kitty ships the symbols) followed by a space, which Kitty draws over
         # both cells, then the letter.
-        return " ".join(f"[#7f848e]{icon}[/] [bold #e5c07b]{key}[/]" for icon, key in self.HINTS[place])
+        return "  ".join(f"[#7f848e]{icon}[/] [{KEY_STYLE}]{k}[/]" for icon, k in self.ACTIONS)
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
         self.camera_view = self.query_one("#camera", CameraView)
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
-        titles = {"#build": "Build", "#swipe": "Phone touch pad", "#log": "Log",
-                  "#outliers": "Outliers"}
+        titles = {"#build": "Build", "#swipe": "Phone touch pad", "#outliers": "Outliers"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
-        for place in self.HINTS:
-            if place != "#top":
-                self.query_one(place).border_subtitle = self._hint(place)
         self._refresh_settings_panel()
         self._update_status()
         if self.camera_enabled:
@@ -1700,6 +1702,7 @@ class EyeBuddyApp(App):
         self.pretty = not self.pretty
         save_settings(pretty=self.pretty)
         self._refilter()
+        self._refresh_settings_panel()
 
     def action_clear_log(self):
         self.lines.clear()
@@ -1758,12 +1761,6 @@ class EyeBuddyApp(App):
         save_settings(build_env=self.build_env)
         self._refresh_settings_panel()
 
-    def action_build(self):
-        self._build("build")
-
-    def action_flash(self):
-        self._build("flash")
-
     def action_build_flash(self):
         self._build("both")
 
@@ -1801,21 +1798,28 @@ class EyeBuddyApp(App):
     # --- status / settings panels --------------------------------------------
 
     def _update_status(self):
-        parts = [self.mcu_text, self.serial_state]
-        self.query_one("#status", Static).update("EyeBuddy — " + " · ".join(p for p in parts if p))
+        status = Text("EyeBuddy — ")
+        status.append_text(key_text("s"))
+        status.append(self.mcu_text)
+        if self.serial_state:
+            status.append(" · " + self.serial_state)
+        self.query_one("#status", Static).update(status)
 
     def _refresh_settings_panel(self):
-        self.query_one("#settings", Static).update(f"{self.build_type} / {self.build_env}")
+        self.query_one("#settings", Static).update(
+            f"{key_markup('d')}{self.build_type} / {key_markup('e')}{self.build_env}")
+        self.query_one("#log").border_title = f"Log · {key_markup('v')}{'pretty' if self.pretty else 'raw'}"
         camera = self.query_one("#camera-wrap")
         if self.camera_enabled:
             sensor = dict(self.modes).get(self.camera_size)
             shown = min(self.camera_fps, sensor) if sensor else self.camera_fps
-            camera.border_title = (f"Camera: {self.camera_error[:40]}" if self.camera_error
-                                   else f"{self.camera_size} · {shown} fps · {self.angle:.0f}°")
+            camera.border_title = (f"Camera: {escape(self.camera_error[:40])}" if self.camera_error
+                                   else f"{key_markup('z')}{self.camera_size} · {key_markup('x')}{shown} fps"
+                                        f" · {key_markup('q ,.')}{self.angle:.0f}°")
         else:
             camera.border_title = "Camera off"
         self.query_one("#swipe", Static).update(
-            f"{self.swipe_axis or 'off'} · every {self.swipe_interval:g}s")
+            f"{key_markup('w')}{self.swipe_axis or 'off'} · {key_markup('i')}every {self.swipe_interval:g}s")
 
 
 def main():
