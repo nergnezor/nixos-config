@@ -1,9 +1,10 @@
 # EyeBuddy app: camera, serial log and ST-Link controls in one terminal (Textual) window.
-# plotext is pinned to 5.3.2 in nixpkgs already, which matters here: 6.0+ ships a compiled
-# C++ kernel that needs libstdc++ off the FHS, and this pure-Python build is the one that loads.
+# The chart is the desktop app's original Cairo drawing (splines, spring-physics labels, the
+# min/now/max table strip), rendered off-screen and shown through textual-image -- Kitty's
+# graphics protocol or Sixel where the far end's terminal understands it, half-cells otherwise.
 { lib, stdenv, makeWrapper, python3, ffmpeg, v4l-utils }:
 let
-  python = python3.withPackages (ps: [ ps.textual ps.textual-image ps.plotext ps.pyserial ps.pillow ]);
+  python = python3.withPackages (ps: [ ps.textual ps.textual-image ps.pycairo ps.pyserial ps.pillow ]);
 in
 stdenv.mkDerivation {
   pname = "eyebuds-dev";

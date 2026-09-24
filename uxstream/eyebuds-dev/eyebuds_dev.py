@@ -25,16 +25,17 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# textual/plotext/pillow/textual-image are not distro packages worth depending on; pip is the
-# only sane source. plotext is pinned below 6.0: from 6.0 on it ships a compiled C++ kernel that
-# a plain `pip install` on NixOS cannot load (no FHS libstdc++), while 5.3.2 is pure Python and
-# draws the same braille/block charts. textual-image draws the camera picture with real terminal
-# pixels (Kitty's graphics protocol, or Sixel) when the terminal on the viewing end supports it,
-# falling back to coloured half-cells otherwise -- detected by asking the terminal, not by
-# guessing from $TERM, so it works the same whether you are sitting at the machine or over SSH.
-PIP_PACKAGES = ["textual", "plotext==5.3.2", "pyserial", "pillow", "textual-image"]
-# Only the camera needs these, and only outside of the Nix build (which wires ffmpeg onto PATH
-# itself). Package name is the same across the big three.
+# textual/pillow/textual-image are not distro packages worth depending on; pip is the only sane
+# source. textual-image draws both the camera and the chart with real terminal pixels (Kitty's
+# graphics protocol, or Sixel) when the terminal on the viewing end supports it, falling back to
+# coloured half-cells otherwise -- detected by asking the terminal, not by guessing from $TERM,
+# so it works the same whether you are sitting at the machine or over SSH.
+PIP_PACKAGES = ["textual", "pyserial", "pillow", "textual-image==0.13.2", "pycairo"]
+# pycairo has no prebuilt wheel -- pip compiles it against the system's cairo, so that has to be
+# in place first (SYSTEM_PACKAGES below). Camera packages are only needed outside of the Nix
+# build (which wires ffmpeg onto PATH itself), and only if the camera is actually wanted.
+SYSTEM_PACKAGES = {"apt-get": ["libcairo2-dev", "pkg-config"], "dnf": ["cairo-devel", "pkgconf-pkg-config"],
+                   "pacman": ["cairo", "pkgconf"]}
 CAMERA_PACKAGES = {"apt-get": ["ffmpeg", "v4l-utils"], "dnf": ["ffmpeg", "v4l-utils"],
                     "pacman": ["ffmpeg", "v4l-utils"]}
 DESKTOP_ENTRY = """[Desktop Entry]
@@ -75,13 +76,16 @@ def pip_install(packages):
 def ensure_toolkit():
     """Import the toolkit, and when it is not there, install it once and start again."""
     try:
-        import textual, textual_image, plotext, serial  # noqa: F401
+        import cairo, textual, textual_image, serial  # noqa: F401
         from PIL import Image  # noqa: F401
         return
     except ImportError as error:
         if os.environ.get("EYEBUDDY_BOOTSTRAPPED"):
-            sys.exit(f"EyeBuddy needs a few Python packages: {error}")
-        print(f"EyeBuddy needs a few Python packages: {error}")
+            sys.exit(f"EyeBuddy needs a few packages: {error}")
+        print(f"EyeBuddy needs a few packages: {error}")
+        manager = package_manager()
+        if manager:  # cairo's own headers, so pip can build pycairo against them
+            install_packages(manager, SYSTEM_PACKAGES[manager])
         if not pip_install(PIP_PACKAGES):
             sys.exit("That install did not go through. Try it yourself:\n"
                      f"  {sys.executable} -m pip install --user {' '.join(PIP_PACKAGES)}")
@@ -108,16 +112,16 @@ def install_launcher():
 
 ensure_toolkit()
 
-import plotext as plt  # noqa: E402
+import cairo  # noqa: E402
 import serial  # noqa: E402
 from PIL import Image  # noqa: E402
-from rich.color import Color  # noqa: E402
 from rich.style import Style  # noqa: E402
 from rich.text import Text  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Horizontal, Vertical  # noqa: E402
-from textual.widgets import DataTable, Footer, ProgressBar, RichLog, Static  # noqa: E402
+from textual.widgets import Footer, ProgressBar, RichLog, Static  # noqa: E402
+from textual_image._terminal import get_cell_size  # noqa: E402
 from textual_image.renderable import Image as _AutoRenderable  # noqa: E402
 from textual_image.widget import AutoImage  # noqa: E402
 
@@ -136,9 +140,19 @@ OUTLIER_TTL = 300  # seconds an outlier stays listed
 OUTLIER_SHOWN = 6  # how many of them are listed at once
 RANGE_ROWS = 24  # fields the stats table has room to be useful about
 CHART_WINDOW = 120  # seconds the chart shows; older samples slide out and are dropped
-MAX_BANDS = 4  # stacked panels the chart has room to draw
-MAX_PER_BAND = 5  # lines sharing one band's axis before the rest wait their turn
+NUM_COLUMN = 52  # width of one number column in the table strip
+NUM_ROW = 13  # smallest height one row of the table strip may have
+AXIS_GUTTER = 38  # left margin the bands write their y values in
+TIME_AXIS = 14  # bottom margin the clock ticks are written in
+BAND_FLOOR = 46  # smallest height a band is given before the rest is shared out
+EVENT_BAND = 72  # timeline of one-off events, kept off the metric chart
+LABEL_PLATE = 17  # height of the rounded plate behind a label
+LABEL_GAP = 19  # how close two labels may sit before they push each other away
+LABEL_SPRING = 55  # how hard a label is pulled back to the height of its own line
+LABEL_PUSH = 900  # how hard overlapping labels shove each other apart
+LABEL_DAMPING = 11  # how quickly that motion settles
 CAMERA_FPS = 6  # the terminal redraws the picture this often; SSH bandwidth is the limit, not the sensor
+CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
 
@@ -231,6 +245,53 @@ def polarity_of(label, unit):
     if GOOD_HIGH.search(text):
         return 1
     return 0
+
+
+def spread(values, gap, low, high):
+    """Sorted values nudged apart to at least `gap`, kept inside [low, high] where they fit."""
+    out = list(values)
+    for i in range(1, len(out)):
+        out[i] = max(out[i], out[i - 1] + gap)
+    if out and out[-1] > high:
+        out[-1] = high
+        for i in range(len(out) - 2, -1, -1):
+            out[i] = min(out[i], out[i + 1] - gap)
+    if out and out[0] < low:
+        out[0] = low
+        for i in range(1, len(out)):
+            out[i] = max(out[i], out[i - 1] + gap)
+    return out
+
+
+def rounded_rect(cr, x, y, w, h, r):
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -1.5708, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
+    cr.arc(x + r, y + h - r, r, 1.5708, 3.1416)
+    cr.arc(x + r, y + r, r, 3.1416, 4.7124)
+    cr.close_path()
+
+
+def spline(cr, points):
+    """Catmull-Rom through the points, as cubic beziers: no overshoot, no corners."""
+    if len(points) < 2:
+        return
+    cr.move_to(*points[0])
+    for i in range(len(points) - 1):
+        p0 = points[i - 1] if i else points[0]
+        p1, p2 = points[i], points[i + 1]
+        p3 = points[i + 2] if i + 2 < len(points) else p2
+        cr.curve_to(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+                    p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
+                    p2[0], p2[1])
+
+
+def cairo_to_pil(surface, w, h):
+    """A finished ImageSurface as a plain PIL image, ready for textual-image to show."""
+    surface.flush()
+    stride = surface.get_stride()
+    buf = bytes(surface.get_data())
+    return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", stride, 1).convert("RGB")
 
 
 SGR_COLORS = {
@@ -380,42 +441,80 @@ class SerialReader(threading.Thread):
                     self.on_line(data.decode("utf-8", "replace"), None)
 
 
-class ChartModel:
-    """The live series every telemetry field feeds: a rolling window per key, nothing about how
-    to draw it. ChartPanel below turns whichever of these are worth showing into a plotext figure.
+class MultiGraph:
+    """Every tracked field in one chart, each line labelled where it ends.
+
+    x is the last CHART_WINDOW seconds. Lines are grouped into bands by unit, and one band is
+    one axis shared by its lines, so a curve's height reads as a real value against the ticks in
+    the left gutter. This is the chart from the original desktop app, drawing included -- it
+    still uses Cairo, just onto an off-screen surface instead of a GTK window, and `render()`
+    hands back a plain image for ChartView to show through Kitty graphics or Sixel.
     """
 
     def __init__(self):
         self.series = {}
+        self.t0 = None
+        self.visible = set()  # the keys worth a label and a row, chosen by the window
+        self.events = collections.deque()  # one-off lines, drawn on their own timeline
+        self.now = self.span = 0
+        self.scales = {}  # band -> the lo/hi/log axis its lines are drawn against
+        self.titles = {}  # band -> what is written in its top left corner
+        self.plot_l, self.plot_r = AXIS_GUTTER, 0
 
-    def add_series(self, key, color, label, unit, pattern):
+    def add_series(self, key, color, label, polarity, unit, pattern):
         band, factor = band_of(label, unit)
-        self.series[key] = {"key": key, "color": color, "label": label, "unit": unit, "pattern": pattern,
-                            "group": band, "factor": factor, "t": collections.deque(), "v": collections.deque(),
-                            "value": None, "lo": None, "hi": None, "flag": 0.0}
+        self.series[key] = {"key": key, "t": collections.deque(), "v": collections.deque(), "color": color,
+                            "label": label, "polarity": polarity, "group": band, "band_key": None,
+                            "factor": factor, "unit": unit, "pattern": pattern,
+                            "value": None, "lo": None, "hi": None,
+                            "worst": None, "best": None, "flag": 0.0,
+                            "y": None, "label_y": None, "label_vy": 0.0, "band": None}
 
     def drop_pattern(self, pattern):
         for key in [k for k, s in self.series.items() if s["pattern"] == pattern]:
             del self.series[key]
+        if not self.series:
+            self.t0 = None
 
     def flag(self, key):
         if key in self.series:
             self.series[key]["flag"] = time.time()
 
-    def push(self, key, value, lo, hi):
-        s = self.series.get(key)
-        if s is None:
+    def push(self, key, level, value, lo, hi):
+        series = self.series.get(key)
+        if series is None:
             return
-        factor = s["factor"]
-        value, lo, hi = value * factor, lo * factor, hi * factor
         now = time.time()
-        s["value"], s["lo"], s["hi"] = value, lo, hi
-        s["t"].append(now)
-        s["v"].append(value)
+        # Worst means lowest where high is good, highest where low is good, and the biggest
+        # excursion either way when the field has no direction.
+        polarity = series["polarity"]
+        badness = (1 - level) if polarity > 0 else level if polarity < 0 else abs(level - 0.5) * 2
+        factor = series["factor"]  # everything in a band is stored in that band's base unit
+        value, lo, hi = value * factor, lo * factor, hi * factor
+        sample = (badness, value, now)
+        if series["worst"] is None or badness > series["worst"][0]:
+            series["worst"] = sample
+        if series["best"] is None or badness < series["best"][0]:
+            series["best"] = sample
+        series["value"], series["lo"], series["hi"] = value, lo, hi
+        self.t0 = now if self.t0 is None else self.t0
+        series["t"].append(now)
+        series["v"].append(value)
         cutoff = now - CHART_WINDOW
-        while s["t"] and s["t"][0] < cutoff:  # what leaves the window is forgotten
-            s["t"].popleft()
-            s["v"].popleft()
+        while series["t"] and series["t"][0] < cutoff:  # what leaves the window is forgotten
+            series["t"].popleft()
+            series["v"].popleft()
+
+    def set_visible(self, keys):
+        self.visible = set(keys)
+
+    def add_event(self, text, color):
+        """A one-off line worth marking on the rail: a state change, a warning, an error."""
+        now = time.time()
+        self.events.append((now, text, color))
+        while self.events and self.events[0][0] < now - CHART_WINDOW:
+            self.events.popleft()
+        self.t0 = now if self.t0 is None else self.t0
 
     def worth_listing(self, limit):
         """The fields worth a row: still reporting, actually moving, most restless first."""
@@ -425,10 +524,10 @@ class ChartModel:
             if s["lo"] is None or s["hi"] <= s["lo"] or not s["t"]:
                 continue  # never seen two different values, so there is nothing to compare
             if s["t"][-1] < now - CHART_WINDOW:
-                continue  # gone quiet
-            lo_v, hi_v = min(s["v"]), max(s["v"])
-            scale = max(abs(hi_v), abs(lo_v), 1e-9)
-            movement = (hi_v - lo_v) / scale
+                continue  # gone quiet, and its line has already slid off the chart
+            low, high = min(s["v"]), max(s["v"])
+            scale = max(abs(high), abs(low), 1e-9)
+            movement = (high - low) / scale  # what it does on the chart, not the whole session
             if movement < (0.35 if s["key"].endswith("#rate") else 0.005):
                 continue
             recent = now - s["flag"] < OUTLIER_TTL
@@ -436,7 +535,7 @@ class ChartModel:
         # Round-robin over the log lines they came from, so one chatty message cannot fill the
         # table with variations on itself before other messages get a row at all.
         buckets = {}
-        for score, s in sorted(scored, key=lambda pair: -pair[0]):
+        for score, s in sorted(scored, reverse=True, key=lambda pair: pair[0]):
             buckets.setdefault(s["pattern"], []).append(s)
         chosen = []
         while len(chosen) < limit and any(buckets.values()):
@@ -445,9 +544,298 @@ class ChartModel:
                     chosen.append(bucket.pop(0))
         return chosen
 
+    def step_labels(self, dt):
+        """Labels are beads on a thread: pulled to their line's height, pushed off each other."""
+        bands = {}
+        for series in self.series.values():
+            if (series["key"] in self.visible and series["y"] is not None
+                    and series["label_y"] is not None and series["band"] is not None):
+                bands.setdefault(series["band"], []).append(series)
+        for band, beads in bands.items():
+            beads.sort(key=lambda s: s["label_y"])
+            for a, b in zip(beads, beads[1:]):
+                overlap = LABEL_GAP - (b["label_y"] - a["label_y"])
+                if overlap > 0:
+                    a["label_vy"] -= LABEL_PUSH * overlap * dt / LABEL_GAP
+                    b["label_vy"] += LABEL_PUSH * overlap * dt / LABEL_GAP
+            top, height = band
+            for bead in beads:
+                bead["label_vy"] += (bead["y"] - bead["label_y"]) * LABEL_SPRING * dt
+                bead["label_vy"] *= max(0.0, 1 - LABEL_DAMPING * dt)
+                bead["label_y"] += bead["label_vy"] * dt
+            # The spring alone lets labels pile up against a band edge, so separate them for real.
+            beads.sort(key=lambda s: s["label_y"])
+            placed = spread([b["label_y"] for b in beads], LABEL_GAP, top + 10, top + height - 6)
+            for bead, y in zip(beads, placed):
+                if abs(y - bead["label_y"]) > 0.05:
+                    bead["label_vy"] *= 0.5
+                bead["label_y"] = y
 
-def rgb_of(hex_color):
-    return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    def _x(self, t):
+        """Time to x, with now at the right edge: samples drift left and off the chart."""
+        span = self.plot_r - self.plot_l
+        return self.plot_r - 1 - (self.now - t) / self.span * (span - 2)
+
+    def _scale(self, band, members):
+        """One axis for a band: the union of its lines, logarithmic when they span decades."""
+        lo = min(min(s["v"]) for s in members)
+        hi = max(max(s["v"]) for s in members)
+        tops = [top for top in (max(s["v"]) for s in members) if top > 0]
+        positive = [v for s in members for v in s["v"] if v > 0]
+        if band != "percent" and lo >= 0 and tops and (
+                max(tops) / min(tops) > 50  # lines that live on scales this far apart
+                or hi / min(positive) > 1000):  # or one line that alone covers three decades
+            return {"lo": max(hi / 1e4, min(positive)), "hi": hi, "log": True}  # four decades at most
+        if hi <= lo:
+            hi = lo + 1
+        if 0 < lo < hi * 0.25:
+            lo = 0.0  # a zero baseline where it costs almost nothing, so heights compare
+        return {"lo": lo, "hi": hi + (hi - lo) * 0.08, "log": False}
+
+    def _norm(self, band, value):
+        scale = self.scales[band]
+        lo, hi, v = scale["lo"], scale["hi"], value
+        if scale["log"]:
+            lo, hi, v = math.log10(lo), math.log10(hi), math.log10(max(value, lo))
+        return min(1.0, max(0.0, (v - lo) / (hi - lo))) if hi > lo else 0.5
+
+    def _ticks(self, band):
+        """Round values to draw a band's gridlines at."""
+        scale = self.scales[band]
+        if scale["log"]:
+            first = math.floor(math.log10(scale["lo"]))
+            decades = [10.0 ** e for e in range(first, math.ceil(math.log10(scale["hi"])) + 1)]
+            return [v for v in decades if scale["lo"] <= v <= scale["hi"]]
+        span = scale["hi"] - scale["lo"]
+        step = 10.0 ** math.floor(math.log10(span / 3)) if span > 0 else 1.0
+        for mult in (1, 2, 5, 10):
+            if span / (step * mult) <= 5:
+                step *= mult
+                break
+        first = math.ceil(scale["lo"] / step) * step
+        return [first + i * step for i in range(6) if first + i * step <= scale["hi"]]
+
+    def _bands(self, h):
+        """A band per unit and per thousandfold within it, sized by how many lines it carries.
+
+        Splitting on magnitude is what keeps an axis readable: a line peaking at 30k and one
+        peaking at 10 cannot share a scale that either of them can be read off.
+        """
+        members = {}
+        for series in self.series.values():
+            if series["key"] in self.visible and len(series["v"]) >= 2:
+                decade = int(math.log10(max(abs(series["hi"]), 1)) // 3)
+                series["band_key"] = key = (series["group"], decade)
+                members.setdefault(key, []).append(series)
+        if not members:
+            return {}
+        self.scales = {key: self._scale(key[0], group) for key, group in members.items()}
+        # A band says its unit, and how big its lines are too once a unit runs across several bands.
+        split = collections.Counter(band for band, _ in members)
+        self.titles = {(band, decade): (BAND_UNIT.get(band) or band)
+                       + (f" {fmt_si(1000.0 ** decade)}+" if split[band] > 1 else "")
+                       + (" · log" if self.scales[(band, decade)]["log"] else "")
+                       for band, decade in members}
+        live = sorted(members, key=lambda key: (BAND_ORDER.index(key[0]) if key[0] in BAND_ORDER
+                                                else len(BAND_ORDER), key[1]))
+        # Each band gets a floor, then the rest is shared out by how many lines it carries.
+        floor = min(BAND_FLOOR, h / len(live))
+        spare = h - floor * len(live)
+        total = sum(len(members[band]) for band in live)
+        bands, top = {}, 0.0
+        for band in live:
+            height = floor + spare * len(members[band]) / total
+            bands[band] = (top, height)
+            top += height
+        return bands
+
+    def render(self, w, h):
+        """Draw the current state at exactly `w`x`h` pixels and hand back a PIL image."""
+        w, h = max(1, int(w)), max(1, int(h))
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+        cr = cairo.Context(surface)
+        cr.set_source_rgb(0.086, 0.09, 0.106)  # opaque backdrop -- the terminal behind it never shows
+        cr.paint()
+        table = 3 * NUM_COLUMN + 26  # the strip on the right, one row of numbers per line
+        self.plot_l, self.plot_r = AXIS_GUTTER, w - table
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        if self.t0 is None:
+            cr.set_source_rgba(1, 1, 1, 0.35)
+            cr.set_font_size(12)
+            text = "waiting for telemetry…"
+            extents = cr.text_extents(text)
+            cr.move_to((w - extents.width) / 2, h / 2)
+            cr.show_text(text)
+            return cairo_to_pil(surface, w, h)
+        self.now = time.time()
+        self.span = CHART_WINDOW
+        event_h = EVENT_BAND if any(when >= self.now - self.span for when, _, _ in self.events) else 0
+        bands = self._bands(h - event_h - TIME_AXIS)
+        if event_h:
+            self._draw_events(cr, event_h)
+        for i, (band, (top, height)) in enumerate(sorted(bands.items(), key=lambda kv: kv[1][0])):
+            top += event_h
+            cr.set_source_rgba(1, 1, 1, 0.05 if i % 2 else 0.03)  # alternating, so bands separate
+            cr.rectangle(0, top, self.plot_r, height)
+            cr.fill()
+            cr.set_font_size(9)
+            for value in self._ticks(band):
+                y = top + height - 3 - self._norm(band, value) * (height - 6)
+                cr.set_source_rgba(1, 1, 1, 0.07)
+                cr.set_line_width(1)
+                cr.move_to(self.plot_l, y)
+                cr.line_to(self.plot_r, y)
+                cr.stroke()
+                if y > top + 18:
+                    text = fmt_si(value)
+                    cr.set_source_rgba(1, 1, 1, 0.4)
+                    cr.move_to(self.plot_l - 4 - cr.text_extents(text).width, y + 3)
+                    cr.show_text(text)
+            cr.set_source_rgba(1, 1, 1, 0.35)
+            cr.move_to(4, top + 11)
+            cr.show_text(self.titles[band])
+        self._draw_time_axis(cr, h)
+
+        cr.set_font_size(11)
+        labels = []
+        for key, series in self.series.items():
+            if key not in self.visible or len(series["v"]) < 2 or series.get("band_key") not in bands:
+                continue  # muted from the table, empty, or its band is gone
+            band = series["band_key"]
+            top, height = bands[band]
+            top += event_h
+            series["band"] = (top, height)
+            rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
+            points = [(self._x(t), top + height - 3 - self._norm(band, v) * (height - 6))
+                      for t, v in zip(series["t"], series["v"])]
+            cr.set_source_rgb(*rgb)
+            cr.set_line_width(1.4)
+            spline(cr, points)
+            cr.stroke()
+            for kind, fill in (("worst", True), ("best", False)):
+                mark = series[kind]
+                if mark and len(series["v"]) > 4 and mark[2] > self.now - self.span:
+                    cr.arc(self._x(mark[2]), top + height - 3 - self._norm(band, mark[1]) * (height - 6),
+                           2.5, 0, 6.2832)
+                    cr.fill() if fill else cr.stroke()
+            series["y"] = points[-1][1]
+            if series["label_y"] is None:
+                series["label_y"] = series["y"]
+
+            flag = "! " if time.time() - series["flag"] < 10 else ""
+            text = f"{flag}{series['label']}"  # the numbers live in the table
+            labels.append({"key": key, "series": series, "rgb": rgb, "text": text,
+                           "width": cr.text_extents(text).width, "y": series["label_y"],
+                           "tip": (points[-1][0], series["y"])})
+
+        for label in labels:
+            rgb, ly, width = label["rgb"], label["y"], label["width"]
+            tip_x, tip_y = label["tip"]
+            tx = max(self.plot_l + 4, tip_x - 8 - width)  # just left of the newest sample
+            if abs(ly - tip_y) > 1:
+                cr.set_source_rgba(*rgb, 0.4)
+                cr.set_line_width(1)
+                cr.move_to(tip_x, tip_y)
+                cr.line_to(tx + width + 4, ly + 2)
+                cr.stroke()
+            cr.set_source_rgba(0, 0, 0, 0.45)  # a dark rounded plate keeps the name readable
+            rounded_rect(cr, tx - 5, ly - 6, width + 10, LABEL_PLATE, 5)
+            cr.fill()
+            cr.set_source_rgb(*rgb)
+            cr.set_font_size(11)
+            cr.move_to(tx, ly + 6)
+            cr.show_text(label["text"])
+        self._draw_table(cr, w, h, labels)
+        return cairo_to_pil(surface, w, h)
+
+    def _draw_table(self, cr, w, h, labels):
+        """The strip on the right: one row per line, in its colour, never two on the same height."""
+        cr.set_font_size(10)
+        cr.set_source_rgba(1, 1, 1, 0.35)
+        columns = [w - 8 - 2 * NUM_COLUMN, w - 8 - NUM_COLUMN, w - 8]  # right edge of min, now, max
+        for heading, right in zip(("min", "now", "max"), columns):
+            cr.move_to(right - cr.text_extents(heading).width, 12)
+            cr.show_text(heading)
+        labels = sorted(labels, key=lambda label: label["y"])
+        swatch = self.plot_r + 6
+        for label, ry in zip(labels, spread([label["y"] for label in labels], NUM_ROW, 24, h - 6)):
+            series, rgb = label["series"], label["rgb"]
+            if abs(ry - label["y"]) > 2:  # a leader back to the label, once the row has moved off it
+                cr.set_source_rgba(*rgb, 0.25)
+                cr.set_line_width(1)
+                cr.move_to(self.plot_r - 2, label["y"] + 1)
+                cr.line_to(swatch, ry + 1)
+                cr.stroke()
+            cr.set_source_rgba(*rgb, 0.9)  # the row carries the line's colour, so the two pair up
+            cr.set_line_width(2.5)
+            cr.move_to(swatch, ry + 1)
+            cr.line_to(swatch + 8, ry + 1)
+            cr.stroke()
+            for value, right, dim in zip((series["lo"], series["value"], series["hi"]), columns,
+                                         (True, False, True)):
+                number = fmt_si(value)
+                cr.set_source_rgba(*rgb, 0.5 if dim else 1)
+                cr.move_to(right - cr.text_extents(number).width, ry + 4)
+                cr.show_text(number)
+
+    def _draw_time_axis(self, cr, h):
+        """Clock ticks along the bottom, so a spike on the chart can be found in the log."""
+        cr.set_font_size(9)
+        step = 30
+        marks = [t for t in (math.ceil((self.now - self.span) / step) * step + i * step
+                             for i in range(int(self.span / step) + 2)) if t <= self.now]
+        for t in marks:
+            x = self._x(t)
+            cr.set_source_rgba(1, 1, 1, 0.07)
+            cr.set_line_width(1)
+            cr.move_to(x, 0)
+            cr.line_to(x, h - TIME_AXIS)
+            cr.stroke()
+            text = datetime.fromtimestamp(t).strftime("%H:%M:%S")
+            cr.set_source_rgba(1, 1, 1, 0.4)
+            cr.move_to(min(x + 3, self.plot_r - cr.text_extents(text).width), h - 4)
+            cr.show_text(text)
+
+    def _draw_events(self, cr, height):
+        """A stem timeline of its own, so warnings do not stripe the metric chart."""
+        cr.set_source_rgba(1, 1, 1, 0.04)
+        cr.rectangle(0, 0, self.plot_r, height)
+        cr.fill()
+        cr.set_font_size(9)
+        cr.set_source_rgba(1, 1, 1, 0.3)
+        cr.move_to(4, 12)
+        cr.show_text("events")
+        base = height - 6
+        cap = 42  # dots sit here; names live in the rows above
+        cr.set_source_rgba(1, 1, 1, 0.12)
+        cr.set_line_width(1)
+        cr.move_to(0, base)
+        cr.line_to(self.plot_r, base)
+        cr.stroke()
+        rows = [[] for _ in range(3)]  # x ranges already spoken for, per row of names
+        for when, text, color in self.events:
+            if when < self.now - self.span:
+                continue
+            x = self._x(when)
+            rgb = tuple(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+            cr.set_source_rgb(*rgb)
+            cr.set_line_width(1.2)
+            cr.move_to(x, base)
+            cr.line_to(x, cap)
+            cr.stroke()
+            cr.arc(x, cap, 2.6, 0, 6.2832)
+            cr.fill()
+            text = text[:26]
+            width = cr.text_extents(text).width + 8
+            x0 = min(x + 5, self.plot_r - width)
+            if x0 < 46:  # leave the band name alone
+                continue
+            for i, taken in enumerate(rows):
+                if all(x0 >= end or x0 + width <= start for start, end in taken):
+                    taken.append((x0, x0 + width))
+                    cr.move_to(x0, 13 + i * 12)
+                    cr.show_text(text)
+                    break
 
 
 class CameraView(AutoImage, Renderable=_AutoRenderable):
@@ -493,38 +881,27 @@ class CameraView(AutoImage, Renderable=_AutoRenderable):
         self.image = img.crop((left, top, left + box_w, top + box_h))
 
 
-class ChartPanel(Static):
-    """Every worth-listing field, banded by unit, drawn by plotext: one subplot per band."""
+class ChartView(AutoImage, Renderable=_AutoRenderable):
+    """The chart as one image: Cairo draws it at exactly the panel's pixel size, and AutoImage
+    shows it through Kitty graphics or Sixel where the terminal supports it.
+    """
 
-    def redraw(self, chosen):
+    def __init__(self, model, **kwargs):
+        super().__init__(None, **kwargs)
+        self.model = model
+        self.last_frame = None
+
+    def redraw(self):
         w, h = self.size.width, self.size.height
-        if w < 10 or h < 6:
+        if w < 4 or h < 4:
             return
-        if not chosen:
-            self.update(Text("(waiting for telemetry…)", style="dim"))
-            return
-        members = {}
-        for s in chosen:
-            decade = int(math.log10(max(abs(s["hi"] or 1), 1)) // 3)
-            members.setdefault((s["group"], decade), []).append(s)
-        for key in members:
-            members[key] = members[key][:MAX_PER_BAND]
-        bands = sorted(members, key=lambda k: (BAND_ORDER.index(k[0]) if k[0] in BAND_ORDER
-                                               else len(BAND_ORDER), k[1]))[:MAX_BANDS]
-        now = time.time()
-        plt.clear_figure()
-        plt.theme("pro")
-        plt.plotsize(w, h)
-        plt.subplots(len(bands), 1)
-        for i, band in enumerate(bands, start=1):
-            plt.subplot(i, 1)
-            plt.title(BAND_UNIT.get(band[0], band[0]) or "count")
-            for s in members[band]:
-                if len(s["t"]) < 2:
-                    continue
-                x = [t - now for t in s["t"]]
-                plt.plot(x, list(s["v"]), color=rgb_of(s["color"]), label=s["label"][:20])
-        self.update(Text.from_ansi(plt.build()))
+        cell_w, cell_h = get_cell_size()
+        now = time.monotonic()
+        dt = min(now - self.last_frame, 0.5) if self.last_frame else 0
+        self.last_frame = now
+        if dt:
+            self.model.step_labels(dt)
+        self.image = self.model.render(w * cell_w, h * cell_h)
 
 
 class EyeBuddyApp(App):
@@ -535,7 +912,6 @@ class EyeBuddyApp(App):
     #body { height: 1fr; }
     #main { width: 1fr; }
     #chart { height: 1fr; min-height: 12; border: round $boost; }
-    #stats { height: 10; border: round $boost; }
     #log { height: 1fr; border: round $boost; }
     #sidebar { width: 34; }
     #camera-wrap { height: 24; border: round $boost; align: center middle; }
@@ -594,7 +970,7 @@ class EyeBuddyApp(App):
         self.rows = {}  # pattern -> row state (numeric fields, their ranges, the arrival rate)
         self.seen = {}  # pattern -> occurrences before it earns a place on the chart
         self.module_hue = {}  # module -> its hue on the chart, handed out as modules turn up
-        self.chart = ChartModel()
+        self.chart = MultiGraph()
         self.lines = collections.deque(maxlen=5000)  # complete raw backlog, mute-independent
         self.partial = ""
         self.recent = collections.OrderedDict()  # pattern -> pending repeat count, for the log
@@ -606,8 +982,7 @@ class EyeBuddyApp(App):
         yield Static(id="status")
         with Horizontal(id="body"):
             with Vertical(id="main"):
-                yield ChartPanel(id="chart")
-                yield DataTable(id="stats", cursor_type="none")
+                yield ChartView(self.chart, id="chart")
                 yield RichLog(id="log", max_lines=5000, wrap=False, highlight=False, markup=False)
             with Vertical(id="sidebar"):
                 yield Static(id="settings")
@@ -625,8 +1000,7 @@ class EyeBuddyApp(App):
         self.log_view = self.query_one("#log", RichLog)
         self.camera_view = self.query_one("#camera", CameraView)
         self.camera_view.set_angle(self.angle)
-        self.chart_panel = self.query_one("#chart", ChartPanel)
-        self.query_one("#stats", DataTable).add_columns("", "field", "min", "now", "max")
+        self.chart_view = self.query_one("#chart", ChartView)
         self._refresh_settings_panel()
         self._refresh_mutes_panel()
         self._update_status()
@@ -639,7 +1013,8 @@ class EyeBuddyApp(App):
                                    lambda text, status: self.call_from_thread(self._on_serial, text, status))
         self.serial.start()
         self.set_interval(1 / CAMERA_FPS, self._redraw_camera)
-        self.set_interval(1.0, self._redraw_chart)
+        self.set_interval(1 / CHART_FPS, self._redraw_chart)
+        self.set_interval(2.0, self._update_chart_visible)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.5, self._poll_job)
         self.set_interval(2.0, self._flush_recent)
@@ -697,21 +1072,13 @@ class EyeBuddyApp(App):
         save_settings(rotation=self.angle)
         self._refresh_settings_panel()
 
-    # --- chart + stats ------------------------------------------------------
+    # --- chart ------------------------------------------------------
+
+    def _update_chart_visible(self):
+        self.chart.set_visible(s["key"] for s in self.chart.worth_listing(RANGE_ROWS))
 
     def _redraw_chart(self):
-        chosen = self.chart.worth_listing(RANGE_ROWS)
-        self.chart_panel.redraw(chosen)
-        self._redraw_stats(chosen)
-
-    def _redraw_stats(self, chosen):
-        table = self.query_one("#stats", DataTable)
-        table.clear()
-        for s in chosen:
-            if s["lo"] is None:
-                continue
-            dot = Text("●", style=Style(color=Color.parse(s["color"])))
-            table.add_row(dot, s["label"][:22], fmt_si(s["lo"]), fmt_si(s["value"]), fmt_si(s["hi"]))
+        self.chart_view.redraw()
 
     # --- serial / log ---------------------------------------------------------
 
@@ -747,12 +1114,17 @@ class EyeBuddyApp(App):
             return False
         level, module, message = m.group(2).upper(), m.group(3), m.group(5)
         if level in ("WARN", "WARNING", "ERROR", "FATAL"):
+            self.chart.add_event(f"{module} {message}", LEVELS.get(level, ("", "#e06c75"))[1])
             return False
         key = pattern_of(plain)
         if key not in self.rows:
             self.seen[key] = self.seen.get(key, 0) + 1
             if self.seen[key] < 2:
-                return False  # said once so far; a repeat earns it a row
+                # Said once so far. Text without numbers is a state change worth marking; a line
+                # carrying numbers is probably telemetry that will earn its own line shortly.
+                if not NUMBERS.search(message):
+                    self.chart.add_event(f"{module} {message}", self._module_color(raw, module))
+                return False
             self.rows[key] = self._make_row(key, m.groups())
         self._update_row(self.rows[key], m.groups())
         return True
@@ -774,13 +1146,13 @@ class EyeBuddyApp(App):
             unit = field_unit(message[num.end():])
             series = f"{key}#{i}"
             self.chart.add_series(series, self._series_color(module, i),
-                                  f"{module} {text}" if text else message[:24], unit, key)
+                                  f"{module} {text}" if text else message[:24], polarity_of(text, unit), unit, key)
             fields_out.append({"series": series, "label": text, "unit": unit})
             at = num.end()
         # How often this line arrives, so a stream that reports steady numbers still shows up.
         rate_series = f"{key}#rate"
         self.chart.add_series(rate_series, self._series_color(module, len(fields_out)),
-                              f"{module} {(fields_out[0]['label'] if fields_out else message)[:18]} rate", "/s", key)
+                              f"{module} {(fields_out[0]['label'] if fields_out else message)[:18]} rate", 0, "/s", key)
         fields_out.append({"series": rate_series, "label": "rate", "unit": "/s"})
         ranges = self.ranges.setdefault(key, [[None, None] for _ in fields_out])
         while len(ranges) < len(fields_out):
@@ -801,7 +1173,8 @@ class EyeBuddyApp(App):
             rng = state["ranges"][-1]
             rng[0] = rate if rng[0] is None else min(rng[0], rate)
             rng[1] = rate if rng[1] is None else max(rng[1], rate)
-            self.chart.push(rate_field["series"], rate, rng[0], rng[1])
+            lo, hi = rng
+            self.chart.push(rate_field["series"], (rate - lo) / (hi - lo) if hi > lo else 0.5, rate, lo, hi)
         if not state["numeric"]:
             return
         for i, (field, num, rng) in enumerate(zip(state["fields"], NUMBERS.finditer(message), state["ranges"])):
@@ -810,9 +1183,10 @@ class EyeBuddyApp(App):
                 rng[0] = v if rng[0] is None else min(rng[0], v)
                 rng[1] = v if rng[1] is None else max(rng[1], v)
                 self.ranges_dirty = True
+            lo, hi = rng
             if self._check_outlier(state["key"], i, v, field["label"], module):
                 self.chart.flag(field["series"])
-            self.chart.push(field["series"], v, rng[0], rng[1])
+            self.chart.push(field["series"], (v - lo) / (hi - lo) if hi > lo else 0.5, v, lo, hi)
 
     def _check_outlier(self, key, index, value, label, module):
         """Welford mean/variance per field; a value far outside it is worth saying out loud."""
