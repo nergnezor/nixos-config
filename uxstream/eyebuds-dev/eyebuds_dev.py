@@ -158,7 +158,7 @@ LABEL_GAP = 19  # how close two labels may sit before they push each other away
 LABEL_SPRING = 55  # how hard a label is pulled back to the height of its own line
 LABEL_PUSH = 900  # how hard overlapping labels shove each other apart
 LABEL_DAMPING = 11  # how quickly that motion settles
-CAMERA_FPS = [6, 10, 15, 24]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
+CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
 # Kitty scales a picture to the cells it is placed over, so the camera goes out at this fraction
 # of the panel's pixels -- half the size is a quarter of the bytes, and hardly softer at a glance.
 CAMERA_DETAIL = 0.5
@@ -957,6 +957,12 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         # Grown until the rotated picture covers the whole box, so a turn crops the corners
         # instead of shrinking the whole picture into a diamond of empty space.
         scale = max((box_w * cos + box_h * sin) / fw, (box_w * sin + box_h * cos) / fh)
+        # Shrunk straight to the size that is sent (CAMERA_DETAIL of the panel), so the turn and
+        # the terminal's own resize work on a small picture -- what keeps 30 fps affordable.
+        cell_w, cell_h = get_cell_size()
+        shrink = min(1.0, self.size.height * cell_h * CAMERA_DETAIL / box_h) if self.size.height else 1.0
+        box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
+        scale *= shrink
         img = img.resize((max(1, round(fw * scale)), max(1, round(fh * scale))), Image.BILINEAR)
         if self.angle:
             img = img.rotate(-self.angle, resample=Image.BILINEAR, expand=True)
@@ -965,7 +971,6 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.image = img.crop((left, top, left + box_w, top + box_h))
         # Beside the panels the band's height is fixed, so the width follows the picture's
         # shape: just wide enough, with the panels taking whatever is left.
-        cell_w, cell_h = get_cell_size()
         cols = max(1, round(self.size.height * cell_h * box_w / box_h / cell_w))
         if self.parent.styles.width != cols + 2:  # + the frame's two border columns
             self.parent.styles.width = cols + 2
@@ -1047,7 +1052,7 @@ class EyeBuddyApp(App):
         self.angle = self.settings.get("rotation", args.rotate) % 360
         self.modes = camera_modes(args.device) if not args.no_camera else CAMERA_SIZES
         self.camera_size = self.settings.get("size", self.modes[0][0])
-        self.camera_fps = self.settings.get("camera_fps", 15)
+        self.camera_fps = self.settings.get("camera_fps", 30)
         self.camera_capture = None
         self.camera_enabled = (not args.no_camera and Path(args.device).exists()
                                and shutil.which("ffmpeg") is not None)
