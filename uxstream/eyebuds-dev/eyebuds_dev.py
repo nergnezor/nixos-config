@@ -18,6 +18,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -160,9 +161,6 @@ LABEL_SPRING = 55  # how hard a label is pulled back to the height of its own li
 LABEL_PUSH = 900  # how hard overlapping labels shove each other apart
 LABEL_DAMPING = 11  # how quickly that motion settles
 CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
-# Kitty scales a picture to the cells it is placed over, so the camera goes out at this fraction
-# of the panel's pixels -- half the size is a quarter of the bytes, and hardly softer at a glance.
-CAMERA_DETAIL = 0.5
 CHART_TEXT_CELL = 15  # cell height (px) the chart's text sizes are drawn for; taller cells scale it up
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
@@ -408,7 +406,7 @@ class CameraCapture(threading.Thread):
                "-video_size", f"{self.width}x{self.height}", "-i", self.device,
                "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
         try:
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as exc:
             self.error = str(exc)
             return
@@ -423,6 +421,10 @@ class CameraCapture(threading.Thread):
                     self._frame = (self.width, self.height, buf)
                 buf = b""
         self.proc.stdout.close()
+        if not self._stop.is_set():
+            # ffmpeg gave up -- most often "Device or resource busy", another program holding it
+            lines = self.proc.stderr.read().decode(errors="replace").strip().splitlines()
+            self.error = lines[-1] if lines else f"ffmpeg exited ({self.proc.wait()})"
 
     def latest(self):
         with self._lock:
@@ -972,11 +974,14 @@ class MultiGraph:
 
 if _AutoRenderable is _TGPRenderable:
     class _CameraRenderable(_TGPRenderable):
-        """Kitty graphics, sent at CAMERA_DETAIL of the placement's pixels and scaled up by Kitty."""
+        """Kitty graphics, sent at the picture's own size and scaled up to the panel by Kitty --
+        never shrunk below what the camera delivers, never blown up into more bytes than it has."""
 
         def _send_image_to_terminal(self, width, height):
-            super()._send_image_to_terminal(max(1, round(width * CAMERA_DETAIL)),
-                                            max(1, round(height * CAMERA_DETAIL)))
+            own_w, own_h = self._image_data.width, self._image_data.height
+            if own_w < width and own_h < height:
+                width, height = own_w, own_h
+            super()._send_image_to_terminal(width, height)
 else:
     _CameraRenderable = _AutoRenderable  # Sixel and half-cells draw what they are given
 
@@ -1018,10 +1023,10 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         # Grown until the rotated picture covers the whole box, so a turn crops the corners
         # instead of shrinking the whole picture into a diamond of empty space.
         scale = max((box_w * cos + box_h * sin) / fw, (box_w * sin + box_h * cos) / fh)
-        # Shrunk straight to the size that is sent (CAMERA_DETAIL of the panel), so the turn and
-        # the terminal's own resize work on a small picture -- what keeps 30 fps affordable.
+        # Only ever shrunk to fit a panel smaller than the camera's own picture; a bigger panel is
+        # filled by Kitty scaling the picture up, so no detail is lost and no bytes are wasted.
         cell_w, cell_h = get_cell_size()
-        shrink = min(1.0, self.size.height * cell_h * CAMERA_DETAIL / box_h) if self.size.height else 1.0
+        shrink = min(1.0, self.size.height * cell_h / box_h) if self.size.height else 1.0
         box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
         scale *= shrink
         img = img.resize((max(1, round(fw * scale)), max(1, round(fh * scale))), Image.BILINEAR)
@@ -1070,7 +1075,7 @@ class EyeBuddyApp(App):
     #status { height: 1; background: $panel; color: $text; padding: 0 1; }
     #main { height: 1fr; }
     #bottom { height: 36; }
-    #chart { height: 1fr; min-height: 12; border: round $boost; }
+    #chart { height: 1fr; border: round $boost; }  /* yields to the camera band when short */
     #log { height: 1fr; border: round $boost; }
     /* Along the bottom: keys, the panels, the camera. When room runs short the panels give it
        up -- the key list keeps its width and the camera is never squeezed. */
@@ -1120,6 +1125,8 @@ class EyeBuddyApp(App):
         self.camera_size = self.settings.get("size", self.modes[0][0])
         self.camera_fps = self.settings.get("camera_fps", 30)
         self.camera_capture = None
+        self.camera_error = None
+        self.camera_started = 0.0
         self.camera_enabled = (not args.no_camera and Path(args.device).exists()
                                and shutil.which("ffmpeg") is not None)
         self.build_type = self.settings.get("build_type", "debug")
@@ -1202,7 +1209,6 @@ class EyeBuddyApp(App):
         save_settings(keys_compact=self.keys_compact)
         keys = self.query_one("#keys", Static)
         keys.update(self._keys_text())
-        keys.border_title = None if self.keys_compact else "Keys"
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
@@ -1210,7 +1216,7 @@ class EyeBuddyApp(App):
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
         titles = {"#build": "Build", "#swipe": "Phone touch pad", "#log": "Log",
-                  "#outliers": "Outliers", "#keys": None if self.keys_compact else "Keys"}
+                  "#outliers": "Outliers", "#keys": "Keys"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
         self._refresh_settings_panel()
@@ -1241,6 +1247,7 @@ class EyeBuddyApp(App):
             self.camera_capture.stop()
         self.camera_capture = CameraCapture(self.args.device, self.camera_size)
         self.camera_capture.start()
+        self.camera_started = time.monotonic()
         self.camera_view.set_capture(self.camera_capture)
 
     def action_next_fps(self):
@@ -1252,8 +1259,23 @@ class EyeBuddyApp(App):
         self._refresh_settings_panel()
 
     def _redraw_camera(self):
-        if self.camera_enabled:
-            self.camera_view.redraw()
+        if not self.camera_enabled:
+            return
+        capture = self.camera_capture
+        if capture and not capture.is_alive() and capture.error:
+            # Said once per cause, then tried again every few seconds -- a camera held by another
+            # program comes back by itself once that program lets go.
+            if capture.error != self.camera_error:
+                self.camera_error = capture.error
+                self._note(f"Camera: {capture.error} -- retrying.")
+                self._refresh_settings_panel()
+            if time.monotonic() - self.camera_started > 3:
+                self._restart_camera()
+            return
+        if self.camera_error and capture and capture.latest():
+            self.camera_error = None
+            self._refresh_settings_panel()
+        self.camera_view.redraw()
 
     def action_toggle_camera(self):
         if self.camera_capture:
@@ -1628,7 +1650,8 @@ class EyeBuddyApp(App):
         if self.camera_enabled:
             sensor = dict(self.modes).get(self.camera_size)
             shown = min(self.camera_fps, sensor) if sensor else self.camera_fps
-            camera.border_title = f"{self.camera_size} · {shown} fps · {self.angle:.0f}°"
+            camera.border_title = (f"Camera: {self.camera_error[:40]}" if self.camera_error
+                                   else f"{self.camera_size} · {shown} fps · {self.angle:.0f}°")
         else:
             camera.border_title = "Camera off"
         self.query_one("#swipe", Static).update(
@@ -1647,7 +1670,17 @@ def main():
     if args.install:
         install_launcher()
 
-    EyeBuddyApp(args).run()
+    # A dropped SSH session must take the app with it: left running with no terminal it keeps
+    # holding the camera and the serial port, and the next start finds both busy.
+    app = EyeBuddyApp(args)
+
+    def hang_up(*_):
+        if app.camera_capture:
+            app.camera_capture.stop()  # ffmpeg, which would otherwise hold on to the camera
+        os._exit(0)
+
+    signal.signal(signal.SIGHUP, hang_up)
+    app.run()
 
 
 if __name__ == "__main__":
