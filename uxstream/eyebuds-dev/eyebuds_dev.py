@@ -129,6 +129,7 @@ from textual.containers import Horizontal, Vertical  # noqa: E402
 from textual.widgets import ProgressBar, RichLog, Static  # noqa: E402
 from textual_image._terminal import get_cell_size  # noqa: E402
 from textual_image.renderable import Image as _AutoRenderable  # noqa: E402
+from textual_image.renderable.tgp import Image as _TGPRenderable  # noqa: E402
 from textual_image.widget import AutoImage  # noqa: E402
 
 PLUGIN = "erik/stlink:service"
@@ -157,7 +158,10 @@ LABEL_GAP = 19  # how close two labels may sit before they push each other away
 LABEL_SPRING = 55  # how hard a label is pulled back to the height of its own line
 LABEL_PUSH = 900  # how hard overlapping labels shove each other apart
 LABEL_DAMPING = 11  # how quickly that motion settles
-CAMERA_FPS = 6  # the terminal redraws the picture this often; SSH bandwidth is the limit, not the sensor
+CAMERA_FPS = [6, 10, 15, 24]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
+# Kitty scales a picture to the cells it is placed over, so the camera goes out at this fraction
+# of the panel's pixels -- half the size is a quarter of the bytes, and hardly softer at a glance.
+CAMERA_DETAIL = 0.5
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 # Swiping the companion app's touch pad over adb: the pad fills the lower screen, so a stroke
@@ -905,7 +909,18 @@ class MultiGraph:
                     break
 
 
-class CameraView(AutoImage, Renderable=_AutoRenderable):
+if _AutoRenderable is _TGPRenderable:
+    class _CameraRenderable(_TGPRenderable):
+        """Kitty graphics, sent at CAMERA_DETAIL of the placement's pixels and scaled up by Kitty."""
+
+        def _send_image_to_terminal(self, width, height):
+            super()._send_image_to_terminal(max(1, round(width * CAMERA_DETAIL)),
+                                            max(1, round(height * CAMERA_DETAIL)))
+else:
+    _CameraRenderable = _AutoRenderable  # Sixel and half-cells draw what they are given
+
+
+class CameraView(AutoImage, Renderable=_CameraRenderable):
     """The camera picture, drawn at any angle and grown to fill its box.
 
     AutoImage draws with the terminal's real pixels -- Kitty's graphics protocol or Sixel --
@@ -917,6 +932,7 @@ class CameraView(AutoImage, Renderable=_AutoRenderable):
         super().__init__(None, **kwargs)
         self.capture = capture
         self.angle = 0.0
+        self.shown = None  # the frame on screen, so a tick with no new frame sends nothing
 
     def set_capture(self, capture):
         self.capture = capture
@@ -928,8 +944,9 @@ class CameraView(AutoImage, Renderable=_AutoRenderable):
 
     def redraw(self):
         frame = self.capture.latest() if self.capture else None
-        if not frame:
+        if not frame or frame is self.shown:
             return
+        self.shown = frame
         fw, fh, data = frame
         img = Image.frombytes("RGB", (fw, fh), data)
         # The box follows the nearest quarter turn -- that is the only turn that changes which
@@ -983,7 +1000,7 @@ class EyeBuddyApp(App):
     Screen { background: $surface; }
     #status { height: 1; background: $panel; color: $text; padding: 0 1; }
     #main { height: 1fr; }
-    #bottom { height: 24; }
+    #bottom { height: 36; }
     #chart { height: 1fr; min-height: 12; border: round $boost; }
     #log { height: 1fr; border: round $boost; }
     #sidebar { width: 1fr; min-width: 34; }
@@ -995,7 +1012,8 @@ class EyeBuddyApp(App):
     #build-info { height: auto; padding: 0 1; }
     #progress { height: 1; margin: 0 1; }
     /* Each box names the keys that act on it along its bottom edge, instead of one long footer. */
-    #build, #swipe, #log, #camera-wrap, #outliers { border-subtitle-color: $text-muted; border-title-color: $text; }
+    #keys { width: auto; height: 1fr; padding: 0 1; border: round $boost; }
+    #build, #swipe, #log, #outliers, #keys, #camera-wrap { border-title-color: $text; }
     #outliers { height: 1fr; padding: 0 1; border: round $boost; }
     """
     BINDINGS = [
@@ -1006,6 +1024,7 @@ class EyeBuddyApp(App):
         Binding("comma", "rotate_dec", "Turn -1°", show=False),
         Binding("full_stop", "rotate_inc", "Turn +1°", show=False),
         Binding("z", "next_size", "Cam size"),
+        Binding("x", "next_fps", "Cam fps"),
         Binding("k", "toggle_camera", "Cam on/off"),
         Binding("d", "toggle_build_type", "Debug/Release"),
         Binding("e", "toggle_build_env", "Staging/Prod"),
@@ -1028,6 +1047,7 @@ class EyeBuddyApp(App):
         self.angle = self.settings.get("rotation", args.rotate) % 360
         self.modes = camera_modes(args.device) if not args.no_camera else CAMERA_SIZES
         self.camera_size = self.settings.get("size", self.modes[0][0])
+        self.camera_fps = self.settings.get("camera_fps", 15)
         self.camera_capture = None
         self.camera_enabled = (not args.no_camera and Path(args.device).exists()
                                and shutil.which("ffmpeg") is not None)
@@ -1070,25 +1090,42 @@ class EyeBuddyApp(App):
                     yield ProgressBar(id="progress", total=100, show_eta=False)
                 yield Static(id="swipe")
                 yield Static(id="outliers")
+            yield Static(self._keys_text(), id="keys")
             with Vertical(id="camera-wrap"):
                 yield CameraView(self.camera_capture, id="camera")
+
+    # Every key in one list beside the camera, grouped by what it acts on.
+    KEYS = [
+        ("ST-Link", [("s", "halt / resume"), ("r", "reset"), ("h", "reset + halt")]),
+        ("Build", [("d", "debug / release"), ("e", "staging / prod"), ("b", "build"),
+                   ("f", "flash"), ("a", "build + flash")]),
+        ("Camera", [("q", "turn 90°"), (", .", "turn ∓1°"), ("z", "size"), ("x", "frame rate"), ("k", "on / off")]),
+        ("Log", [("v", "raw / pretty"), ("c", "clear"), ("g", "follow end"), ("o", "open file")]),
+        ("Phone", [("w", "swipe direction"), ("i", "swipe interval")]),
+        ("App", [("^p", "palette"), ("^q", "quit")]),
+    ]
+
+    def _keys_text(self):
+        text = Text()
+        for group, keys in self.KEYS:
+            if text:
+                text.append("\n")
+            text.append(group + "\n", style="dim")
+            for key, what in keys:
+                text.append(f"{key:>3} ", style="bold #e5c07b")
+                text.append(what + "\n")
+        text.rstrip()
+        return text
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
         self.camera_view = self.query_one("#camera", CameraView)
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
-        hints = {
-            "#build": ("Build", "d type · e env · b build · f flash · a both"),
-            "#swipe": ("Phone touch pad", "w direction · i interval"),
-            "#log": ("Log", "v raw/pretty · c clear · g end · o open"),
-            "#camera-wrap": (None, "q 90° · ,. 1° · z size · k cam"),
-            "#outliers": ("Outliers", None),
-        }
-        for selector, (title, keys) in hints.items():
-            widget = self.query_one(selector)
-            widget.border_title = title
-            widget.border_subtitle = keys
+        titles = {"#build": "Build", "#swipe": "Phone touch pad", "#log": "Log",
+                  "#outliers": "Outliers", "#keys": "Keys"}
+        for selector, title in titles.items():
+            self.query_one(selector).border_title = title
         self._refresh_settings_panel()
         self._update_status()
         if self.camera_enabled:
@@ -1101,7 +1138,7 @@ class EyeBuddyApp(App):
         self.serial.start()
         self.swiper = AdbSwiper(self.swipe_interval, lambda text: self.call_from_thread(self._note, text))
         self.swiper.start()
-        self.set_interval(1 / CAMERA_FPS, self._redraw_camera)
+        self.camera_timer = self.set_interval(1 / self.camera_fps, self._redraw_camera)
         self.set_interval(1 / CHART_FPS, self._redraw_chart)
         self.set_interval(2.0, self._update_chart_visible)
         self.set_interval(1.0, self._poll_state)
@@ -1118,6 +1155,14 @@ class EyeBuddyApp(App):
         self.camera_capture = CameraCapture(self.args.device, self.camera_size)
         self.camera_capture.start()
         self.camera_view.set_capture(self.camera_capture)
+
+    def action_next_fps(self):
+        index = CAMERA_FPS.index(self.camera_fps) + 1 if self.camera_fps in CAMERA_FPS else 0
+        self.camera_fps = CAMERA_FPS[index % len(CAMERA_FPS)]
+        save_settings(camera_fps=self.camera_fps)
+        self.camera_timer.stop()
+        self.camera_timer = self.set_interval(1 / self.camera_fps, self._redraw_camera)
+        self._refresh_settings_panel()
 
     def _redraw_camera(self):
         if self.camera_enabled:
@@ -1485,16 +1530,15 @@ class EyeBuddyApp(App):
 
     def _update_status(self):
         parts = [self.mcu_text, self.serial_state]
-        status = Text("EyeBuddy — " + " · ".join(p for p in parts if p))
-        status.append("  │  s halt/resume · r reset · h reset+halt", style="dim")
-        self.query_one("#status", Static).update(status)
+        self.query_one("#status", Static).update("EyeBuddy — " + " · ".join(p for p in parts if p))
 
     def _refresh_settings_panel(self):
         self.query_one("#settings", Static).update(f"{self.build_type} / {self.build_env}")
         camera = self.query_one("#camera-wrap")
         if self.camera_enabled:
-            fps = dict(self.modes).get(self.camera_size, "?")
-            camera.border_title = f"{self.camera_size} @ {fps}fps · {self.angle:.0f}°"
+            sensor = dict(self.modes).get(self.camera_size)
+            shown = min(self.camera_fps, sensor) if sensor else self.camera_fps
+            camera.border_title = f"{self.camera_size} · {shown} fps · {self.angle:.0f}°"
         else:
             camera.border_title = "Camera off"
         self.query_one("#swipe", Static).update(
