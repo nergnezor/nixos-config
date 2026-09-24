@@ -363,14 +363,41 @@ def pattern_of(plain):
     return NUMBERS.sub("#", body)
 
 
-def send(action, **payload):
+def noctalia_env():
+    """The environment `noctalia msg` needs to find the running noctalia.
+
+    It looks for $XDG_RUNTIME_DIR/noctalia-$WAYLAND_DISPLAY.sock, and an SSH session has neither
+    variable -- so they are filled in from the socket that is actually there.
+    """
+    env = dict(os.environ)
+    runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if not env.get("WAYLAND_DISPLAY"):
+        for sock in sorted(Path(runtime).glob("noctalia-*.sock")):
+            name = sock.name[len("noctalia-"):-len(".sock")]
+            if (Path(runtime) / name).exists():  # the compositor's own socket, not a helper's
+                env["WAYLAND_DISPLAY"] = name
+                break
+    return env
+
+
+def send(action, on_error=None, **payload):
+    """Hand an action to the ST-Link plugin; `on_error(text)` hears it if noctalia refuses."""
     cmd = ["noctalia", "msg", "plugin", PLUGIN, "all", action]
     if payload:
         cmd.append(json.dumps(payload))
-    try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError:
-        pass  # no noctalia here, so there is no ST-Link backend to talk to either
+
+    def run():
+        try:
+            result = subprocess.run(cmd, env=noctalia_env(), capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError) as exc:
+            result = None
+            reply = str(exc)
+        else:
+            reply = (result.stdout + result.stderr).strip()
+        if on_error and (result is None or result.returncode or reply.startswith("error")):
+            on_error(f"{action}: {reply or 'no answer from noctalia'}")
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def read_json(path):
@@ -1608,17 +1635,20 @@ class EyeBuddyApp(App):
 
     # --- ST-Link / build -----------------------------------------------------
 
+    def _send(self, action, **payload):
+        send(action, on_error=lambda text: self.call_from_thread(self._note, f"ST-Link {text}"), **payload)
+
     def action_toggle_mcu(self):
-        send("toggle")
+        self._send("toggle")
 
     def action_reset_mcu(self):
-        send("reset")
+        self._send("reset")
 
     def action_reset_halt(self):
-        send("reset_halt")
+        self._send("reset_halt")
 
     def action_open_log(self):
-        send("open_log")
+        self._send("open_log")
 
     def action_toggle_build_type(self):
         self.build_type = "release" if self.build_type == "debug" else "debug"
@@ -1641,7 +1671,7 @@ class EyeBuddyApp(App):
 
     def _build(self, mode):
         if not self.job_active:
-            send("build", mode=mode, build=self.build_type, env=self.build_env)
+            self._send("build", mode=mode, build=self.build_type, env=self.build_env)
 
     def _poll_state(self):
         state = read_json(DATA_DIR / "state.json")
