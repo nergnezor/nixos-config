@@ -1,0 +1,7 @@
+# Work identity for repos under ~/uxstream/ -- included from the per-host
+# gitconfig.<hostname> via includeIf, so a host whose default identity is
+# personal (nixos-hp) still commits to UXStream as work. Read straight from
+# this repo, so it needs no sync of its own.
+[user]
+	name = nergnezor
+	email = erik.rosengren@uxstream.com

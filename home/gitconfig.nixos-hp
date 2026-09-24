@@ -1,5 +1,5 @@
 [user]
-	name = Erik Rosengren
+	name = nergnezor
 	email = e@roseng.ren
 [credential "https://github.com"]
 	helper = 
@@ -7,3 +7,5 @@
 [credential "https://gist.github.com"]
 	helper = 
 	helper = !gh auth git-credential
+[includeIf "gitdir:~/uxstream/"]
+	path = ~/nixos-config/home/gitconfig-uxstream
