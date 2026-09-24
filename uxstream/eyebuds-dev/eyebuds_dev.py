@@ -441,28 +441,27 @@ class CameraCapture(threading.Thread):
 
 
 class AdbSwiper(threading.Thread):
-    """Swipes the phone's touch pad over adb on a timer, back and forth along one axis so the
-    app ends where it started. `axis` is None (idle), "vertical" or "horizontal".
+    """Swipes the phone's touch pad over adb on a timer, the same way every time.
+    `direction` is None (idle), "up", "down", "left" or "right".
     """
 
     def __init__(self, interval, on_note):
         super().__init__(daemon=True)
-        self.axis, self.interval, self.on_note = None, interval, on_note
+        self.direction, self.interval, self.on_note = None, interval, on_note
         self.screen = None  # (width, height) in pixels, asked for once a device answers
         self.failed = False
         self._wake = threading.Event()
 
-    def set(self, axis, interval):
-        self.axis, self.interval = axis, interval
+    def set(self, direction, interval):
+        self.direction, self.interval = direction, interval
         self._wake.set()
 
     def run(self):
-        forward = True
         while True:
-            self._wake.wait(self.interval if self.axis else None)
+            self._wake.wait(self.interval if self.direction else None)
             self._wake.clear()
-            if self.axis and self._swipe(self.axis, forward):
-                forward = not forward
+            if self.direction:
+                self._swipe(self.direction)
 
     def _adb(self, *args):
         result = subprocess.run(["adb", "shell", *args], capture_output=True, text=True, timeout=10)
@@ -470,7 +469,7 @@ class AdbSwiper(threading.Thread):
             raise OSError((result.stderr or result.stdout).strip() or f"adb exited {result.returncode}")
         return result.stdout
 
-    def _swipe(self, axis, forward):
+    def _swipe(self, direction):
         try:
             if not self.screen:
                 # "Physical size: WxH", then "Override size: WxH" if set -- the last one is in effect
@@ -480,8 +479,7 @@ class AdbSwiper(threading.Thread):
                 self.screen = tuple(int(v) for v in sizes[-1])
             w, h = self.screen
             cx, cy, half = w * SWIPE_CENTER[0], h * SWIPE_CENTER[1], w * SWIPE_SPAN / 2
-            sign = 1 if forward else -1
-            dx, dy = (sign * half, 0) if axis == "horizontal" else (0, sign * half)
+            dx, dy = {"up": (0, -half), "down": (0, half), "left": (-half, 0), "right": (half, 0)}[direction]
             self._adb("input", "swipe", *(str(round(v)) for v in (cx - dx, cy - dy, cx + dx, cy + dy)),
                       str(SWIPE_MS))
         except (OSError, subprocess.SubprocessError) as exc:
@@ -1248,7 +1246,8 @@ class EyeBuddyApp(App):
     #build-info { height: auto; padding: 0 1; }
     #progress { height: 1; margin: 0 1; }
     /* Each box names the keys that act on it along its bottom edge, instead of one long footer. */
-    #keys { width: auto; height: 1fr; padding: 0 1; border: round $boost; }
+    /* No frame: the widest key line ("X ^p") is four cells, and four is all the list takes. */
+    #keys { width: auto; height: 1fr; padding: 1 0 0 0; background: $boost; }
     #build, #swipe, #log, #outliers, #keys, #camera-wrap { border-title-color: $text; }
     #outliers { height: 1fr; padding: 0 1; border: round $boost; }
     """
@@ -1337,25 +1336,29 @@ class EyeBuddyApp(App):
     # Each group and key with a Nerd Font icon (Kitty ships the symbols): by default the list is
     # just those icons and the letters, as narrow as it gets; ? spells everything out.
     KEYS = [
-        ("Debug", "\uf2db", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
-        ("Build", "\uf085", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
+        ("Debug", "\U000f061a", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
+        ("Build", "\U000f1322", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
                    ("f", "\uf0e7", "flash"), ("a", "\uf135", "build + flash")]),
-        ("Camera", "\uf03d", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
+        ("Camera", "\U000f0567", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
                     ("x", "\uf008", "frame rate"), ("k", "\uf030", "on / off")]),
-        ("Log", "\uf03a", [("v", "\uf06e", "raw / pretty"), ("c", "\uf12d", "clear"), ("g", "\uf103", "follow end"),
+        ("Log", "\U000f0279", [("v", "\uf06e", "raw / pretty"), ("c", "\uf12d", "clear"), ("g", "\uf103", "follow end"),
                  ("o", "\uf0f6", "open file")]),
-        ("Phone", "\uf10b", [("w", "\uf25a", "swipe direction"), ("i", "\uf017", "swipe interval")]),
-        ("App", "\uf009", [("?", "\uf11c", "spell out keys"), ("^p", "\uf120", "palette"), ("^q", "\uf011", "quit")]),
+        ("Phone", "\U000f011c", [("w", "\uf25a", "swipe direction"), ("i", "\uf017", "swipe interval")]),
+        ("App", "\U000f003b", [("?", "\uf11c", "spell out keys"), ("^p", "\uf120", "palette"), ("^q", "\uf011", "quit")]),
     ]
 
     def _keys_text(self):
-        text = Text()
+        # The heading is the first line, not the frame's title: a frame this narrow has no room
+        # to print one. A keyboard, big and centred like the group icons; spelled out, named too.
+        heading = "\U000f030c  Keys\n" if self.keys_full else " \U000f030c \n"
+        text = Text(heading, style="bold")
         for group, group_icon, keys in self.KEYS:
-            if text:
-                text.append("\n")
-            # A group opens with its icon on a rule; spelled out, its name follows.
-            text.append(group_icon + " ", style="bold #56b6c2")
-            text.append(group + "\n" if self.keys_full else "──\n", style="dim")
+            text.append("\n")
+            # A group opens with its icon, drawn big: Kitty spreads a symbol followed by a space
+            # over both cells. Spelled out, the group's name follows.
+            # Centred over the column of keys below it when the list is just icons.
+            text.append(("" if self.keys_full else " ") + group_icon + " ", style="bold #56b6c2")
+            text.append((" " + group if self.keys_full else "") + "\n", style="dim")
             for key, icon, what in keys:
                 text.append(icon + " ", style="#7f848e")
                 text.append(key.ljust(3) if self.keys_full else key, style="bold #e5c07b")
@@ -1377,7 +1380,7 @@ class EyeBuddyApp(App):
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
         titles = {"#build": "Build", "#swipe": "Phone touch pad", "#log": "Log",
-                  "#outliers": "Outliers", "#keys": "Keys"}
+                  "#outliers": "Outliers"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
         self._refresh_settings_panel()
@@ -1456,7 +1459,7 @@ class EyeBuddyApp(App):
     # --- adb swipes on the phone's touch pad ------------------------------------
 
     def action_cycle_swipe(self):
-        order = [None, "vertical", "horizontal"]
+        order = [None, "up", "down", "left", "right"]
         self.swipe_axis = order[(order.index(self.swipe_axis) + 1) % len(order)]
         if self.swipe_axis and not shutil.which("adb"):
             self.swipe_axis = None
