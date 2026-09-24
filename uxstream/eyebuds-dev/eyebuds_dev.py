@@ -122,6 +122,7 @@ import cairo  # noqa: E402
 import serial  # noqa: E402
 from PIL import Image  # noqa: E402
 from rich.style import Style  # noqa: E402
+from rich.table import Table  # noqa: E402
 from rich.text import Text  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
@@ -162,6 +163,7 @@ CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH
 # Kitty scales a picture to the cells it is placed over, so the camera goes out at this fraction
 # of the panel's pixels -- half the size is a quarter of the bytes, and hardly softer at a glance.
 CAMERA_DETAIL = 0.5
+CHART_TEXT_CELL = 15  # cell height (px) the chart's text sizes are drawn for; taller cells scale it up
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
 # The sensor trades resolution for framerate: 30 fps at 640x480, 7 fps at 1600x1200.
 # Swiping the companion app's touch pad over adb: the pad fills the lower screen, so a stroke
@@ -195,6 +197,25 @@ def camera_modes(device):
 ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
 # "00:08:05.905 TRACE REND jpeg_lcd.c:398: Display rendering rate: 29.9 fps"
 LOG_LINE = re.compile(r"^(\d\d:\d\d:\d\d\.\d{3})\s+(\w+)\s+(\S+)\s+(\S+:\d+):\s*(.*?)\s*$")
+
+
+def hanging(head, body):
+    """`head` then `body`, with the lines `body` wraps onto indented under its own start rather
+    than back at the margin -- so the timestamp and tags stand alone down the left edge."""
+    grid = Table.grid()
+    grid.add_column(no_wrap=True)
+    grid.add_column(overflow="fold")
+    grid.add_row(head, body)
+    return grid
+
+
+def hanging_at_message(text):
+    """A whole log line as one Text, hung at where its message starts (if it is a log line)."""
+    m = LOG_LINE.match(text.plain)
+    if not m or not m.start(5):
+        return text
+    head, body = text.divide([m.start(5)])
+    return hanging(head, body)
 LEVELS = {  # glyph and colour per level, replacing the word
     "TRACE": ("·", "#7f848e"), "DEBUG": ("○", "#61afef"), "INFO": ("●", "#98c379"),
     "WARN": ("▲", "#e5c07b"), "WARNING": ("▲", "#e5c07b"), "ERROR": ("✖", "#e06c75"), "FATAL": ("✖", "#e06c75"),
@@ -518,6 +539,25 @@ class SerialReader(threading.Thread):
                     self.on_line(data.decode("utf-8", "replace"), None)
 
 
+# Cold to hot, for where a value sits within its own range: blue at its low, red at its high.
+HEAT_STOPS = [(0.0, (0.30, 0.55, 1.00)), (0.35, (0.25, 0.85, 0.85)),
+              (0.65, (0.95, 0.85, 0.30)), (1.0, (1.00, 0.35, 0.30))]
+
+
+def heat(t):
+    """The HEAT_STOPS colour at `t` in 0..1."""
+    t = min(1.0, max(0.0, t))
+    for (t0, c0), (t1, c1) in zip(HEAT_STOPS, HEAT_STOPS[1:]):
+        if t <= t1:
+            f = (t - t0) / (t1 - t0)
+            return tuple(a + (b - a) * f for a, b in zip(c0, c1))
+    return HEAT_STOPS[-1][1]
+
+
+def relative(value, lo, hi):
+    return 0.5 if value is None or lo is None or hi is None or hi <= lo else (value - lo) / (hi - lo)
+
+
 class MultiGraph:
     """Every tracked field in one chart, each line labelled where it ends.
 
@@ -720,11 +760,17 @@ class MultiGraph:
             top += height
         return bands
 
-    def render(self, w, h):
-        """Draw the current state at exactly `w`x`h` pixels and hand back a PIL image."""
-        w, h = max(1, int(w)), max(1, int(h))
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+    def render(self, w, h, scale=1.0):
+        """Draw the current state at exactly `w`x`h` pixels and hand back a PIL image.
+
+        `scale` enlarges everything -- text, lines, gutters -- while the surface keeps every
+        pixel, so a big-font terminal gets a chart in proportion to its own text, still sharp.
+        """
+        pw, ph = max(1, int(w)), max(1, int(h))
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, pw, ph)
         cr = cairo.Context(surface)
+        cr.scale(scale, scale)
+        w, h = pw / scale, ph / scale
         cr.set_source_rgb(0.086, 0.09, 0.106)  # opaque backdrop -- the terminal behind it never shows
         cr.paint()
         table = 3 * NUM_COLUMN + 26  # the strip on the right, one row of numbers per line
@@ -737,7 +783,7 @@ class MultiGraph:
             extents = cr.text_extents(text)
             cr.move_to((w - extents.width) / 2, h / 2)
             cr.show_text(text)
-            return cairo_to_pil(surface, w, h)
+            return cairo_to_pil(surface, pw, ph)
         self.now = time.time()
         self.span = CHART_WINDOW
         event_h = EVENT_BAND if any(when >= self.now - self.span for when, _, _ in self.events) else 0
@@ -779,13 +825,26 @@ class MultiGraph:
             rgb = tuple(int(series["color"][i:i + 2], 16) / 255 for i in (1, 3, 5))
             points = [(self._x(t), top + height - 3 - self._norm(band, v) * (height - 6))
                       for t, v in zip(series["t"], series["v"])]
-            cr.set_source_rgb(*rgb)
-            cr.set_line_width(1.4)
+            # Hot/cold along the line itself: a gradient from the height of its lowest sample in
+            # the window (cold) to its highest (hot), so every stretch is coloured by where it
+            # stands against the rest of the line.
+            low, high = min(series["v"]), max(series["v"])
+            y_low = top + height - 3 - self._norm(band, low) * (height - 6)
+            y_high = top + height - 3 - self._norm(band, high) * (height - 6)
+            if y_low - y_high > 1:
+                gradient = cairo.LinearGradient(0, y_low, 0, y_high)
+                for stop, color in HEAT_STOPS:
+                    gradient.add_color_stop_rgb(stop, *color)
+                cr.set_source(gradient)
+            else:
+                cr.set_source_rgb(*heat(0.5))
+            cr.set_line_width(1.8)
             spline(cr, points)
             cr.stroke()
             for kind, fill in (("worst", True), ("best", False)):
                 mark = series[kind]
                 if mark and len(series["v"]) > 4 and mark[2] > self.now - self.span:
+                    cr.set_source_rgb(*heat(relative(mark[1], low, high)))
                     cr.arc(self._x(mark[2]), top + height - 3 - self._norm(band, mark[1]) * (height - 6),
                            2.5, 0, 6.2832)
                     cr.fill() if fill else cr.stroke()
@@ -817,7 +876,7 @@ class MultiGraph:
             cr.move_to(tx, ly + 6)
             cr.show_text(label["text"])
         self._draw_table(cr, w, h, labels)
-        return cairo_to_pil(surface, w, h)
+        return cairo_to_pil(surface, pw, ph)
 
     def _draw_table(self, cr, w, h, labels):
         """The strip on the right: one row per line, in its colour, never two on the same height."""
@@ -842,10 +901,12 @@ class MultiGraph:
             cr.move_to(swatch, ry + 1)
             cr.line_to(swatch + 8, ry + 1)
             cr.stroke()
-            for value, right, dim in zip((series["lo"], series["value"], series["hi"]), columns,
-                                         (True, False, True)):
+            # min is as cold and max as hot as it gets; now is coloured by where it sits between.
+            now_heat = relative(series["value"], series["lo"], series["hi"])
+            for value, right, level, alpha in zip((series["lo"], series["value"], series["hi"]), columns,
+                                                  (0.0, now_heat, 1.0), (0.55, 1, 0.55)):
                 number = fmt_si(value)
-                cr.set_source_rgba(*rgb, 0.5 if dim else 1)
+                cr.set_source_rgba(*heat(level), alpha)
                 cr.move_to(right - cr.text_extents(number).width, ry + 4)
                 cr.show_text(number)
 
@@ -996,19 +1057,24 @@ class ChartView(AutoImage, Renderable=_AutoRenderable):
         self.last_frame = now
         if dt:
             self.model.step_labels(dt)
-        self.image = self.model.render(w * cell_w, h * cell_h)
+        # Drawn in proportion to the terminal's own text: the Cairo sizes were picked for a
+        # CHART_TEXT_CELL-high line, so a taller cell scales the whole chart up with it.
+        self.image = self.model.render(w * cell_w, h * cell_h, max(1.0, cell_h / CHART_TEXT_CELL))
 
 
 class EyeBuddyApp(App):
     TITLE = "EyeBuddy"
     CSS = """
     Screen { background: $surface; }
+    * { scrollbar-size: 0 0; }
     #status { height: 1; background: $panel; color: $text; padding: 0 1; }
     #main { height: 1fr; }
     #bottom { height: 36; }
     #chart { height: 1fr; min-height: 12; border: round $boost; }
     #log { height: 1fr; border: round $boost; }
-    #sidebar { width: 1fr; min-width: 34; }
+    /* Along the bottom: keys, the panels, the camera. When room runs short the panels give it
+       up -- the key list keeps its width and the camera is never squeezed. */
+    #sidebar { width: 1fr; min-width: 0; }
     #camera-wrap { width: 40; border: round $boost; }
     #camera { height: 1fr; width: 1fr; }
     #build { height: auto; border: round $boost; }
@@ -1086,8 +1152,9 @@ class EyeBuddyApp(App):
         # which takes only the width its aspect ratio needs and leaves the rest to them.
         with Vertical(id="main"):
             yield ChartView(self.chart, id="chart")
-            yield RichLog(id="log", max_lines=5000, wrap=False, highlight=False, markup=False)
+            yield RichLog(id="log", max_lines=5000, wrap=True, highlight=False, markup=False)
         with Horizontal(id="bottom"):
+            yield Static(self._keys_text(), id="keys")
             with Vertical(id="sidebar"):
                 with Vertical(id="build"):
                     yield Static(id="settings")
@@ -1095,11 +1162,10 @@ class EyeBuddyApp(App):
                     yield ProgressBar(id="progress", total=100, show_eta=False)
                 yield Static(id="swipe")
                 yield Static(id="outliers")
-            yield Static(self._keys_text(), id="keys")
             with Vertical(id="camera-wrap"):
                 yield CameraView(self.camera_capture, id="camera")
 
-    # Every key in one list beside the camera, grouped by what it acts on.
+    # Every key in one list at the left of the bottom band, grouped by what it acts on.
     KEYS = [
         ("ST-Link", [("s", "halt / resume"), ("r", "reset"), ("h", "reset + halt")]),
         ("Build", [("d", "debug / release"), ("e", "staging / prod"), ("b", "build"),
@@ -1257,7 +1323,7 @@ class EyeBuddyApp(App):
         if self.pretty:
             self._render_pretty(line)
         else:
-            self.log_view.write(Text.from_ansi(line.rstrip("\n")))
+            self.log_view.write(hanging_at_message(Text.from_ansi(line.rstrip("\n"))))
 
     def _to_table(self, raw):
         """Route a repeating telemetry line to the chart. Returns False for lines the log keeps."""
@@ -1373,11 +1439,12 @@ class EyeBuddyApp(App):
         if not self.outliers:
             panel.update("")
             return
-        text = Text()
+        grid = Table.grid()
+        grid.add_column(no_wrap=True)
+        grid.add_column(overflow="fold")
         for when, msg in reversed(self.outliers):
-            text.append("! ", style=Style(color="#e5c07b", bold=True))
-            text.append(msg + "\n", style=Style())
-        panel.update(text)
+            grid.add_row(Text("! ", style=Style(color="#e5c07b", bold=True)), msg)
+        panel.update(grid)
 
     # --- pretty log rendering ------------------------------------------------
 
@@ -1417,27 +1484,29 @@ class EyeBuddyApp(App):
         ts, level, module, location, message = fields
         glyph, color = LEVELS.get(level.upper(), ("·", "#7f848e"))
         loud = level.upper() in ("WARN", "WARNING", "ERROR", "FATAL")
-        text = Text()
-        text.append(ts[3:] + " ", style=Style(color="#7f848e"))
-        text.append(glyph + " ", style=Style(color=color, bold=True))
-        text.append(f"{module:<4} ", style=Style(color=self._module_color(raw, module), bold=True))
-        text.append(message, style=Style(color=color if loud else None))
+        head = Text()
+        head.append(ts[3:] + " ", style=Style(color="#7f848e"))
+        head.append(glyph + " ", style=Style(color=color, bold=True))
+        head.append(f"{module:<4} ", style=Style(color=self._module_color(raw, module), bold=True))
+        text = Text(message, style=Style(color=color if loud else None))
         if count > 1:
             text.append(f"  ×{count}", style=Style(color="#e5c07b", bold=True))
         text.append("  " + location, style=Style(color="#5c6370"))
-        self.log_view.write(text)
+        self.log_view.write(hanging(head, text))
 
     def _note(self, text):
         """A line from the app itself, in among the firmware's own."""
         self._flush_recent()
         stamp = datetime.now().strftime("%H:%M:%S")
-        self.log_view.write(Text(f"{stamp} · {text}", style=Style(color="#56b6c2")))
+        self.log_view.write(hanging(Text(f"{stamp} · ", style=Style(color="#56b6c2")),
+                                    Text(text, style=Style(color="#56b6c2"))))
 
     def _warn(self, text):
         self.outliers.append((time.time(), text))
         self._flush_recent()
         stamp = datetime.now().strftime("%H:%M:%S")
-        self.log_view.write(Text(f"{stamp} ▲ {text}", style=Style(color="#e5c07b", bold=True)))
+        style = Style(color="#e5c07b", bold=True)
+        self.log_view.write(hanging(Text(f"{stamp} ▲ ", style=style), Text(text, style=style)))
 
     # --- view toggles --------------------------------------------------------
 
