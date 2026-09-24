@@ -143,7 +143,6 @@ OPENOCD_INTERFACE = "interface/stlink.cfg"
 OPENOCD_TARGET = "target/stm32u5x.cfg"
 OPENOCD_CPU = "stm32u5x.cpu"
 CHIP = "STM32U5G9BJ"  # for probe-rs, which flashes
-FLASH_BANK = 0
 PROJECT_DIR = Path(os.environ.get("EYEBUDS_PROJECT", Path.home() / "uxstream/embedded/client/projects/eyebuds"))
 STLINK_POLL = 2.0  # seconds between looks at the probe and the MCU state
 # USB product ids of every ST-Link generation (vendor 0483).
@@ -1323,6 +1322,7 @@ class EyeBuddyApp(App):
         Binding("k", "toggle_camera", "Cam on/off"),
         Binding("d", "toggle_build_type", "Debug/Release"),
         Binding("e", "toggle_build_env", "Staging/Prod"),
+        Binding("n", "toggle_bank", "Bank 0/1"),
         Binding("b", "build_flash", "Build+flash"),
         Binding("o", "open_log", "Open log"),
         Binding("c", "clear_log", "Clear log"),
@@ -1347,6 +1347,9 @@ class EyeBuddyApp(App):
                                and shutil.which("ffmpeg") is not None)
         self.build_type = self.settings.get("build_type", "debug")
         self.build_env = self.settings.get("build_env", "production")
+        # Which of the two firmware banks is built and flashed; the bootloader decides which one
+        # runs, so this has to follow whatever bank it is booting.
+        self.flash_bank = self.settings.get("flash_bank", 0)
         self.job_active = False
         self.mcu_state = None
         self.mcu_text = "…"
@@ -1830,6 +1833,11 @@ class EyeBuddyApp(App):
         save_settings(build_type=self.build_type)
         self._refresh_settings_panel()
 
+    def action_toggle_bank(self):
+        self.flash_bank = 1 - self.flash_bank
+        save_settings(flash_bank=self.flash_bank)
+        self._refresh_settings_panel()
+
     def action_toggle_build_env(self):
         self.build_env = "staging" if self.build_env == "production" else "production"
         save_settings(build_env=self.build_env)
@@ -1848,7 +1856,7 @@ class EyeBuddyApp(App):
         (STATE_DIR / "job.json").unlink(missing_ok=True)
         # Its own session, so the build finishes even if this app (or its SSH session) goes away.
         self.job = subprocess.Popen(
-            ["bash", str(script), mode, self.build_type, self.build_env, str(FLASH_BANK), str(PROJECT_DIR),
+            ["bash", str(script), mode, self.build_type, self.build_env, str(self.flash_bank), str(PROJECT_DIR),
              CHIP, str(STATE_DIR)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         self.job_active = True
@@ -1881,7 +1889,8 @@ class EyeBuddyApp(App):
 
     def _refresh_settings_panel(self):
         self.query_one("#settings", Static).update(
-            f"{key_markup('d')}{self.build_type} / {key_markup('e')}{self.build_env}")
+            f"{key_markup('d')}{self.build_type} / {key_markup('e')}{self.build_env}"
+            f" / {key_markup('n')}bank {self.flash_bank}")
         self.query_one("#log").border_title = f"Log · {key_markup('v')}{'pretty' if self.pretty else 'raw'}"
         camera = self.query_one("#camera-wrap")
         if self.camera_enabled:
