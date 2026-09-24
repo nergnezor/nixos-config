@@ -174,6 +174,7 @@ LABEL_GAP = 19  # how close two labels may sit before they push each other away
 LABEL_SPRING = 55  # how hard a label is pulled back to the height of its own line
 LABEL_PUSH = 900  # how hard overlapping labels shove each other apart
 LABEL_DAMPING = 11  # how quickly that motion settles
+CAMERA_FULL_SIZE = 640  # a camera mode this wide (or tall) or more fills the band; smaller shows smaller
 CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
 CHART_TEXT_CELL = 15  # cell height (px) the chart's text sizes are drawn for; taller cells scale it up
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
@@ -1235,6 +1236,7 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.capture = capture
         self.angle = 0.0
         self.shown = None  # the frame on screen, so a tick with no new frame sends nothing
+        self.sized = None  # (cols, rows, frame cols) last laid out
 
     def set_capture(self, capture):
         self.capture = capture
@@ -1262,7 +1264,11 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         # Only ever shrunk to fit a panel smaller than the camera's own picture; a bigger panel is
         # filled by Kitty scaling the picture up, so no detail is lost and no bytes are wasted.
         cell_w, cell_h = get_cell_size()
-        shrink = min(1.0, self.size.height * cell_h / box_h) if self.size.height else 1.0
+        # The band's height is the picture's at 640x480 and up; a smaller camera mode shows
+        # smaller, in proportion, so what is on screen says how much the camera really sees.
+        band = self.parent.content_size.height
+        rows = max(1, round(band * min(1.0, max(fw, fh) / CAMERA_FULL_SIZE)))
+        shrink = min(1.0, rows * cell_h / box_h) if band else 1.0
         box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
         scale *= shrink
         img = img.resize((max(1, round(fw * scale)), max(1, round(fh * scale))), Image.BILINEAR)
@@ -1271,11 +1277,15 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         left = (img.width - box_w) // 2
         top = (img.height - box_h) // 2
         self.image = img.crop((left, top, left + box_w, top + box_h))
-        # Beside the panels the band's height is fixed, so the width follows the picture's
-        # shape: just wide enough, with the panels taking whatever is left.
-        cols = max(1, round(self.size.height * cell_h * box_w / box_h / cell_w))
-        if self.parent.styles.width != cols + 2:  # + the frame's two border columns
-            self.parent.styles.width = cols + 2
+        # Beside the panels the band's height is fixed, so the frame's width follows the picture's
+        # shape at full size -- just wide enough, with the panels taking whatever is left -- and
+        # stays put when a smaller mode shows a smaller picture centred inside it.
+        cols = max(1, round(rows * cell_h * box_w / box_h / cell_w))
+        frame = max(1, round(band * cell_h * box_w / box_h / cell_w)) + 2  # + the two border columns
+        if self.sized != (cols, rows, frame):  # set only on a change: each one is a layout pass
+            self.sized = (cols, rows, frame)
+            self.styles.width, self.styles.height = cols, rows
+            self.parent.styles.width = frame
 
 
 class ChartView(AutoImage, Renderable=_AutoRenderable):
@@ -1322,8 +1332,8 @@ class EyeBuddyApp(App):
     /* Along the bottom: keys, the panels, the camera. When room runs short the panels give it
        up -- the key list keeps its width and the camera is never squeezed. */
     #sidebar { width: 1fr; min-width: 0; }
-    #camera-wrap { width: 40; border: round $boost; }
-    #camera { height: 1fr; width: 1fr; }
+    #camera-wrap { width: 40; border: round $boost; align: center middle; }
+    #camera { height: 1fr; width: 1fr; }  /* sized by CameraView.redraw from the picture */
     #build { height: auto; border: round $boost; }
     #settings { height: auto; padding: 0 1; }
     #swipe { height: auto; padding: 0 1; border: round $boost; }
