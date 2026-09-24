@@ -1108,7 +1108,7 @@ class EyeBuddyApp(App):
         Binding("v", "toggle_pretty", "Raw/pretty"),
         Binding("w", "cycle_swipe", "Swipe"),
         Binding("i", "cycle_swipe_interval", "Swipe interval", show=False),
-        Binding("question_mark", "toggle_dark", "Theme", show=False),
+        Binding("question_mark", "toggle_keys", "Minimise keys"),
     ]
 
     def __init__(self, args):
@@ -1130,6 +1130,7 @@ class EyeBuddyApp(App):
         self.mcu_text = "No ST-Link" if not self.stlink else "…"
         self.serial_state = ""
         self.pretty = self.settings.get("pretty", True)
+        self.keys_compact = self.settings.get("keys_compact", False)
         self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
         self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
@@ -1166,14 +1167,18 @@ class EyeBuddyApp(App):
                 yield CameraView(self.camera_capture, id="camera")
 
     # Every key in one list at the left of the bottom band, grouped by what it acts on.
+    # Each key with a Nerd Font icon (Kitty ships the symbols), all the minimised list (?) shows
+    # beside the letter. Plain glyphs in the text colour, not emoji.
     KEYS = [
-        ("ST-Link", [("s", "halt / resume"), ("r", "reset"), ("h", "reset + halt")]),
-        ("Build", [("d", "debug / release"), ("e", "staging / prod"), ("b", "build"),
-                   ("f", "flash"), ("a", "build + flash")]),
-        ("Camera", [("q", "turn 90°"), (", .", "turn ∓1°"), ("z", "size"), ("x", "frame rate"), ("k", "on / off")]),
-        ("Log", [("v", "raw / pretty"), ("c", "clear"), ("g", "follow end"), ("o", "open file")]),
-        ("Phone", [("w", "swipe direction"), ("i", "swipe interval")]),
-        ("App", [("^p", "palette"), ("^q", "quit")]),
+        ("ST-Link", [("s", "\uf04c", "halt / resume"), ("r", "\uf021", "reset"), ("h", "\uf04d", "reset + halt")]),
+        ("Build", [("d", "\uf188", "debug / release"), ("e", "\uf0ac", "staging / prod"), ("b", "\uf0ad", "build"),
+                   ("f", "\uf0e7", "flash"), ("a", "\uf135", "build + flash")]),
+        ("Camera", [("q", "\uf01e", "turn 90°"), (",.", "\uf14e", "turn ∓1°"), ("z", "\uf00e", "size"),
+                    ("x", "\uf008", "frame rate"), ("k", "\uf030", "on / off")]),
+        ("Log", [("v", "\uf06e", "raw / pretty"), ("c", "\uf12d", "clear"), ("g", "\uf103", "follow end"),
+                 ("o", "\uf0f6", "open file")]),
+        ("Phone", [("w", "\uf25a", "swipe direction"), ("i", "\uf017", "swipe interval")]),
+        ("App", [("?", "\uf11c", "minimise keys"), ("^p", "\uf120", "palette"), ("^q", "\uf011", "quit")]),
     ]
 
     def _keys_text(self):
@@ -1181,12 +1186,23 @@ class EyeBuddyApp(App):
         for group, keys in self.KEYS:
             if text:
                 text.append("\n")
-            text.append(group + "\n", style="dim")
-            for key, what in keys:
-                text.append(f"{key:>3} ", style="bold #e5c07b")
-                text.append(what + "\n")
+            if not self.keys_compact:
+                text.append(group + "\n", style="dim")
+            for key, icon, what in keys:
+                text.append(icon + " ", style="#7f848e")
+                text.append(key.ljust(2 if self.keys_compact else 3), style="bold #e5c07b")
+                if not self.keys_compact:
+                    text.append(what)
+                text.append("\n")
         text.rstrip()
         return text
+
+    def action_toggle_keys(self):
+        self.keys_compact = not self.keys_compact
+        save_settings(keys_compact=self.keys_compact)
+        keys = self.query_one("#keys", Static)
+        keys.update(self._keys_text())
+        keys.border_title = None if self.keys_compact else "Keys"
 
     def on_mount(self):
         self.log_view = self.query_one("#log", RichLog)
@@ -1194,7 +1210,7 @@ class EyeBuddyApp(App):
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
         titles = {"#build": "Build", "#swipe": "Phone touch pad", "#log": "Log",
-                  "#outliers": "Outliers", "#keys": "Keys"}
+                  "#outliers": "Outliers", "#keys": None if self.keys_compact else "Keys"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
         self._refresh_settings_panel()
