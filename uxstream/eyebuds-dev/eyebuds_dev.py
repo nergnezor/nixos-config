@@ -1349,7 +1349,7 @@ class EyeBuddyApp(App):
     Screen { background: $surface; }
     * { scrollbar-size: 0 0; }
     #top { height: 1; background: $panel; }
-    /* One line, cut short at the end: the MCU state comes first so it is never what is cut. */
+    /* One line, cut short at the end rather than wrapped out of sight. */
     #status { width: 1fr; color: $text; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
     #status-keys { width: auto; padding: 0 1; }
     #main { height: 1fr; }
@@ -1363,6 +1363,7 @@ class EyeBuddyApp(App):
     #camera { height: 1fr; width: 1fr; }  /* sized by CameraView.redraw from the picture */
     #build { height: auto; border: round $boost; }
     #settings { height: auto; padding: 0 1; }
+    #mcu { height: auto; padding: 0 1; }
     #swipe { height: auto; padding: 0 1; border: round $boost; }
     #build-info { height: auto; padding: 0 1; }
     #progress { height: 1; margin: 0 1; }
@@ -1447,6 +1448,7 @@ class EyeBuddyApp(App):
         with Horizontal(id="bottom"):
             with Vertical(id="sidebar"):
                 with Vertical(id="build"):
+                    yield Static(id="mcu")
                     yield Static(id="settings")
                     yield Static(id="build-info")
                     yield ProgressBar(id="progress", total=100, show_eta=False)
@@ -1458,7 +1460,7 @@ class EyeBuddyApp(App):
     # Keys that set something sit right in front of the text showing it (see key()); the rest --
     # plain actions -- are listed as icon + letter in the top bar's right-hand corner. The
     # command palette (^p) has every key spelled out.
-    ACTIONS = [("\uf021", "r"), ("\uf04d", "h"), ("\uf135", "b"), ("\uf120", "^p"), ("\uf011", "^q")]
+    ACTIONS = [("\uf120", "^p"), ("\uf011", "^q")]
 
     def _actions_hint(self):
         # A Nerd Font icon (Kitty ships the symbols) followed by a space, which Kitty draws over
@@ -1470,7 +1472,7 @@ class EyeBuddyApp(App):
         self.camera_view = self.query_one("#camera", CameraView)
         self.camera_view.set_angle(self.angle)
         self.chart_view = self.query_one("#chart", ChartView)
-        titles = {"#build": "Build", "#swipe": "Phone touch pad", "#outliers": "Outliers"}
+        titles = {"#build": "STM32", "#swipe": "Phone touch pad", "#outliers": "Outliers"}
         for selector, title in titles.items():
             self.query_one(selector).border_title = title
         self._refresh_settings_panel()
@@ -1958,17 +1960,18 @@ class EyeBuddyApp(App):
     # --- status / settings panels --------------------------------------------
 
     def _update_status(self):
-        status = Text("EyeBuddy — ")
-        status.append_text(key_text("s"))
-        status.append(self.mcu_text)
-        if self.serial_state:
-            status.append(" · " + self.serial_state)
-        self.query_one("#status", Static).update(status)
+        self.query_one("#status", Static).update(
+            Text("EyeBuddy" + (" — " + self.serial_state if self.serial_state else "")))
+        # The ST-Link side lives with the build, in the STM32 box: the core's state with S in
+        # front of it, then reset and reset-and-halt.
+        self.query_one("#mcu", Static).update(
+            f"{key_markup('s')}{escape(self.mcu_text)}  "
+            + icon_keys([("\uf021", "r"), ("\uf04d", "h")]))
 
     def _refresh_settings_panel(self):
         self.query_one("#settings", Static).update(
             f"{key_markup('d')}{self.build_type} / {key_markup('e')}{self.build_env}"
-            f" / {key_markup('n')}bank {self.flash_bank}")
+            f" / {key_markup('n')}bank {self.flash_bank}  " + icon_keys([("\uf135", "b")]))
         self.query_one("#log").border_title = (f"Log · {key_markup('v')}{'pretty' if self.pretty else 'raw'}  "
                                                + icon_keys([("\uf12d", "c"), ("\uf103", "g")]))
         camera = self.query_one("#camera-wrap")
