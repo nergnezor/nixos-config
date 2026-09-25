@@ -122,7 +122,7 @@ if os.environ.get("TERM") == "xterm-kitty" or os.environ.get("KITTY_WINDOW_ID"):
 
 import cairo  # noqa: E402
 import serial  # noqa: E402
-from PIL import Image, ImageChops, ImageStat  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 from rich.style import Style  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich.markup import escape  # noqa: E402
@@ -187,11 +187,7 @@ CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for
 SWIPE_CENTER = (0.5, 0.62)
 SWIPE_SPAN = 0.3  # of the screen width, for both directions
 SWIPE_MS = 150
-# Swipe latency, read off the camera filming the display: from sending the swipe to the picture
-# first changing, and to it standing still again (the new app fully drawn).
-LATENCY_WINDOW = 3.0  # seconds after a swipe searched for the change (or up to the next swipe)
-LATENCY_SETTLE = 0.3  # the picture unchanged this long means the new one is complete
-LATENCY_THUMB = (80, 60)  # frames are compared at this size, grey -- enough to see a screen change
+SWIPE_SHOWN = 0.7  # seconds an arrow for each swipe stays on the camera picture, fading out
 SWIPE_INTERVALS = [0.5, 1, 2, 5, 10]  # seconds between swipes, cycled with I
 CAMERA_SIZES = [("640x480", 30), ("800x600", 20), ("1280x720", 11), ("1600x1200", 7)]
 
@@ -217,6 +213,12 @@ def camera_modes(device):
 ANSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*[@-~])")
 # "00:08:05.905 TRACE REND jpeg_lcd.c:398: Display rendering rate: 29.9 fps"
 LOG_LINE = re.compile(r"^(\d\d:\d\d:\d\d\.\d{3})\s+(\w+)\s+(\S+)\s+(\S+:\d+):\s*(.*?)\s*$")
+
+
+def ansi_line(raw):
+    """One line of the firmware's output as Text. It ends lines with CR LF, and a CR left in
+    would read as 'back to the start of the line' and blank the whole line."""
+    return Text.from_ansi(raw.rstrip("\r\n").replace("\r", ""))
 
 
 def hanging(head, body):
@@ -411,8 +413,6 @@ class CameraCapture(threading.Thread):
         self.error = None
         self._stop = threading.Event()
         self.proc = None
-        # (arrival time, small grey copy) of the last few seconds, for timing what the display did
-        self.history = collections.deque(maxlen=int(LATENCY_WINDOW * 60) + 120)
 
     def run(self):
         frame_bytes = self.width * self.height * 3
@@ -431,12 +431,8 @@ class CameraCapture(threading.Thread):
                 break
             buf += chunk
             if len(buf) >= frame_bytes:
-                now = time.monotonic()
-                thumb = Image.frombytes("RGB", (self.width, self.height), buf).convert("L").resize(
-                    LATENCY_THUMB, Image.BILINEAR)
                 with self._lock:
                     self._frame = (self.width, self.height, buf)
-                    self.history.append((now, thumb))
                 buf = b""
         self.proc.stdout.close()
         if self._stop.is_set():
@@ -449,10 +445,6 @@ class CameraCapture(threading.Thread):
     def latest(self):
         with self._lock:
             return self._frame
-
-    def frames_between(self, start, end):
-        with self._lock:
-            return [(t, thumb) for t, thumb in self.history if start <= t <= end]
 
     def stop(self):
         """Stop, and wait until ffmpeg has let go of the camera -- the next capture opens the same
@@ -469,35 +461,6 @@ class CameraCapture(threading.Thread):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-
-
-def picture_change(frames, t0, end):
-    """(first change, picture complete) in seconds after `t0`, from the camera's frames.
-
-    A frame counts as changed when it differs from the one before by clearly more than the
-    frames did before the swipe (sensor noise, flicker). Complete is the last changed frame
-    before the picture then stays still for LATENCY_SETTLE; None if it never settles in time.
-    Returns None when nothing changed at all.
-    """
-    def diff(a, b):
-        return ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
-
-    before = [f for f in frames if f[0] < t0]
-    after = [f for f in frames if t0 <= f[0] <= end]
-    if len(before) < 5 or not after:
-        return None
-    noise = sorted(diff(a[1], b[1]) for a, b in zip(before, before[1:]))
-    threshold = max(noise[int(len(noise) * 0.9)] * 3, 1.5)
-    onset = last_change = None
-    previous = before[-1][1]
-    for t, thumb in after:
-        if diff(previous, thumb) > threshold:
-            onset = onset if onset is not None else t
-            last_change = t
-        elif last_change is not None and t - last_change >= LATENCY_SETTLE:
-            return onset - t0, last_change - t0
-        previous = thumb
-    return (onset - t0, None) if onset is not None else None
 
 
 PHONE_APP = "com.uxstream.platonum"  # the companion app, pinned with L so swipes cannot leave it
@@ -540,7 +503,7 @@ class AdbSwiper(threading.Thread):
     def __init__(self, interval, on_note, on_swipe=None):
         super().__init__(daemon=True)
         self.direction, self.interval, self.on_note = None, interval, on_note
-        self.on_swipe = on_swipe  # hears the monotonic time each swipe was sent
+        self.on_swipe = on_swipe  # hears the direction of each swipe sent
         self.screen = None  # (width, height) in pixels, asked for once a device answers
         self.failed = False
         self._wake = threading.Event()
@@ -554,9 +517,8 @@ class AdbSwiper(threading.Thread):
             self._wake.wait(self.interval if self.direction else None)
             self._wake.clear()
             if self.direction:
-                sent = time.monotonic()
                 if self._swipe(self.direction) and self.on_swipe:
-                    self.on_swipe(sent)
+                    self.on_swipe(self.direction)
 
     def _swipe(self, direction):
         try:
@@ -1264,12 +1226,44 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.capture = capture
         self.angle = 0.0
         self.shown = None  # the frame on screen, so a tick with no new frame sends nothing
+        self.swipe = None  # (time, direction) of the last swipe sent, drawn over the picture
         self.sized = None  # (cols, rows, frame cols) last laid out
 
     def set_capture(self, capture):
         self.capture = capture
         if capture is None:
             self.image = None
+
+    def show_swipe(self, direction):
+        """(swiper thread) Mark a swipe on the picture; redraw() draws and fades it."""
+        self.swipe = (time.monotonic(), direction)
+
+    def _draw_swipe(self, img):
+        """An arrow across the middle the way the swipe went, fading out over SWIPE_SHOWN --
+        drawn on the finished picture, so up is up on screen however the camera is turned."""
+        if not self.swipe:
+            return img
+        age = time.monotonic() - self.swipe[0]
+        if age > SWIPE_SHOWN:
+            return img
+        alpha = int(230 * (1 - age / SWIPE_SHOWN))
+        w, h = img.size
+        cx, cy, half = w / 2, h / 2, min(w, h) * 0.3
+        dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[self.swipe[1]]
+        tip = (cx + dx * half, cy + dy * half)
+        tail = (cx - dx * half, cy - dy * half)
+        thick = max(3, round(min(w, h) / 40))
+        head = thick * 4
+        # the two barbs, set back from the tip and out to either side
+        back = (tip[0] - dx * head, tip[1] - dy * head)
+        side = (dy * head * 0.7, dx * head * 0.7)
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        colour = (229, 192, 123, alpha)
+        draw.line([tail, back], fill=colour, width=thick)
+        draw.polygon([tip, (back[0] + side[0], back[1] + side[1]), (back[0] - side[0], back[1] - side[1])],
+                     fill=colour)
+        return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
     def set_angle(self, angle):
         self.angle = angle % 360
@@ -1304,7 +1298,7 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
             img = img.rotate(-self.angle, resample=Image.BILINEAR, expand=True)
         left = (img.width - box_w) // 2
         top = (img.height - box_h) // 2
-        self.image = img.crop((left, top, left + box_w, top + box_h))
+        self.image = self._draw_swipe(img.crop((left, top, left + box_w, top + box_h)))
         # The frame is just the picture's size: the panels beside it take whatever width is left,
         # and the log above whatever height (down to what the panels need to stay readable).
         cols = max(1, round(rows * cell_h * box_w / box_h / cell_w))
@@ -1418,8 +1412,7 @@ class EyeBuddyApp(App):
         self.serial_state = ""
         self.pretty = self.settings.get("pretty", True)
         self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
-        self.swipe_latencies = collections.deque(maxlen=50)  # seconds, swipe sent to new picture done
-        self.swipe_last = None  # how the last timed swipe went, in words
+        self.swipe_last = None  # the swiper's last trouble, in words
         self.pinned = None  # the phone's lock-task state once asked (L), e.g. "PINNED" or "NONE"
         self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
@@ -1486,7 +1479,7 @@ class EyeBuddyApp(App):
                                    lambda text, status: self.call_from_thread(self._on_serial, text, status))
         self.serial.start()
         self.swiper = AdbSwiper(self.swipe_interval, lambda text: self.call_from_thread(self._swipe_status, text),
-                                self._measure_swipe)
+                                self.camera_view.show_swipe)
         self.swiper.start()
         self.camera_timer = self.set_interval(1 / self.camera_fps, self._redraw_camera)
         self.set_interval(1 / CHART_FPS, self._redraw_chart)
@@ -1551,32 +1544,8 @@ class EyeBuddyApp(App):
 
     # --- adb swipes on the phone's touch pad ------------------------------------
 
-    def _measure_swipe(self, sent):
-        """(swiper thread) Time what the display does after a swipe, once the window has passed."""
-        capture = self.camera_capture
-        if not capture:
-            return
-        window = min(LATENCY_WINDOW, max(0.3, self.swipe_interval - 0.05))  # never into the next swipe
-
-        def measure():
-            frames = capture.frames_between(sent - 1.0, sent + window)
-            self.call_from_thread(self._swipe_measured, picture_change(frames, sent, sent + window))
-
-        threading.Timer(window + 0.1, measure).start()
-
     def _swipe_status(self, text):
         self.swipe_last = text
-        self._refresh_settings_panel()
-
-    def _swipe_measured(self, result):
-        """Shown in the phone panel only -- the log stays the firmware's."""
-        if result is None:
-            self.swipe_last = "no change seen"
-        elif result[1] is None:
-            self.swipe_last = f"first change {result[0] * 1000:.0f} ms, still changing"
-        else:
-            self.swipe_latencies.append(result[1])
-            self.swipe_last = f"first change {result[0] * 1000:.0f} ms, done {result[1] * 1000:.0f} ms"
         self._refresh_settings_panel()
 
     def action_toggle_pin(self):
@@ -1670,7 +1639,7 @@ class EyeBuddyApp(App):
         if self.pretty:
             self._render_pretty(line)
         else:
-            self.log_view.write(hanging_at_message(Text.from_ansi(line.rstrip("\n"))))
+            self.log_view.write(hanging_at_message(ansi_line(line)))
 
     def _to_table(self, raw):
         """Route a repeating telemetry line to the chart. Returns False for lines the log keeps."""
@@ -1813,7 +1782,7 @@ class EyeBuddyApp(App):
         m = LOG_LINE.match(plain.rstrip("\r\n"))
         if not m:
             self._flush_recent()
-            self.log_view.write(Text.from_ansi(raw.rstrip("\n")))
+            self.log_view.write(ansi_line(raw))
             return
         key = pattern_of(plain)
         if key in self.recent:
@@ -1989,9 +1958,6 @@ class EyeBuddyApp(App):
                  f" · {key_markup('l')}{pin.get(self.pinned, self.pinned)}")
         if self.swipe_last:
             swipe += f"\nlast: {self.swipe_last}"
-        if self.swipe_latencies:
-            ms = sorted(self.swipe_latencies)
-            swipe += f"\nmedian to new picture: {ms[len(ms) // 2] * 1000:.0f} ms (n={len(ms)})"
         self.query_one("#swipe", Static).update(swipe)
 
 
