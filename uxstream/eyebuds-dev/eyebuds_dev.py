@@ -500,6 +500,38 @@ def picture_change(frames, t0, end):
     return (onset - t0, None) if onset is not None else None
 
 
+PHONE_APP = "com.uxstream.platonum"  # the companion app, pinned with L so swipes cannot leave it
+
+
+def adb_shell(*args):
+    result = subprocess.run(["adb", "shell", *args], capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise OSError((result.stderr or result.stdout).strip() or f"adb exited {result.returncode}")
+    return result.stdout
+
+
+def pin_state():
+    """The phone's lock-task mode: NONE, PINNED (screen pinning) or LOCKED."""
+    m = re.search(r"mLockTaskModeState=(\w+)", adb_shell("dumpsys", "activity", "activities"))
+    return m.group(1) if m else "unknown"
+
+
+def pin_app(pin):
+    """Pin the companion app to the screen (neither back nor home gesture leaves it), or unpin.
+    Returns the lock-task state afterwards."""
+    if not pin:
+        adb_shell("am", "task", "lock", "stop")
+        return pin_state()
+    adb_shell("monkey", "-p", PHONE_APP, "-c", "android.intent.category.LAUNCHER", "1")  # to the front
+    time.sleep(1)
+    # "* Recent #0: Task{fcc4484 #459 type=standard A=10417:com.uxstream.platonum}" -- id 459
+    m = re.search(r"Task\{\w+ #(\d+)[^}]*" + re.escape(PHONE_APP), adb_shell("dumpsys", "activity", "recents"))
+    if not m:
+        raise OSError(f"{PHONE_APP} is not among the recent tasks")
+    adb_shell("am", "task", "lock", m.group(1))
+    return pin_state()
+
+
 class AdbSwiper(threading.Thread):
     """Swipes the phone's touch pad over adb on a timer, the same way every time.
     `direction` is None (idle), "up", "down", "left" or "right".
@@ -526,24 +558,18 @@ class AdbSwiper(threading.Thread):
                 if self._swipe(self.direction) and self.on_swipe:
                     self.on_swipe(sent)
 
-    def _adb(self, *args):
-        result = subprocess.run(["adb", "shell", *args], capture_output=True, text=True, timeout=10)
-        if result.returncode:
-            raise OSError((result.stderr or result.stdout).strip() or f"adb exited {result.returncode}")
-        return result.stdout
-
     def _swipe(self, direction):
         try:
             if not self.screen:
                 # "Physical size: WxH", then "Override size: WxH" if set -- the last one is in effect
-                sizes = re.findall(r"(\d+)x(\d+)", self._adb("wm", "size"))
+                sizes = re.findall(r"(\d+)x(\d+)", adb_shell("wm", "size"))
                 if not sizes:
                     raise OSError("adb: could not read the screen size")
                 self.screen = tuple(int(v) for v in sizes[-1])
             w, h = self.screen
             cx, cy, half = w * SWIPE_CENTER[0], h * SWIPE_CENTER[1], w * SWIPE_SPAN / 2
             dx, dy = {"up": (0, -half), "down": (0, half), "left": (-half, 0), "right": (half, 0)}[direction]
-            self._adb("input", "swipe", *(str(round(v)) for v in (cx - dx, cy - dy, cx + dx, cy + dy)),
+            adb_shell("input", "swipe", *(str(round(v)) for v in (cx - dx, cy - dy, cx + dx, cy + dy)),
                       str(SWIPE_MS))
         except (OSError, subprocess.SubprocessError) as exc:
             self.screen = None  # another phone may be plugged in by the next try
@@ -1363,6 +1389,7 @@ class EyeBuddyApp(App):
         Binding("v", "toggle_pretty", "Raw/pretty"),
         Binding("w", "cycle_swipe", "Swipe"),
         Binding("i", "cycle_swipe_interval", "Swipe interval", show=False),
+        Binding("l", "toggle_pin", "Pin phone app", show=False),
     ]
 
     def __init__(self, args):
@@ -1392,6 +1419,7 @@ class EyeBuddyApp(App):
         self.swipe_axis = None  # never on at start: a phone swiped on its own is a surprise
         self.swipe_latencies = collections.deque(maxlen=50)  # seconds, swipe sent to new picture done
         self.swipe_last = None  # how the last timed swipe went, in words
+        self.pinned = None  # the phone's lock-task state once asked (L), e.g. "PINNED" or "NONE"
         self.swipe_interval = self.settings.get("swipe_interval", 2)
         self.ranges = self.settings.get("ranges", {})  # pattern -> [[min, max], ...]
         self.ranges_dirty = False
@@ -1547,6 +1575,28 @@ class EyeBuddyApp(App):
         else:
             self.swipe_latencies.append(result[1])
             self.swipe_last = f"first change {result[0] * 1000:.0f} ms, done {result[1] * 1000:.0f} ms"
+        self._refresh_settings_panel()
+
+    def action_toggle_pin(self):
+        pin = self.pinned not in ("PINNED", "LOCKED")
+
+        def work():
+            try:
+                state = pin_app(pin)
+            except (OSError, subprocess.SubprocessError) as exc:
+                state, error = self.pinned, f"pin failed: {exc}"
+            else:
+                error = None
+            self.call_from_thread(self._pinned, state, error)
+
+        self.pinned = "pinning…" if pin else "unpinning…"
+        self._refresh_settings_panel()
+        threading.Thread(target=work, daemon=True).start()
+
+    def _pinned(self, state, error):
+        self.pinned = state
+        if error:
+            self.swipe_last = error
         self._refresh_settings_panel()
 
     def action_cycle_swipe(self):
@@ -1931,7 +1981,9 @@ class EyeBuddyApp(App):
                      f" · {key_markup('q ,.')}{self.angle:.0f}°")
         else:
             camera.border_title = f"{key_markup('k')}camera off"
-        swipe = f"{key_markup('w')}{self.swipe_axis or 'off'} · {key_markup('i')}every {self.swipe_interval:g}s"
+        pin = {"PINNED": "pinned", "LOCKED": "locked", "NONE": "not pinned", None: "not pinned"}
+        swipe = (f"{key_markup('w')}{self.swipe_axis or 'off'} · {key_markup('i')}every {self.swipe_interval:g}s"
+                 f" · {key_markup('l')}{pin.get(self.pinned, self.pinned)}")
         if self.swipe_last:
             swipe += f"\nlast: {self.swipe_last}"
         if self.swipe_latencies:
