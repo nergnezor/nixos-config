@@ -353,6 +353,12 @@ in
   programs.nix-ld.enable = true;
   programs.nix-ld.libraries = with pkgs; [ ncurses ];
 
+  # direnv (with nix-direnv, on by default in this module): cd into a project
+  # with a `.envrc` saying `use nix` and its shell.nix loads automatically --
+  # e.g. CamelJon, so `cargo run` works without `nix-shell --run`. Hooks into
+  # bash on its own; run `direnv allow` once per project.
+  programs.direnv.enable = true;
+
   # mouseless's own user unit. Ubuntu's copy of this sat in
   # ~/.config/systemd/user, was hand-restored after the rescue, and was
   # tracked nowhere -- so a fresh machine got the udev rules and tmpfiles

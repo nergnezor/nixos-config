@@ -13,6 +13,20 @@ capsule_radius = 10
 capsule_thickness = 0.99999998137354851
 center = [ "clock", "audio_visualizer", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "spacer_2", "weather" ]
 concave_edge_corners = false
+end = [
+    "media",
+    "tray",
+    "notifications",
+    "clipboard",
+    "network",
+    "bluetooth",
+    "volume",
+    "brightness",
+    "battery",
+    "control-center",
+    "session",
+    "recorder"
+]
 radius = 10
 start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink" ]
 thickness = 20
@@ -368,18 +382,18 @@ widget_order = [
 update_command = "nrbu"
 
 [plugins]
+auto_update = "official"
 enabled = [
-    "noctalia/bongocat",
-    "alexander/game-launcher",
-    "lowcache/claude-companion",
-    "yocraft/desktop-launcher",
     "tphilippot/git_companion",
     "avivbintangaringga/nix-monitor",
     "tordex/nvtop",
     "davemhammer/tailscale",
     "dunarand/tmux-provider",
     "nzlov/daily-wallpaper",
-    "erik/stlink"
+    "erik/stlink",
+    "mindnbytes/nix-status",
+    "noctalia/screen_recorder",
+    "vn1k/cursor"
 ]
 
     [[plugins.source]]
@@ -441,25 +455,28 @@ fill_mode = "center"
     path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-24.jpg"
 
     [wallpaper.monitors.DP-1]
-    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-24.jpg"
 
     [wallpaper.monitors.DP-2]
-    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-24.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-24.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-24.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
-    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-24.jpg"
 
 [widget.bar]
 type = "raycursive/niri-displays:bar"
 
 [widget.nix-monitor]
 type = "avivbintangaringga/nix-monitor:nix-monitor"
+
+[widget.recorder]
+type = "noctalia/screen_recorder:recorder"
 
 [widget.spacer_2]
 type = "spacer"
