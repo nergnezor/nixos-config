@@ -191,6 +191,10 @@ in
   # else on this machine for the same reason. tailscale0 exists thanks to
   # services.tailscale.enable above.
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 3389 ];
+  # RemotePointer (phone as touchpad/laser pointer): the phone connects in on
+  # TCP 4444 from the LAN; the server's UDP 4445 discovery broadcast is
+  # outbound and needs no rule. Access is gated by the pairing code it shows.
+  networking.firewall.allowedTCPPorts = [ 4444 ];
 
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";

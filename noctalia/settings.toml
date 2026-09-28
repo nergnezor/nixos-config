@@ -453,16 +453,16 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-27.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-27.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
 
     [wallpaper.monitors.DP-1]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-27.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
 
     [wallpaper.monitors.DP-2]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-27.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
 
     [wallpaper.monitors.DP-3]
     path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
@@ -471,7 +471,7 @@ fill_mode = "center"
     path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-27.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
 
 [widget.bar]
 type = "raycursive/niri-displays:bar"
