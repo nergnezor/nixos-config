@@ -1278,11 +1278,6 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         # The box follows the nearest quarter turn -- that is the only turn that changes which
         # way the picture stands, so any other angle keeps the native box and crops into it.
         box_w, box_h = (fw, fh) if round(self.angle / 90) % 2 == 0 else (fh, fw)
-        radians = math.radians(self.angle)
-        cos, sin = abs(math.cos(radians)), abs(math.sin(radians))
-        # Grown until the rotated picture covers the whole box, so a turn crops the corners
-        # instead of shrinking the whole picture into a diamond of empty space.
-        scale = max((box_w * cos + box_h * sin) / fw, (box_w * sin + box_h * cos) / fh)
         # Only ever shrunk to fit a panel smaller than the camera's own picture; a bigger panel is
         # filled by Kitty scaling the picture up, so no detail is lost and no bytes are wasted.
         cell_w, cell_h = get_cell_size()
@@ -1292,8 +1287,8 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         rows = max(1, round(CAMERA_ROWS * min(1.0, max(fw, fh) / CAMERA_FULL_SIZE)))
         shrink = min(1.0, rows * cell_h / box_h)
         box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
-        scale *= shrink
-        img = img.resize((max(1, round(fw * scale)), max(1, round(fh * scale))), Image.BILINEAR)
+        img = img.resize((max(1, round(fw * shrink)), max(1, round(fh * shrink))), Image.BILINEAR)
+        # Turned at its own size, leaving the corners empty: growing it to cover the box zooms far in.
         if self.angle:
             img = img.rotate(-self.angle, resample=Image.BILINEAR, expand=True)
         left = (img.width - box_w) // 2

@@ -13,6 +13,7 @@ output "DP-4" {
     mode "1920x1080@59.997"
     scale 1.15
     transform "90"
+    position x=2900 y=0
 }
 
 // Home

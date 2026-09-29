@@ -13,20 +13,6 @@ capsule_radius = 10
 capsule_thickness = 0.99999998137354851
 center = [ "clock", "audio_visualizer", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "spacer_2", "weather" ]
 concave_edge_corners = false
-end = [
-    "media",
-    "tray",
-    "notifications",
-    "clipboard",
-    "network",
-    "bluetooth",
-    "volume",
-    "brightness",
-    "battery",
-    "control-center",
-    "session",
-    "recorder"
-]
 radius = 10
 start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink" ]
 thickness = 20
@@ -54,7 +40,15 @@ widget_order = [
     "desktop-widget-0000000000000001",
     "desktop-widget-0000000000000002",
     "desktop-widget-0000000000000003",
-    "desktop-widget-0000000000000004"
+    "desktop-widget-0000000000000004",
+    "w001@DP-4",
+    "w002@DP-4",
+    "w003@DP-4",
+    "w004@DP-4",
+    "sysmon-cpu@DP-3",
+    "sysmon-gpu@DP-3",
+    "sysmon-ram@DP-3",
+    "sysmon-vram@DP-3"
 ]
 
     [desktop_widgets.grid]
@@ -151,6 +145,24 @@ widget_order = [
         stat = "cpu_usage"
         stat2 = "gpu_usage"
 
+    [desktop_widgets.widget."sysmon-cpu@DP-3"]
+    box_height = 125.17578125
+    box_width = 141.26171875
+    cx = 3094.017578125
+    cy = 115.205078125
+    output = "DP-3"
+    placement_height = 1800.0
+    placement_width = 3200.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."sysmon-cpu@DP-3".settings]
+        background_opacity = 0.80000000000000004
+        background_padding = 0
+        display = "graph"
+        stat = "cpu_usage"
+        stat2 = "gpu_usage"
+
     [desktop_widgets.widget."sysmon-gpu@DP-2"]
     box_height = 125.17577362060547
     box_width = 141.26171875
@@ -168,6 +180,23 @@ widget_order = [
         stat = "ram_pct"
         stat2 = "gpu_vram_used"
 
+    [desktop_widgets.widget."sysmon-gpu@DP-3"]
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 3094.017578125
+    cy = 404.50021362304688
+    output = "DP-3"
+    placement_height = 1800.0
+    placement_width = 3200.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."sysmon-gpu@DP-3".settings]
+        background_padding = 0
+        display = "graph"
+        stat = "ram_pct"
+        stat2 = "gpu_vram_used"
+
     [desktop_widgets.widget."sysmon-ram@DP-2"]
     box_height = 125.17577362060547
     box_width = 141.26171875
@@ -180,6 +209,25 @@ widget_order = [
     type = "sysmon"
 
         [desktop_widgets.widget."sysmon-ram@DP-2".settings]
+        background = true
+        background_padding = 0
+        display = "graph"
+        gauge_layout = "vertical"
+        stat = "cpu_temp"
+        stat2 = "gpu_temp"
+
+    [desktop_widgets.widget."sysmon-ram@DP-3"]
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 3094.017578125
+    cy = 257.07095336914062
+    output = "DP-3"
+    placement_height = 1800.0
+    placement_width = 3200.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."sysmon-ram@DP-3".settings]
         background = true
         background_padding = 0
         display = "graph"
@@ -205,15 +253,100 @@ widget_order = [
         stat = "net_tx"
         stat2 = "net_rx"
 
+    [desktop_widgets.widget."sysmon-vram@DP-3"]
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 3094.017578125
+    cy = 558.587890625
+    output = "DP-3"
+    placement_height = 1800.0
+    placement_width = 3200.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."sysmon-vram@DP-3".settings]
+        background_padding = 0
+        display = "graph"
+        network_speed_compact = true
+        stat = "net_tx"
+        stat2 = "net_rx"
+
+    [desktop_widgets.widget."w001@DP-4"]
+    box_height = 125.17578125
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1128.8809814453125
+    output = "DP-4"
+    placement_height = 1670.0
+    placement_width = 939.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."w001@DP-4".settings]
+        background_padding = 0
+        display = "graph"
+        stat = "cpu_usage"
+        stat2 = "gpu_usage"
+
+    [desktop_widgets.widget."w002@DP-4"]
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1270.8319091796875
+    output = "DP-4"
+    placement_height = 1670.0
+    placement_width = 939.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."w002@DP-4".settings]
+        background = true
+        background_padding = 0
+        display = "graph"
+        gauge_layout = "vertical"
+        stat = "cpu_temp"
+        stat2 = "gpu_temp"
+
+    [desktop_widgets.widget."w003@DP-4"]
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1418.3494873046875
+    output = "DP-4"
+    placement_height = 1670.0
+    placement_width = 939.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."w003@DP-4".settings]
+        background_padding = 0
+        display = "graph"
+        stat = "ram_pct"
+        stat2 = "gpu_vram_used"
+
+    [desktop_widgets.widget."w004@DP-4"]
+    box_height = 125.17577362060547
+    box_width = 141.26171875
+    cx = 102.630859375
+    cy = 1572.529541015625
+    output = "DP-4"
+    placement_height = 1670.0
+    placement_width = 939.0
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget."w004@DP-4".settings]
+        background_padding = 0
+        display = "graph"
+        network_speed_compact = true
+        stat = "net_tx"
+        stat2 = "net_rx"
+
 [dock]
 radius = 80
 
 [idle]
-behavior_order = [ "lock", "screen-off", "lock-and-suspend", "idle-behavior" ]
-
-    [idle.behavior.idle-behavior]
-    action = "suspend"
-    lock_before_suspend = false
+behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
 
     [idle.behavior.lock]
     action = "lock"
@@ -386,18 +519,18 @@ widget_order = [
 update_command = "nrbu"
 
 [plugins]
-auto_update = "official"
 enabled = [
+    "noctalia/bongocat",
+    "alexander/game-launcher",
+    "lowcache/claude-companion",
+    "yocraft/desktop-launcher",
     "tphilippot/git_companion",
     "avivbintangaringga/nix-monitor",
     "tordex/nvtop",
     "davemhammer/tailscale",
     "dunarand/tmux-provider",
     "nzlov/daily-wallpaper",
-    "erik/stlink",
-    "mindnbytes/nix-status",
-    "noctalia/screen_recorder",
-    "vn1k/cursor"
+    "erik/stlink"
 ]
 
     [[plugins.source]]
@@ -453,34 +586,31 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.monitors.DP-1]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
+    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-2]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
+    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-22.jpg"
+    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-28.jpg"
+    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
 [widget.bar]
 type = "raycursive/niri-displays:bar"
 
 [widget.nix-monitor]
 type = "avivbintangaringga/nix-monitor:nix-monitor"
-
-[widget.recorder]
-type = "noctalia/screen_recorder:recorder"
 
 [widget.spacer_2]
 type = "spacer"

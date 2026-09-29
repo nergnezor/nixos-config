@@ -56,7 +56,7 @@ for file in home/bashrc home/profile noctalia/settings.toml niri/noctalia.kdl; d
   fi
 done
 
-git pull --ff-only
+git pull --ff-only --autostash
 
 # Check for conflicts: both remote and local changed
 detect_and_handle_conflicts() {
