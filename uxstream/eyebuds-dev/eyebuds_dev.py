@@ -177,8 +177,9 @@ LABEL_DAMPING = 11  # how quickly that motion settles
 CAMERA_ROWS = 34  # the picture's height at full size, in terminal rows
 BOTTOM_MIN_ROWS = 14  # the bottom band never gets lower than this, so its panels stay readable
 CAMERA_FULL_SIZE = 640  # a camera mode this wide (or tall) or more fills the band; smaller shows smaller
-BORDER_CELL = 8  # the black border is looked for on the frame averaged over cells this big, so noise does not count
-BORDER_BLACK = 24  # a cell at or below this brightness (0-255) is border
+BORDER_CELL = 8  # the dark surround is looked for on the picture averaged over cells this big
+BORDER_BRIGHT = 60  # a cell brighter than this (0-255) is lit screen, not surround
+BORDER_SHARE = 0.15  # a row or column is kept once this share of its cells is lit, so specks and glare do not count
 CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
 CHART_TEXT_CELL = 15  # cell height (px) the chart's text sizes are drawn for; taller cells scale it up
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
@@ -1242,19 +1243,19 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.swipe = (time.monotonic(), direction)
 
     def _content_box(self, img):
-        """The frame's area inside its black border -- all of it when that would leave under half
-        the frame either way, since then it is a dark scene rather than a border."""
-        box = img.convert("L").reduce(BORDER_CELL).point(lambda v: 255 if v > BORDER_BLACK else 0).getbbox()
-        whole = (0, 0, img.width, img.height)
-        if box:
-            # A cell half over the edge still reads bright, so a found edge moves in one more cell.
-            cols, rows = -(-img.width // BORDER_CELL), -(-img.height // BORDER_CELL)
-            box = (box[0] + (box[0] > 0), box[1] + (box[1] > 0), box[2] - (box[2] < cols), box[3] - (box[3] < rows))
-            box = (box[0] * BORDER_CELL, box[1] * BORDER_CELL,
-                   min(img.width, box[2] * BORDER_CELL), min(img.height, box[3] * BORDER_CELL))
-        if not box or box[2] - box[0] < img.width / 2 or box[3] - box[1] < img.height / 2:
-            box = whole
-        if self.content and all(abs(a - b) <= BORDER_CELL for a, b in zip(box, self.content)):
+        """The lit area inside the dark surround, as the rows and columns with enough lit cells in
+        them -- held while it only jitters, so the frame does not keep changing size."""
+        lit = img.convert("L").reduce(BORDER_CELL).point(lambda v: 255 if v > BORDER_BRIGHT else 0)
+        cols = list(lit.resize((lit.width, 1), Image.BOX).tobytes())
+        rows = list(lit.resize((1, lit.height), Image.BOX).tobytes())
+        cols = [i for i, v in enumerate(cols) if v > 255 * BORDER_SHARE]
+        rows = [i for i, v in enumerate(rows) if v > 255 * BORDER_SHARE]
+        if not cols or not rows:  # nothing lit: show it all
+            box = (0, 0, img.width, img.height)
+        else:
+            box = (cols[0] * BORDER_CELL, rows[0] * BORDER_CELL,
+                   min(img.width, (cols[-1] + 1) * BORDER_CELL), min(img.height, (rows[-1] + 1) * BORDER_CELL))
+        if self.content and all(abs(a - b) <= 2 * BORDER_CELL for a, b in zip(box, self.content)):
             return self.content
         self.content = box
         return box
@@ -1296,10 +1297,11 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.shown = frame
         fw, fh, data = frame
         img = Image.frombytes("RGB", (fw, fh), data)
+        if self.angle:
+            img = img.rotate(-self.angle, resample=Image.BILINEAR, expand=True)
+        # Cut to the lit screen after turning, so the cut lines up with it and drops the empty corners.
         img = img.crop(self._content_box(img))
-        # The box follows the nearest quarter turn -- that is the only turn that changes which
-        # way the picture stands, so any other angle keeps the native box and crops into it.
-        box_w, box_h = img.size if round(self.angle / 90) % 2 == 0 else img.size[::-1]
+        box_w, box_h = img.size
         # Only ever shrunk to fit a panel smaller than the camera's own picture; a bigger panel is
         # filled by Kitty scaling the picture up, so no detail is lost and no bytes are wasted.
         cell_w, cell_h = get_cell_size()
@@ -1309,13 +1311,7 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         rows = max(1, round(CAMERA_ROWS * min(1.0, max(fw, fh) / CAMERA_FULL_SIZE)))
         shrink = min(1.0, rows * cell_h / box_h)
         box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
-        img = img.resize((max(1, round(img.width * shrink)), max(1, round(img.height * shrink))), Image.BILINEAR)
-        # Turned at its own size, leaving the corners empty: growing it to cover the box zooms far in.
-        if self.angle:
-            img = img.rotate(-self.angle, resample=Image.BILINEAR, expand=True)
-        left = (img.width - box_w) // 2
-        top = (img.height - box_h) // 2
-        self.image = self._draw_swipe(img.crop((left, top, left + box_w, top + box_h)))
+        self.image = self._draw_swipe(img.resize((box_w, box_h), Image.BILINEAR))
         # The frame is just the picture's size: the panels beside it take whatever width is left,
         # and the log above whatever height (down to what the panels need to stay readable).
         cols = max(1, round(rows * cell_h * box_w / box_h / cell_w))
