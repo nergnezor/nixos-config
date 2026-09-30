@@ -123,6 +123,7 @@ binds {
     Print { screenshot; }
     Super+Shift+S { screenshot; }
     Mod+Shift+E hotkey-overlay-title="Log Out" { spawn "noctalia" "msg" "session" "logout"; }
+    Mod+E hotkey-overlay-title="File Manager" { spawn "nautilus" "--new-window"; }
     Mod+T hotkey-overlay-title="Open Terminal" { spawn "bash" "/home/erik/.config/niri/scripts/dropdown-term.sh"; }
     Mod+D repeat=false { toggle-overview; }
     Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }

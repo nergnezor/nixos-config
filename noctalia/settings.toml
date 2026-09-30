@@ -8,11 +8,12 @@ tint_intensity = 0.669999985024333
 [bar.default]
 background_opacity = 0.4999999888241291
 capsule = true
-capsule_opacity = 0.29999999329447746
+capsule_opacity = 0.79999998211860657
 capsule_radius = 10
 capsule_thickness = 0.99999998137354851
 center = [ "clock", "audio_visualizer", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "spacer_2", "weather" ]
 concave_edge_corners = false
+position = "bottom"
 radius = 10
 start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink" ]
 thickness = 20
@@ -586,10 +587,8 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.last]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.monitors.DP-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
@@ -598,16 +597,19 @@ fill_mode = "center"
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.monitors.DP-4]
-    path = "/home/erik/Pictures/daily-wallpaper/bing-en-us-2026-09-29.jpg"
 
     [wallpaper.monitors.HDMI-A-1]
     path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
 [widget.bar]
 type = "raycursive/niri-displays:bar"
+
+[widget.clock]
+color = "secondary"
+font_scale = 1.6599999999999999
+font_weight = 700
 
 [widget.nix-monitor]
 type = "avivbintangaringga/nix-monitor:nix-monitor"

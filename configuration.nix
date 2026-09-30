@@ -260,8 +260,11 @@ in
   # niri binary, for the same reason.
   programs.niri = {
     enable = true;
-    useNautilus = false; # gtk file-chooser is enough; nautilus is a big extra
+    useNautilus = false; # file-chooser portal stays on xdg-desktop-portal-gtk
   };
+
+  # Nautilus needs gvfs for trash, USB/MTP mounts and network locations.
+  services.gvfs.enable = true;
 
   services.greetd = {
     enable = true;

@@ -45,6 +45,8 @@ scrub() {
     skip                                             { next }
     in_idle && /^[[:space:]]*timeout[[:space:]]*=/   { next }
     in_idle && /^[[:space:]]*enabled[[:space:]]*=/   { next }
+    # The daily-wallpaper plugin rewrites these paths every day.
+    /^[[:space:]]*path[[:space:]]*=.*\/daily-wallpaper\//  { next }
     { print }
   ' "$1"
 }
@@ -52,7 +54,7 @@ scrub() {
 case "${1:-}" in
   pull)
     scrub "$live_file" > "$repo_file"
-    echo "pulled  $live_file -> $repo_file (calendar account + idle timeout scrubbed)"
+    echo "pulled  $live_file -> $repo_file (calendar account, idle timeout + daily wallpaper scrubbed)"
     git -C "$(dirname "$repo_file")" diff --stat -- "$repo_file"
     ;;
   push)
