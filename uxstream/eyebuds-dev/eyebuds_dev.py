@@ -1309,12 +1309,16 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         # so what is on screen says how much the camera really sees -- and the log and the
         # panels get the room it no longer needs.
         rows = max(1, round(CAMERA_ROWS * min(1.0, max(fw, fh) / CAMERA_FULL_SIZE)))
-        shrink = min(1.0, rows * cell_h / box_h)
-        box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
-        self.image = self._draw_swipe(img.resize((box_w, box_h), Image.BILINEAR))
         # The frame is just the picture's size: the panels beside it take whatever width is left,
         # and the log above whatever height (down to what the panels need to stay readable).
         cols = max(1, round(rows * cell_h * box_w / box_h / cell_w))
+        # textual-image raises on a picture wider than the terminal, so a narrow window shrinks it.
+        max_cols = max(1, self.screen.size.width - 2)
+        if cols > max_cols:
+            rows, cols = max(1, round(rows * max_cols / cols)), max_cols
+        shrink = min(1.0, rows * cell_h / box_h)
+        box_w, box_h = max(1, round(box_w * shrink)), max(1, round(box_h * shrink))
+        self.image = self._draw_swipe(img.resize((box_w, box_h), Image.BILINEAR))
         if self.sized != (cols, rows):  # set only on a change: each one is a layout pass
             self.sized = (cols, rows)
             self.styles.width, self.styles.height = cols, rows

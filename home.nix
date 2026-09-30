@@ -68,6 +68,7 @@ in
     jq            # vertical-monitor-stack.sh / dropdown-term.sh parse `niri msg -j` with it
     bat           # cat clone med syntax-highlighting
     nautilus      # file manager, Mod+E in niri/noctalia/binds.kdl
+    file-roller   # archive manager Nautilus opens .zip and other archives with
     qdirstat      # disk usage treemap, GUI
     gdu           # disk usage, terminal TUI
     # tmux moved to programs.tmux below -- that module installs the package
