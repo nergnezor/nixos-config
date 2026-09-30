@@ -116,6 +116,15 @@ in
                        # one vendor's own CLI.
   ]);
 
+  # --hold keeps the window open so the "connected to" line or the error can be read.
+  xdg.desktopEntries.adb-wifi = {
+    name = "ADB Wifi";
+    comment = "Connect adb to the phone over wifi";
+    exec = "kitty --hold adb-wifi";
+    icon = "phone";
+    categories = [ "Development" ];
+  };
+
   # noctalia is installed by programs.noctalia in configuration.nix (NixOS
   # module, systemd user unit in /etc), not here — a home.packages entry
   # only put the binary in the profile; Ubuntu's shared-home unit still
