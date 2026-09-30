@@ -13,6 +13,11 @@ let
     runtimeInputs = with pkgs; [ ffmpeg ];
     text = builtins.readFile ./scripts/usbcam-stream.sh;
   };
+  adbWifi = pkgs.writeShellApplication {
+    name = "adb-wifi";
+    runtimeInputs = with pkgs; [ android-tools gawk gnugrep coreutils ];
+    text = builtins.readFile ./scripts/adb-wifi.sh;
+  };
 in
 {
   home.username = "erik";
@@ -21,6 +26,7 @@ in
 
   home.packages = [
     usbcamStream
+    adbWifi
   ]
   ++ uxstreamTools.packages
   ++ (with pkgs; [
