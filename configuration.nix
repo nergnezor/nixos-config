@@ -360,6 +360,9 @@ in
   programs.nix-ld.enable = true;
   programs.nix-ld.libraries = with pkgs; [ ncurses ];
 
+  # uxstream's edge starts Electron through firejail, which needs the setuid wrapper.
+  programs.firejail.enable = true;
+
   # direnv (with nix-direnv, on by default in this module): cd into a project
   # with a `.envrc` saying `use nix` and its shell.nix loads automatically --
   # e.g. CamelJon, so `cargo run` works without `nix-shell --run`. Hooks into
