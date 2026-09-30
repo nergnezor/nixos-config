@@ -194,7 +194,9 @@ in
   # RemotePointer (phone as touchpad/laser pointer): the phone connects in on
   # TCP 4444 from the LAN; the server's UDP 4445 discovery broadcast is
   # outbound and needs no rule. Access is gated by the pairing code it shows.
-  networking.firewall.allowedTCPPorts = [ 4444 ];
+  # A local uxstream edge: 8080 is its session API and 60000-60019 carry the UDP streams, both forwarded from the router.
+  networking.firewall.allowedTCPPorts = [ 4444 8080 ];
+  networking.firewall.allowedUDPPortRanges = [ { from = 60000; to = 60019; } ];
 
   time.timeZone = "Europe/Stockholm"; # adjust if wrong
   i18n.defaultLocale = "en_US.UTF-8";
