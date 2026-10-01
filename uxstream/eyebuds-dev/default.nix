@@ -10,21 +10,21 @@ let
   python = python3.withPackages (ps: [ ps.textual ps.textual-image ps.pycairo ps.pyserial ps.pillow ]);
 in
 stdenv.mkDerivation {
-  pname = "eyebuds-dev";
+  pname = "eyebuddy";
   version = "0.3.0";
   src = ./.;
   nativeBuildInputs = [ makeWrapper ];
   dontBuild = true;
   installPhase = ''
-    install -Dm755 eyebuds_dev.py $out/bin/eyebuds-dev
-    install -Dm755 ${../noctalia-plugins/stlink/build-flash.sh} $out/share/eyebuds-dev/build-flash.sh
-    substituteInPlace $out/bin/eyebuds-dev --replace-fail "#!/usr/bin/env python3" "#!${python.interpreter}"
+    install -Dm755 eyebuds_dev.py $out/bin/eyebuddy
+    install -Dm755 ${../noctalia-plugins/stlink/build-flash.sh} $out/share/eyebuddy/build-flash.sh
+    substituteInPlace $out/bin/eyebuddy --replace-fail "#!/usr/bin/env python3" "#!${python.interpreter}"
     # Suffixed, so a toolchain already on the user's PATH (make, cmake, the ARM gcc) stays first.
-    wrapProgram $out/bin/eyebuds-dev \
+    wrapProgram $out/bin/eyebuddy \
       --prefix PATH : ${lib.makeBinPath [ ffmpeg v4l-utils android-tools ]} \
       --suffix PATH : ${lib.makeBinPath [ openocd probe-rs-tools jq util-linux procps less ]} \
-      --set-default EYEBUDDY_BUILD_FLASH $out/share/eyebuds-dev/build-flash.sh
-    install -Dm644 eyebuds-dev.desktop $out/share/applications/eyebuds-dev.desktop
+      --set-default EYEBUDDY_BUILD_FLASH $out/share/eyebuddy/build-flash.sh
+    install -Dm644 eyebuddy.desktop $out/share/applications/eyebuddy.desktop
   '';
-  meta.mainProgram = "eyebuds-dev";
+  meta.mainProgram = "eyebuddy";
 }

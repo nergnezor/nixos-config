@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Open a kitty running picocom on the first serial port, logging to a timestamped file.
+# Open a kitty running picocom on the ST-Link's serial port (else the first one), logging to a timestamped file.
 #   serial-log.sh [baud] [logdir]
 set -euo pipefail
 BAUD="${1:-2000000}"
 LOGDIR="${2:-/tmp/serial-logs}"
 mkdir -p "$LOGDIR"
 PORT=""
-for p in /dev/ttyACM* /dev/ttyUSB*; do
-    [ -e "$p" ] && PORT="$p" && break
+# The ST-Link first, as other USB serial devices (such as a ZMK keyboard) can take ttyACM0.
+for p in /dev/serial/by-id/*STLINK* /dev/ttyACM* /dev/ttyUSB*; do
+    [ -e "$p" ] && PORT="$(readlink -f "$p")" && break
 done
 if [ -z "$PORT" ]; then
     echo "no /dev/ttyACM* or /dev/ttyUSB* found" >&2

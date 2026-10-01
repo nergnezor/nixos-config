@@ -343,14 +343,14 @@ end
 
 -- The EyeBuds dev app (uxstream/eyebuds-dev) replaces the separate camera and serial windows.
 local function openDevApp(command)
-  local inner = "eyebuds-dev"
+  local inner = "eyebuddy"
   local script = "if command -v systemd-run >/dev/null; then systemd-run --user --quiet --collect " .. inner
     .. "; else setsid -f " .. inner .. " </dev/null >/dev/null 2>&1; fi"
   noctalia.runAsync(script, function(res)
     if res and res.exitCode == 0 then
       result(command, true, noctalia.tr("result.app_started"))
     else
-      local msg = noctalia.tr("result.failed", { error = errorText(res, "eyebuds-dev not found") })
+      local msg = noctalia.tr("result.failed", { error = errorText(res, "eyebuddy not found") })
       result(command, false, msg)
       noctalia.notifyError(noctalia.tr("title"), msg)
     end

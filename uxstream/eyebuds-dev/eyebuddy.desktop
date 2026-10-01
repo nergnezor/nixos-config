@@ -2,7 +2,7 @@
 Type=Application
 Name=EyeBuddy
 Comment=Camera, serial log and ST-Link controls for the eyebuds bench, in a terminal
-Exec=eyebuds-dev
+Exec=eyebuddy
 Icon=utilities-terminal
 Terminal=true
 Categories=Development;Utility;

@@ -180,6 +180,8 @@ CAMERA_FULL_SIZE = 640  # a camera mode this wide (or tall) or more fills the ba
 BORDER_CELL = 8  # the dark surround is looked for on the picture averaged over cells this big
 BORDER_BRIGHT = 60  # a cell brighter than this (0-255) is lit screen, not surround
 BORDER_SHARE = 0.15  # a row or column is kept once this share of its cells is lit, so specks and glare do not count
+BORDER_FILL = 0.5  # share of cells inside the found area that must be lit for it to count as the screen
+BORDER_SHRINK_AFTER = 20  # seconds the lit area must stay smaller before the cut follows it in
 CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
 CHART_TEXT_CELL = 15  # cell height (px) the chart's text sizes are drawn for; taller cells scale it up
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
@@ -681,7 +683,7 @@ class StLink(threading.Thread):
 
 
 class SerialReader(threading.Thread):
-    """Reads the first ttyACM/ttyUSB port, logs to a file and hands lines to the UI.
+    """Reads the ST-Link serial port (else the first ttyACM/ttyUSB), logs to a file and hands lines to the UI.
 
     Reconnects on its own, so a reflash that re-enumerates the port just shows a gap.
     """
@@ -695,14 +697,16 @@ class SerialReader(threading.Thread):
 
     def run(self):
         while True:
-            ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+            # The ST-Link first, as other USB serial devices (such as a ZMK keyboard) can take ttyACM0.
+            ports = (sorted(glob.glob("/dev/serial/by-id/*STLINK*"))
+                     + sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")))
             if not ports:
                 if self.port is not None:  # said once, not once a second until something turns up
                     self.on_line("(no serial port)\n", "No port")
                     self.port = None
                 time.sleep(1)
                 continue
-            self.port = ports[0]
+            self.port = os.path.realpath(ports[0])
             try:
                 self._pump()
             except (serial.SerialException, OSError) as exc:
@@ -1231,10 +1235,12 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.shown = None  # the frame on screen, so a tick with no new frame sends nothing
         self.swipe = None  # (time, direction) of the last swipe sent, drawn over the picture
         self.sized = None  # (cols, rows, frame cols) last laid out
-        self.content = None  # the frame's area inside its black border, held while it only jitters
+        self.content = None  # the screen's area inside the black border, held while it only jitters
+        self.content_seen = 0.0  # when the held area last matched a frame
 
     def set_capture(self, capture):
         self.capture = capture
+        self.content = None
         if capture is None:
             self.image = None
 
@@ -1243,22 +1249,47 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         self.swipe = (time.monotonic(), direction)
 
     def _content_box(self, img):
-        """The lit area inside the dark surround, as the rows and columns with enough lit cells in
-        them -- held while it only jitters, so the frame does not keep changing size."""
+        """The lit screen inside the dark surround, as the rows and columns with enough lit cells in
+        them. A frame that is mostly dark inside that, such as light text on black, cannot show
+        where the screen ends, so the screen last seen lit is used instead."""
+        key = f"{self.angle:g}@{img.width}x{img.height}"
+        if self.content is None:
+            saved = (read_json(SETTINGS) or {}).get("screen_box", {}).get(key)
+            self.content = tuple(saved) if saved else None
         lit = img.convert("L").reduce(BORDER_CELL).point(lambda v: 255 if v > BORDER_BRIGHT else 0)
         cols = list(lit.resize((lit.width, 1), Image.BOX).tobytes())
         rows = list(lit.resize((1, lit.height), Image.BOX).tobytes())
         cols = [i for i, v in enumerate(cols) if v > 255 * BORDER_SHARE]
         rows = [i for i, v in enumerate(rows) if v > 255 * BORDER_SHARE]
-        if not cols or not rows:  # nothing lit: show it all
-            box = (0, 0, img.width, img.height)
-        else:
-            box = (cols[0] * BORDER_CELL, rows[0] * BORDER_CELL,
-                   min(img.width, (cols[-1] + 1) * BORDER_CELL), min(img.height, (rows[-1] + 1) * BORDER_CELL))
-        if self.content and all(abs(a - b) <= 2 * BORDER_CELL for a, b in zip(box, self.content)):
-            return self.content
-        self.content = box
-        return box
+        if cols and rows:
+            cells = (cols[0], rows[0], cols[-1] + 1, rows[-1] + 1)
+            fill = lit.crop(cells).resize((1, 1), Image.BOX).getpixel((0, 0)) / 255
+            if fill >= BORDER_FILL:
+                box = (cells[0] * BORDER_CELL, cells[1] * BORDER_CELL,
+                       min(img.width, cells[2] * BORDER_CELL), min(img.height, cells[3] * BORDER_CELL))
+                if self._hold_content(box):
+                    screen_boxes = (read_json(SETTINGS) or {}).get("screen_box", {})
+                    save_settings(screen_box=screen_boxes | {key: list(self.content)})
+        return self.content or (0, 0, img.width, img.height)
+
+    def _hold_content(self, box):
+        """Grow the held screen at once but shrink it only after BORDER_SHRINK_AFTER, as the screen
+        itself does not move. True when the held screen changed."""
+        now = time.monotonic()
+        held = self.content
+        if held is None:
+            self.content, self.content_seen = box, now
+            return True
+        grown = (min(box[0], held[0]), min(box[1], held[1]), max(box[2], held[2]), max(box[3], held[3]))
+        if any(abs(a - b) > 2 * BORDER_CELL for a, b in zip(grown, held)):
+            self.content, self.content_seen = grown, now
+            return True
+        if all(abs(a - b) <= 2 * BORDER_CELL for a, b in zip(box, held)):
+            self.content_seen = now
+        elif now - self.content_seen > BORDER_SHRINK_AFTER:
+            self.content, self.content_seen = box, now
+            return True
+        return False
 
     def _draw_swipe(self, img):
         """An arrow across the middle the way the swipe went, fading out over SWIPE_SHOWN --
@@ -1289,6 +1320,7 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
 
     def set_angle(self, angle):
         self.angle = angle % 360
+        self.content = None
 
     def redraw(self):
         frame = self.capture.latest() if self.capture else None
