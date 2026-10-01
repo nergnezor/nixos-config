@@ -24,14 +24,21 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     #
-    # noctalia-shell is NOT following the top-level nixpkgs (tried it,
-    # reverted): it locks against a specific nixpkgs revision it's actually
-    # been built/tested with. Forcing it onto our newer pin broke the first
-    # real install attempt — nixpkgs had removed `libdisplay-info_0_2` (an old
-    # versioned alias) in the window between its lock and ours. Sharing the
-    # Qt6 base would save some store space, but a config that fails to
-    # evaluate saves none — it keeps its own known-working nixpkgs instead.
-    noctalia-shell.url = "github:noctalia-dev/noctalia-shell";
+    # v5 is a native binary that loads the *system* Mesa at runtime via
+    # autoAddDriverRunpath (`/run/opengl-driver`). That Mesa is built
+    # against THIS nixpkgs' glibc, so noctalia has to be too — otherwise
+    # `eglGetDisplay` fails at login and the user unit hits start-limit
+    # (confirmed 2026-10-01 on nixos-nitro: glibc 2.42 vs 2.44 after a
+    # nixpkgs bump; noctalia kept running through the switch and only
+    # died on reboot).
+    #
+    # Previously left on its own pin: the old Qt/quickshell build wanted
+    # `libdisplay-info_0_2` and a wayland-protocols staging file this tree
+    # didn't have. v5's package.nix depends on neither.
+    noctalia-shell = {
+      url = "github:noctalia-dev/noctalia-shell";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     # Provides spotify + spicetify-cli wired together as one home-manager
     # module (programs.spicetify) -- plain nixpkgs spicetify-cli patches an

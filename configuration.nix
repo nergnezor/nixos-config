@@ -19,11 +19,10 @@ in
   # So `nix-build` / androidenv compositions can fetch the SDK without an
   # interactive license prompt (optional; day-to-day builds use ~/Android/Sdk).
   nixpkgs.config.android_sdk.accept_license = true;
-  # noctalia-shell.overlays.default was tried and reverted: an overlay
-  # builds against THIS nixpkgs, and the meson build wanted a
-  # wayland-protocols staging file this pin didn't have.
-  # noctalia-shell.nixosModules.default (imported in flake.nix) already
-  # sets programs.noctalia.package to the flake's own package output.
+  # noctalia-shell.nixosModules.default (imported in flake.nix) sets
+  # programs.noctalia.package to the flake's package output. That output
+  # is built against THIS nixpkgs (`inputs.nixpkgs.follows` in flake.nix)
+  # so it can load `/run/opengl-driver` Mesa; an overlay is not needed.
   #
   # Ubuntu started noctalia via ~/.local/share/systemd/user/noctalia.service
   # (ExecStart=/usr/local/bin/noctalia). That path is Ubuntu-only, so the
@@ -51,6 +50,17 @@ in
     enable = true;
     systemd.enable = true;
     recommendedServices.enable = true; # bluetooth, upower, power-profiles-daemon
+  };
+  # The module's Restart=on-failure uses systemd's default RestartSec
+  # (~100ms). Five EGL failures then hit start-limit in under a second
+  # and the bar stays dead until a manual start. Room to retry also
+  # covers a cold-boot GPU race on the Arc A750.
+  systemd.user.services.noctalia = {
+    serviceConfig.RestartSec = 2;
+    unitConfig = {
+      StartLimitBurst = 8;
+      StartLimitIntervalSec = 60;
+    };
   };
 
   boot.loader.systemd-boot.enable = true;
