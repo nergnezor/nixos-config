@@ -18,6 +18,22 @@ let
     runtimeInputs = with pkgs; [ android-tools gawk gnugrep coreutils ];
     text = builtins.readFile ./scripts/adb-wifi.sh;
   };
+  # Java3D's renderer thread cannot make its GLX context current while
+  # NVIDIA's threaded optimizations are on: "Error making context current"
+  # on J3D-Renderer-1, then the "fatal error in the 3D rendering system"
+  # dialog and exit. Reproduced on the RTX 3060 Ti (driver 595) under niri;
+  # the same launch with this variable set comes up without the dialog.
+  # The variable is read only by the NVIDIA GL driver, so it is a no-op
+  # on the Intel machine.
+  sweethome3d = pkgs.symlinkJoin {
+    name = "sweethome3d";
+    paths = [ pkgs.sweethome3d.application ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram $out/bin/sweethome3d \
+        --set __GL_THREADED_OPTIMIZATIONS 0
+    '';
+  };
 in
 {
   home.username = "erik";
@@ -76,6 +92,7 @@ in
     nautilus      # file manager, Mod+E in niri/noctalia/binds.kdl
     file-roller   # archive manager Nautilus opens .zip and other archives with
     qdirstat      # disk usage treemap, GUI
+    sweethome3d   # wrapped; see the let binding above
     gdu           # disk usage, terminal TUI
     # tmux moved to programs.tmux below -- that module installs the package
     # itself, and the resurrect/continuum plugins have to be declared next
