@@ -18,22 +18,41 @@ let
     runtimeInputs = with pkgs; [ android-tools gawk gnugrep coreutils ];
     text = builtins.readFile ./scripts/adb-wifi.sh;
   };
-  # Java3D's renderer thread cannot make its GLX context current while
-  # NVIDIA's threaded optimizations are on: "Error making context current"
-  # on J3D-Renderer-1, then the "fatal error in the 3D rendering system"
-  # dialog and exit. Reproduced on the RTX 3060 Ti (driver 595) under niri;
-  # the same launch with this variable set comes up without the dialog.
-  # The variable is read only by the NVIDIA GL driver, so it is a no-op
-  # on the Intel machine.
-  sweethome3d = pkgs.symlinkJoin {
-    name = "sweethome3d";
-    paths = [ pkgs.sweethome3d.application ];
-    nativeBuildInputs = [ pkgs.makeWrapper ];
-    postBuild = ''
-      wrapProgram $out/bin/sweethome3d \
-        --set __GL_THREADED_OPTIMIZATIONS 0
-    '';
-  };
+  # Two separate failures, both on this machine:
+  #
+  # Kitty's shell has no DISPLAY (niri has DISPLAY=:0, the terminal does
+  # not). Java then dies in main with HeadlessException before any window
+  # exists, which is what `sweethome3d` from that shell prints.
+  #
+  # When DISPLAY is set, the onscreen Java3D canvas still dies on the RTX
+  # 3060 Ti (driver 595) with "Error making context current", and Sweet
+  # Home 3D shows the fatal 3D error dialog. The upstream workaround is an
+  # offscreen 3D view. It has to be a JVM flag, and the nixpkgs launcher
+  # also appends `-cp … -d64` after -jar, which Sweet Home 3D treats as
+  # extra arguments and then refuses to open the .sh3d file it was given.
+  # This wrapper replaces that launcher. __GL_THREADED_OPTIMIZATIONS is
+  # read only by the NVIDIA driver, so it does nothing on the Intel machine.
+  sweethome3d =
+    let
+      app = pkgs.sweethome3d.application;
+    in
+    pkgs.symlinkJoin {
+      name = "sweethome3d";
+      paths = [ app ];
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      postBuild = ''
+        java=$(sed -n 's/.*exec "\(\/nix\/store[^"]*\/bin\/java\)".*/\1/p' "$out/bin/sweethome3d" | head -1)
+        rm -f "$out/bin/sweethome3d" "$out/bin/.sweethome3d-wrapped"
+        makeWrapper "$java" "$out/bin/sweethome3d" \
+          --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ pkgs.libGL ]}" \
+          --set __GL_THREADED_OPTIMIZATIONS 0 \
+          --run 'if [ -z "''${DISPLAY:-}" ]; then export DISPLAY=:0; fi' \
+          --add-flags "-Dcom.eteks.sweethome3d.j3d.useOffScreen3DView=true" \
+          --add-flags "-Dsun.java2d.opengl=false" \
+          --add-flags "-jar ${app}/share/java/SweetHome3D-${app.version}.jar"
+        sed -i 's|^Exec=.*|Exec=sweethome3d %f|' "$out/share/applications/sweethome3d.desktop"
+      '';
+    };
 in
 {
   home.username = "erik";
