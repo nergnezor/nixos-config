@@ -95,14 +95,8 @@ in
     unzip
     wget          # Mason's cpptools downloader shells out to wget
     nodejs_22
-    pnpm          # edge electron-wrapper; keep it out of the uxstream flake
-    # discord, thunderbird, vlc, gimp stay dropped -- erik only wanted
-    # steam added back for the real internal-disk install, not the rest of
-    # the trimmed set. mpv comes from uxstream/tools.nix for the bench
-    # camera, not as a general media player here. Spotify itself now comes
-    # from programs.spicetify below, not this list -- the spicetify-nix
-    # module installs its own patched build and warns against also listing
-    # pkgs.spotify here.
+    pnpm
+    cmake
     git           # was pulled in via programs.git before; that module's gone
                   # now that .gitconfig comes from the shared real home
     lazygit
