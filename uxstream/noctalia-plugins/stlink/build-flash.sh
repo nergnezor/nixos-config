@@ -32,14 +32,6 @@ fail() { progress error 0 "$1"; exit 1; }
 
 cd "$project" || fail "Cannot find $project"
 
-# vcpkg-shell activate brings ninja and the ARM gcc but not cmake, which vcpkg also downloaded.
-if ! command -v cmake >/dev/null; then
-    for d in "$HOME"/.vcpkg/downloads/artifacts/*/tools.kitware.cmake/*/bin; do
-        [ -x "$d/cmake" ] && PATH="$d:$PATH" && break
-    done
-    export PATH
-fi
-
 if [ "$mode" != flash ]; then
     progress build 0 "Configuring $preset"
     # Ninja prints "[done/total] step", the only percent source the build has.

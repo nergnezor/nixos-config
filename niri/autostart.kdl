@@ -1,5 +1,9 @@
 // spawn-sh-at-startup "wl-paste --watch cliphist store &"
 
+// -w holds suspend until sandlock -f has the session locked. Noctalia's own
+// lock screen is off, so this is the only thing that locks on lid close.
+spawn-at-startup "swayidle" "-w" "before-sleep" "sandlock -f"
+
 spawn-sh-at-startup "~/.config/niri/scripts/vertical-monitor-stack.sh &"
 // Recenters the Mod+T terminal when it is moved to another monitor
 spawn-sh-at-startup "~/.config/niri/scripts/dropdown-term.sh follow &"

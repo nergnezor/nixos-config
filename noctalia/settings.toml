@@ -11,8 +11,24 @@ capsule = true
 capsule_opacity = 0.79999998211860657
 capsule_radius = 10
 capsule_thickness = 0.99999998137354851
-center = [ "clock", "audio_visualizer", "date", "spacer_2", "cpu", "network_rx", "ram", "temp", "spacer_2", "weather" ]
+center = [ "clock", "audio_visualizer", "date", "spacer_2", "spacer_2", "weather" ]
 concave_edge_corners = false
+end = [
+    "cpu",
+    "ram",
+    "network_rx",
+    "media",
+    "tray",
+    "notifications",
+    "clipboard",
+    "network",
+    "bluetooth",
+    "volume",
+    "brightness",
+    "battery",
+    "control-center",
+    "session"
+]
 position = "bottom"
 radius = 10
 start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink" ]
@@ -350,10 +366,12 @@ radius = 80
 behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
 
     [idle.behavior.lock]
-    action = "lock"
+    action = "command"
+    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock -f; else noctalia msg session lock; fi"
 
     [idle.behavior.lock-and-suspend]
-    action = "lock_and_suspend"
+    action = "command"
+    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock -f && systemctl suspend; else noctalia msg session lock-and-suspend; fi"
 
     [idle.behavior.screen-off]
     action = "screen_off"
@@ -364,6 +382,8 @@ auto_locate = true
 [lockscreen]
 blur_intensity = 0.21999999508261681
 blurred_desktop = true
+enabled = true
+lock_before_suspend = true
 
 [lockscreen_widgets]
 enabled = true
@@ -568,6 +588,31 @@ screen_time_enabled = true
     [shell.screenshot]
     directory = "/home/erik/Pictures/Screenshots"
 
+    [[shell.session.actions]]
+    action = "command"
+    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock; else noctalia msg session lock; fi"
+    label = "Lock"
+    shortcut = "1"
+
+    [[shell.session.actions]]
+    action = "logout"
+    shortcut = "2"
+
+    [[shell.session.actions]]
+    action = "command"
+    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock -f && systemctl suspend; else noctalia msg session lock-and-suspend; fi"
+    label = "Lock & Suspend"
+    shortcut = "3"
+
+    [[shell.session.actions]]
+    action = "reboot"
+    shortcut = "4"
+
+    [[shell.session.actions]]
+    action = "shutdown"
+    shortcut = "5"
+    variant = "destructive"
+
     [shell.shadow]
     alpha = 0.78999998234212399
     direction = "down_left"
@@ -591,14 +636,17 @@ fill_mode = "center"
     [wallpaper.last]
 
     [wallpaper.monitors.DP-1]
+    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-2]
+    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
 
     [wallpaper.monitors.DP-4]
 
     [wallpaper.monitors.HDMI-A-1]
+    path = "/home/erik/Pictures/hyperlink-dimension-al-7680x4320.jpg"
 
 [widget.bar]
 type = "raycursive/niri-displays:bar"
@@ -608,8 +656,14 @@ color = "secondary"
 font_scale = 1.6599999999999999
 font_weight = 700
 
+[widget.cpu]
+visualization = "graph"
+
 [widget.nix-monitor]
 type = "avivbintangaringga/nix-monitor:nix-monitor"
+
+[widget.ram]
+visualization = "graph"
 
 [widget.spacer_2]
 type = "spacer"

@@ -95,6 +95,7 @@ in
     unzip
     wget          # Mason's cpptools downloader shells out to wget
     nodejs_22
+    pnpm          # edge electron-wrapper; keep it out of the uxstream flake
     # discord, thunderbird, vlc, gimp stay dropped -- erik only wanted
     # steam added back for the real internal-disk install, not the rest of
     # the trimmed set. mpv comes from uxstream/tools.nix for the bench

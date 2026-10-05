@@ -123,6 +123,7 @@ if os.environ.get("TERM") == "xterm-kitty" or os.environ.get("KITTY_WINDOW_ID"):
 import cairo  # noqa: E402
 import serial  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
+from rich.segment import Segment  # noqa: E402
 from rich.style import Style  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich.markup import escape  # noqa: E402
@@ -130,6 +131,7 @@ from rich.text import Text  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Horizontal, Vertical  # noqa: E402
+from textual.strip import Strip  # noqa: E402
 from textual.widgets import ProgressBar, RichLog, Static  # noqa: E402
 from textual_image._terminal import get_cell_size  # noqa: E402
 from textual_image.renderable import Image as _AutoRenderable  # noqa: E402
@@ -182,6 +184,7 @@ BORDER_BRIGHT = 60  # a cell brighter than this (0-255) is lit screen, not surro
 BORDER_SHARE = 0.15  # a row or column is kept once this share of its cells is lit, so specks and glare do not count
 BORDER_FILL = 0.5  # share of cells inside the found area that must be lit for it to count as the screen
 BORDER_SHRINK_AFTER = 20  # seconds the lit area must stay smaller before the cut follows it in
+CROP_MAX = 4  # the cut may drop at most this fraction of the width, and of the height
 CAMERA_FPS = [6, 10, 15, 24, 30]  # pictures sent per second, cycled with X; SSH bandwidth is the limit
 CHART_TEXT_CELL = 15  # cell height (px) the chart's text sizes are drawn for; taller cells scale it up
 CHART_FPS = 3  # same, for the chart -- slow enough to be light, fast enough for the labels to glide
@@ -1220,6 +1223,30 @@ else:
     _CameraRenderable = _AutoRenderable  # Sixel and half-cells draw what they are given
 
 
+def _clamp_crop(box, width, height):
+    """Grow a cut that drops more than a quarter of the width or the height, around what it found."""
+    def span(lo, hi, size):
+        lo, hi = max(0, min(int(lo), size)), max(0, min(int(hi), size))
+        if hi < lo:
+            lo, hi = hi, lo
+        keep = size - size // CROP_MAX
+        if hi - lo >= keep:
+            return lo, hi
+        mid = (lo + hi) / 2
+        lo = round(mid - keep / 2)
+        hi = lo + keep
+        if lo < 0:
+            hi, lo = hi - lo, 0
+        if hi > size:
+            lo, hi = lo - (hi - size), size
+        return max(0, lo), hi
+
+    x0, y0, x1, y1 = box
+    x0, x1 = span(x0, x1, width)
+    y0, y1 = span(y0, y1, height)
+    return x0, y0, x1, y1
+
+
 class CameraView(AutoImage, Renderable=_CameraRenderable):
     """The camera picture, drawn at any angle and grown to fill its box.
 
@@ -1255,7 +1282,7 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
         key = f"{self.angle:g}@{img.width}x{img.height}"
         if self.content is None:
             saved = (read_json(SETTINGS) or {}).get("screen_box", {}).get(key)
-            self.content = tuple(saved) if saved else None
+            self.content = _clamp_crop(tuple(saved), img.width, img.height) if saved else None
         lit = img.convert("L").reduce(BORDER_CELL).point(lambda v: 255 if v > BORDER_BRIGHT else 0)
         cols = list(lit.resize((lit.width, 1), Image.BOX).tobytes())
         rows = list(lit.resize((1, lit.height), Image.BOX).tobytes())
@@ -1265,12 +1292,14 @@ class CameraView(AutoImage, Renderable=_CameraRenderable):
             cells = (cols[0], rows[0], cols[-1] + 1, rows[-1] + 1)
             fill = lit.crop(cells).resize((1, 1), Image.BOX).getpixel((0, 0)) / 255
             if fill >= BORDER_FILL:
-                box = (cells[0] * BORDER_CELL, cells[1] * BORDER_CELL,
-                       min(img.width, cells[2] * BORDER_CELL), min(img.height, cells[3] * BORDER_CELL))
+                box = _clamp_crop((cells[0] * BORDER_CELL, cells[1] * BORDER_CELL,
+                                   min(img.width, cells[2] * BORDER_CELL),
+                                   min(img.height, cells[3] * BORDER_CELL)),
+                                  img.width, img.height)
                 if self._hold_content(box):
                     screen_boxes = (read_json(SETTINGS) or {}).get("screen_box", {})
                     save_settings(screen_box=screen_boxes | {key: list(self.content)})
-        return self.content or (0, 0, img.width, img.height)
+        return _clamp_crop(self.content or (0, 0, img.width, img.height), img.width, img.height)
 
     def _hold_content(self, box):
         """Grow the held screen at once but shrink it only after BORDER_SHRINK_AFTER, as the screen
@@ -1386,6 +1415,68 @@ class ChartView(AutoImage, Renderable=_AutoRenderable):
         self.image = image.quantize(256, dither=Image.Dither.NONE)
 
 
+def _style_cell_span(strip, start, end, style):
+    """Paint `style` over cells [start, end). Meta already on the segments (selection offsets) stays."""
+    length = strip.cell_length
+    start = max(0, min(int(start), length))
+    end = length if end < 0 else max(start, min(int(end), length))
+    if start >= end:
+        return strip
+    cuts = [cut for cut in (start, end) if 0 < cut < length]
+    parts = strip.divide(cuts) if cuts else [strip]
+    segments = []
+    pos = 0
+    for part in parts:
+        part_end = pos + part.cell_length
+        if start <= pos and part_end <= end:
+            segments.extend(Segment.apply_style(part, style))
+        else:
+            segments.extend(part)
+        pos = part_end
+    return Strip(segments, length)
+
+
+class LogView(RichLog):
+    """RichLog that can be marked with the mouse.
+
+    Textual finds the cell under the pointer from an offset stored on each segment. RichLog
+    never writes those, so a drag in the log selects nothing and copies nothing.
+    """
+
+    def get_selection(self, selection):
+        if not self.lines:
+            return None
+        # Lines are padded out to the render width; the padding is not part of the log.
+        text = "\n".join(line.text.rstrip(" ") for line in self.lines)
+        return selection.extract(text), "\n"
+
+    def _render_line(self, y, scroll_x, width):
+        if y >= len(self.lines):
+            return Strip.blank(width, self.rich_style)
+        key = (y + self._start_line, scroll_x, width, self._widest_line_width)
+        if key in self._line_cache:
+            return self._line_cache[key]
+        line = self.lines[y].crop_extend(scroll_x, scroll_x + width, self.rich_style)
+        line = line.apply_offsets(scroll_x, y)
+        self._line_cache[key] = line
+        return line
+
+    def render_line(self, y):
+        scroll_x, scroll_y = self.scroll_offset
+        content_y = scroll_y + y
+        line = self._render_line(content_y, scroll_x, self.scrollable_content_region.width)
+        strip = line.apply_style(self.rich_style)
+        selection = self.text_selection
+        if selection is not None and content_y < len(self.lines):
+            span = selection.get_span(content_y)
+            if span is not None:
+                start, end = span
+                strip = _style_cell_span(
+                    strip, start - scroll_x, end - scroll_x if end >= 0 else end,
+                    self.screen.get_component_rich_style("screen--selection"))
+        return strip
+
+
 class EyeBuddyApp(App):
     TITLE = "EyeBuddy"
     CSS = """
@@ -1486,7 +1577,7 @@ class EyeBuddyApp(App):
         # which takes only the width its aspect ratio needs and leaves the rest to them.
         with Vertical(id="main"):
             yield ChartView(self.chart, id="chart")
-            yield RichLog(id="log", max_lines=5000, wrap=True, highlight=False, markup=False)
+            yield LogView(id="log", max_lines=5000, wrap=True, highlight=False, markup=False)
         with Horizontal(id="bottom"):
             with Vertical(id="sidebar"):
                 with Vertical(id="build"):
