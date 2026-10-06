@@ -306,13 +306,6 @@ window-rule {
     open-on-output "DP-2"
 }
 
-// Vivaldi always opens on DP-1 (portrait). Width/height on that
-// monitor are handled dynamically by scripts/vertical-monitor-stack.sh.
-window-rule {
-    match app-id=r#"^vivaldi-stable$"#
-    open-on-output "DP-1"
-}
-
 // EyeBuds dev app (uxstream/eyebuds-dev): the width its layout was tuned for.
 window-rule {
     match app-id=r#"^dev\.uxstream\.EyebudsDev$"#

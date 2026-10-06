@@ -53,6 +53,47 @@ let
         sed -i 's|^Exec=.*|Exec=sweethome3d %f|' "$out/share/applications/sweethome3d.desktop"
       '';
     };
+  # Vivaldi stays the desktop browser. This wrapper is the mobile one:
+  # arrow-key spatial navigation, and pages laid out the way a phone
+  # would lay them out.
+  #
+  # --enable-viewport turns on @viewport and pinch-zoom. The meta
+  # viewport tag sites actually ship (width=device-width) is a separate
+  # Blink setting, and so is the mobile viewport style (kMobile = 1).
+  # Pointer and hover are reported as a coarse touchscreen with no
+  # hover, which is what @media (pointer: coarse) and (hover: none)
+  # match on. maxTouchPoints makes navigator.maxTouchPoints agree.
+  #
+  # There is no Linux switch that selects a mobile UA. The old
+  # --use-mobile-user-agent only appended "Mobile" on Android and iOS,
+  # and current Chromium no longer has it. The string below is the
+  # reduced Android Chrome UA, with the major taken from this package
+  # so it stays in step with Chromium. Layout width still follows the
+  # niri window; these flags do not resize it.
+  chromium =
+    let
+      browser = pkgs.chromium;
+      major = lib.versions.major browser.version;
+    in
+    browser.override {
+      commandLineArgs = lib.concatStringsSep " " [
+        "--enable-spatial-navigation"
+        "--enable-viewport"
+        "--touch-events=enabled"
+        "--blink-settings=${lib.concatStringsSep "," [
+          "viewportEnabled=true"
+          "viewportMetaEnabled=true"
+          "shrinksViewportContentToFit=true"
+          "viewportStyle=1"
+          "primaryPointerType=2"
+          "availablePointerTypes=2"
+          "primaryHoverType=1"
+          "availableHoverTypes=1"
+          "maxTouchPoints=5"
+        ]}"
+        ''--user-agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Mobile Safari/537.36"''
+      ];
+    };
 in
 {
   home.username = "erik";
@@ -77,7 +118,7 @@ in
     # grim
     # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
-    chromium
+    chromium      # wrapped; spatial navigation + mobile viewport, see the let binding
     vscode
     bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
     # AstroNvim (github:nergnezor/astronvim, its own repo -- not vendored
