@@ -6,6 +6,7 @@
 #   uxstreamTools = import ./uxstream/tools.nix { inherit pkgs; homeDirectory = config.home.homeDirectory; };
 #   home.packages = uxstreamTools.packages ++ ...;
 #   home.sessionVariables = { ... } // uxstreamTools.sessionVariables;
+#   systemd.user.sessionVariables = uxstreamTools.sessionVariables;
 #
 # Host OS still needs (elsewhere in this config):
 #   - ST-LINK udev rules + `plugdev`
@@ -55,6 +56,9 @@
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
     ANDROID_HOME = "${homeDirectory}/Android/Sdk";
     ANDROID_SDK_ROOT = "${homeDirectory}/Android/Sdk";
+    # cargo-ndk and the databuds-android Gradle build both want this NDK.
+    # Must match ndkVersion in router/phone/databuds-android/build.gradle.kts.
+    ANDROID_NDK_HOME = "${homeDirectory}/Android/Sdk/ndk/27.3.13750724";
     # Home-manager packages don't wire up pkg-config search paths the way
     # nix-shell buildInputs do -- point it at the profile explicitly.
     PKG_CONFIG_PATH = "${homeDirectory}/.nix-profile/lib/pkgconfig:${homeDirectory}/.nix-profile/share/pkgconfig";

@@ -336,6 +336,11 @@ in
     # environment block also sets this so dbus-activated portals see it.
     GTK_THEME = "Adwaita:dark";
   } // uxstreamTools.sessionVariables;
+  # Kitty is spawned by niri, which inherits the systemd user session, not a
+  # login shell. home.sessionVariables only land in hm-session-vars.sh, and
+  # this machine's bashrc is not managed by home-manager, so it never sources
+  # that file. Without this, ANDROID_HOME and JAVA_HOME are unset in a terminal.
+  systemd.user.sessionVariables = uxstreamTools.sessionVariables;
   home.sessionPath = uxstreamTools.sessionPath;
 
   # No theme/extensions picked here -- Marketplace is the in-app browser for

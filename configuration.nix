@@ -150,6 +150,15 @@ in
   # detects a touchscreen -- relevant since this session gets used from a
   # phone RDP client, not just a desktop one.
   services.desktopManager.plasma6.enable = true;
+  # Login shells (SSH, bash -l) do not source hm-session-vars.sh on their own:
+  # programs.bash is deliberately off because it would overwrite ~/.bashrc and
+  # abort activation. Graphical terminals get the same variables from
+  # systemd.user.sessionVariables in home.nix.
+  environment.extraInit = ''
+    if [ -f "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh" ]; then
+      . "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+    fi
+  '';
   # Plasma is only here as the xrdp session, so drop its bundled apps.
   # Left in: kwin-x11 (the X11 session), plasma-keyboard/qtvirtualkeyboard
   # (touch input from the phone) and the qttools/kconfig/qtbase helpers.
