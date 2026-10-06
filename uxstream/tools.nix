@@ -70,7 +70,16 @@
     # lv_font_conv`, which cannot write into the read-only nodejs store path.
     # A user prefix makes that work; its bin/ is on sessionPath below.
     NPM_CONFIG_PREFIX = "${homeDirectory}/.npm-global";
+    # vcpkg's arm-none-eabi cc1plus needs libzstd.so.1, and the splash venv's
+    # manylinux numpy needs libz.so.1. Both live in the nix-ld library dir.
+    # Those binaries do not search NIX_LD_LIBRARY_PATH.
+    LD_LIBRARY_PATH = "/run/current-system/sw/share/nix-ld/lib";
   };
 
-  sessionPath = [ "${homeDirectory}/.npm-global/bin" ];
+  sessionPath = [
+    # Pinned numpy/Pillow (see embedded client/shared_modules/cmake/requirements.txt)
+    # do not install on the profile's Python 3.14. CMake takes the first python3.
+    "${homeDirectory}/.cache/uxstream/eyebuds-py/bin"
+    "${homeDirectory}/.npm-global/bin"
+  ];
 }

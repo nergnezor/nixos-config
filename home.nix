@@ -99,6 +99,8 @@ in
     cmake
     git           # was pulled in via programs.git before; that module's gone
                   # now that .gitconfig comes from the shared real home
+    gnupg
+    git-crypt
     lazygit
     gh
     jq            # vertical-monitor-stack.sh / dropdown-term.sh parse `niri msg -j` with it
