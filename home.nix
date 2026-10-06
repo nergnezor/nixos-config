@@ -77,6 +77,7 @@ in
     # grim
     # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
+    chromium
     vscode
     bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
     # AstroNvim (github:nergnezor/astronvim, its own repo -- not vendored
