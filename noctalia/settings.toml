@@ -363,11 +363,11 @@ widget_order = [
 radius = 80
 
 [idle]
-behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
+behavior_order = [ "screen-off", "lock-and-suspend", "idle-behavior" ]
 
-    [idle.behavior.lock]
-    action = "command"
-    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock -f; else noctalia msg session lock; fi"
+    [idle.behavior.idle-behavior]
+    action = "suspend"
+    lock_before_suspend = false
 
     [idle.behavior.lock-and-suspend]
     action = "command"
