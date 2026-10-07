@@ -82,28 +82,7 @@
         "home-manager": "home-manager",
         "nixpkgs": "nixpkgs",
         "noctalia-shell": "noctalia-shell",
-        "sandlock": "sandlock",
         "spicetify-nix": "spicetify-nix"
-      }
-    },
-    "sandlock": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1790941807,
-        "narHash": "sha256-oGYSKx860YCM1DFoUmEOXcAaaSUuNp/6/zL1p6+tVAI=",
-        "owner": "Macs1324",
-        "repo": "sandlock",
-        "rev": "7751d69be28bc4ceb5fae5c7042e1c39b1d7c3d7",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Macs1324",
-        "repo": "sandlock",
-        "type": "github"
       }
     },
     "spicetify-nix": {

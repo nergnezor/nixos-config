@@ -57,15 +57,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Wayland locker: the desktop dissolves into a storm of its own pixels.
-    # PAM service and the package are wired in the module below.
-    sandlock = {
-      url = "github:Macs1324/sandlock";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, disko, sandlock, ... }:
+  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, disko, ... }:
     let
       homeModule = {
         home-manager.useGlobalPkgs = true;
@@ -91,14 +85,6 @@
           # Binds programs.noctalia.package to THIS flake's package output
           # (its own nixpkgs), not an overlay on ours — see configuration.nix.
           noctalia-shell.nixosModules.default
-          # sandlock authenticates against a PAM service of its own name.
-          # swayidle only runs the before-sleep hook (niri/autostart.kdl);
-          # idle locking stays with noctalia, which calls sandlock.
-          ({ pkgs, ... }: {
-            nixpkgs.overlays = [ sandlock.overlays.default ];
-            environment.systemPackages = [ pkgs.sandlock pkgs.swayidle ];
-            security.pam.services.sandlock = { };
-          })
         ] ++ extraModules;
       };
     in

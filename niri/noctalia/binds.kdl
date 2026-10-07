@@ -1,6 +1,6 @@
 binds {
     Ctrl+Alt+Delete hotkey-overlay-title="Task Manager" { spawn "kitty" "--class" "btm" "btm"; }
-    Mod+Alt+L hotkey-overlay-title="Lock Screen" { spawn-sh "if [ -f /etc/pam.d/sandlock ]; then exec sandlock; else exec noctalia msg session lock; fi"; }
+    Mod+Alt+L hotkey-overlay-title="Lock Screen" { spawn-sh "exec noctalia msg session lock"; }
     Mod+Comma hotkey-overlay-title="Settings" { spawn "noctalia" "msg" "settings-toggle"; }
     Mod+M hotkey-overlay-title="Task Manager" { spawn "kitty" "--class" "btm" "btm"; }
     Mod+S hotkey-overlay-title="ST-Link Panel" { spawn "noctalia" "msg" "panel-toggle" "erik/stlink:control"; }
