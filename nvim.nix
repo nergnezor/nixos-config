@@ -71,6 +71,12 @@
       notify.enable = true;
       diffview.enable = true;
       dap.enable = true;
+      # Draws mermaid blocks as images via kitty's graphics protocol, not in Neovide.
+      snacks = {
+        enable = true;
+        settings.image.enabled = true;
+      };
+
       render-markdown = {
         enable = true;
         settings.latex.enabled = false;
@@ -111,7 +117,7 @@
       inlayHints.enable = false;
     };
 
-    extraPackages = [ pkgs.stylua ];
+    extraPackages = with pkgs; [ stylua mermaid-cli imagemagick ];
 
     autoCmd = [
       {
