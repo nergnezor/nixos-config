@@ -96,10 +96,6 @@ what a new machine still needs by hand.
   content. Point Steam at an existing library after logging in.
 - **WiVRn, Sunshine, open-tv, Heroic** (flatpaks) — real parts of the desktop,
   never carried over.
-- **AstroNvim.** `~/.config/nvim` is `home.nix`'s `mkOutOfStoreSymlink` to
-  `~/astronvim`, but the editor config itself lives in its own repo
-  (`github:nergnezor/astronvim`), not here — clone it separately (see
-  "Bringing up a new machine" below).
 
 ## Bringing up a new machine
 
@@ -113,9 +109,7 @@ what a new machine still needs by hand.
    mapping in `rebuild.sh` (it knows `nixos-hp` → `nixos-eval` and
    `nixos-nitro` → `nixos-nitro`).
 4. `git add` all of it before building.
-5. `git clone https://github.com/nergnezor/astronvim ~/astronvim`, then
-   `mv ~/.config/niri ~/.config/niri.pre-symlink` and
-   `mv ~/.config/nvim ~/.config/nvim.pre-symlink` before the first rebuild —
+5. `mv ~/.config/niri ~/.config/niri.pre-symlink` before the first rebuild —
    home-manager will not overwrite a real directory, and aborts the whole
    activation if it finds one.
 6. `nixos-rebuild switch --flake .#<name>`.

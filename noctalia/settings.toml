@@ -370,8 +370,7 @@ behavior_order = [ "screen-off", "lock-and-suspend", "idle-behavior" ]
     lock_before_suspend = false
 
     [idle.behavior.lock-and-suspend]
-    action = "command"
-    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock -f && systemctl suspend; else noctalia msg session lock-and-suspend; fi"
+    action = "lock"
 
     [idle.behavior.screen-off]
     action = "screen_off"
@@ -618,8 +617,8 @@ screen_time_enabled = true
     direction = "down_left"
 
 [theme]
-builtin = "Catppuccin"
-community_palette = "Tokyo Night Moon"
+builtin = "Nord"
+community_palette = "Nord Aurora"
 mode = "dark"
 source = "community"
 wallpaper_scheme = "m3-content"

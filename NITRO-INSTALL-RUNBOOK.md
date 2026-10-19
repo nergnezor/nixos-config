@@ -115,7 +115,6 @@ tar -xzf secrets.tar.gz -C ~
 chmod 700 ~/.ssh ~/.gnupg
 chmod 600 ~/.ssh/id_ed25519_uxstream ~/.ssh/authorized_keys
 
-git clone https://github.com/nergnezor/astronvim ~/astronvim
 git clone https://github.com/nergnezor/nixos-config ~/nixos-config   # if /root's clone isn't reused
 
 ./noctalia/sync.sh push

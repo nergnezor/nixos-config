@@ -55,9 +55,6 @@ files=(
 #                                writes those from [theme.templates], see
 #                                noctalia/sync.sh
 #   ~/.local/state/noctalia/*    noctalia/sync.sh owns that one
-#   ~/astronvim                  its own repo (github:nergnezor/astronvim),
-#                                not this one -- home.nix only symlinks
-#                                ~/.config/nvim to it
 
 # ~/.gitconfig's gh credential helper is written by `gh auth login` as an
 # absolute /nix/store path, which is pinned to one gh build and means

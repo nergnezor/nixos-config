@@ -57,15 +57,19 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    nixvim = {
+      url = "github:nix-community/nixvim";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, disko, ... }:
+  outputs = { self, nixpkgs, home-manager, noctalia-shell, spicetify-nix, disko, nixvim, ... }:
     let
       homeModule = {
         home-manager.useGlobalPkgs = true;
         home-manager.useUserPackages = true;
         home-manager.extraSpecialArgs = { inherit spicetify-nix; };
-        home-manager.sharedModules = [ spicetify-nix.homeManagerModules.spicetify ];
+        home-manager.sharedModules = [ spicetify-nix.homeManagerModules.spicetify nixvim.homeModules.nixvim ];
         home-manager.users.erik = import ./home.nix;
       };
       # hostModule carries everything machine-specific: hostName, GPU driver,

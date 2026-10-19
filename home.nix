@@ -53,8 +53,15 @@ let
         sed -i 's|^Exec=.*|Exec=sweethome3d %f|' "$out/share/applications/sweethome3d.desktop"
       '';
     };
+  # Arrow keys move between links and controls. The mobile UA, touch, and
+  # viewport flags used to live on this same override; they stay off.
+  chromium = pkgs.chromium.override {
+    commandLineArgs = "--enable-spatial-navigation";
+  };
 in
 {
+  imports = [ ./nvim.nix ];
+
   home.username = "erik";
   home.homeDirectory = "/home/erik";
   home.stateVersion = "25.05"; # matches the nixpkgs/home-manager release-25.05 pin
@@ -77,14 +84,10 @@ in
     # grim
     # slurp
     vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
-    chromium
+    chromium      # arrow-key spatial navigation, see the let binding
     vscode
     bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
-    # AstroNvim (github:nergnezor/astronvim, its own repo -- not vendored
-    # here, see the xdg.configFile."nvim" symlink below) needs a C compiler
-    # for treesitter parsers, ripgrep/fd for telescope/snacks, node for
-    # LSPs, and unzip for Mason zip installs (stylua, etc.).
-    neovim
+    # Neovim itself comes from programs.nixvim in nvim.nix.
     neovide
     ripgrep
     fd
@@ -118,13 +121,8 @@ in
                               # NixOS install; Ubuntu had one system-wide.
                               # kitty.conf also names it explicitly
                               # (JetBrainsMono Nerd Font) so the glyphs
-                              # AstroNvim's UI depends on (icons, separators)
-                              # actually render.
-    nerd-fonts.fira-code      # Neovide guifont in astronvim
-                              # (lua/plugins/astrocore.lua:
-                              # `FiraCode_Nerd_Font:h10`). JetBrains covers
-                              # kitty/VS Code; this one is what the GUI
-                              # editor asks for by name.
+                              # Neovim's UI depends on (icons, separators)
+                              # actually render. Also Neovide's guifont.
     # cliphist
     wl-clipboard  # Claude Code shells out to `wl-paste` to read an image off
                   # the clipboard; without it Ctrl+V in the CLI finds nothing
@@ -191,37 +189,6 @@ in
   #   mv ~/.config/niri ~/.config/niri.pre-symlink
   xdg.configFile."niri".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/niri";
-
-  # ~/.config/nvim -- AstroNvim, but tracked as its OWN repo
-  # (github:nergnezor/astronvim), not vendored inside nixos-config. This
-  # just declares the same plain symlink erik already has on Ubuntu
-  # (`~/.config/nvim -> ~/astronvim`), so a rebuild recreates it rather
-  # than leaving a fresh machine with no editor config at all.
-  #
-  # mkOutOfStoreSymlink again, and for the same reason as niri: AstroNvim
-  # only reads its lua config at startup, and lazy-lock.json (which DOES
-  # get rewritten, by lazy.nvim on plugin updates) belongs in astronvim's
-  # own git history, not copied through the nix store on every edit.
-  #
-  # Fresh machines get ~/astronvim via home.activation.cloneAstronvim
-  # below. **Before the first rebuild on a machine that already has a
-  # real ~/.config/nvim**, move the old one aside -- same collision class
-  # as niri and tmux above:
-  #   mv ~/.config/nvim ~/.config/nvim.pre-symlink
-  xdg.configFile."nvim".source =
-    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/astronvim";
-
-  # Clone the AstroNvim config repo on first activation if missing. Kept
-  # out of the nix store on purpose (writable lazy-lock.json, own git
-  # history); this only ensures the symlink target exists after a fresh
-  # install so Neovide/nvim are not left pointing at nothing.
-  home.activation.cloneAstronvim = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    if [ ! -e "${config.home.homeDirectory}/astronvim" ]; then
-      $DRY_RUN_CMD ${pkgs.git}/bin/git clone \
-        https://github.com/nergnezor/astronvim \
-        "${config.home.homeDirectory}/astronvim"
-    fi
-  '';
 
   # AngelBeach's build-android.yml resolves JAVA_HOME by trying the repo
   # variable, then /usr/lib/jvm/java-17-openjdk-amd64, then $HOME/jdk17 --
