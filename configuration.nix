@@ -347,6 +347,7 @@ in
   };
 
   programs.steam.enable = true;
+  programs.appimage = { enable = true; binfmt = true; };
   # gamescopeSession dropped along with the rest of the trimmed app set --
   # erik only asked for plain steam back, not gamescope.
 

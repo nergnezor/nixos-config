@@ -3,6 +3,8 @@
   programs.nixvim = {
     enable = true;
     defaultEditor = true;
+    # Same nixpkgs as the system, which flake.nix's nixvim follows also asks for.
+    nixpkgs.source = pkgs.path;
 
     globals = {
       mapleader = " ";

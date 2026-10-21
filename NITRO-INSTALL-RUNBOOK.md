@@ -133,5 +133,5 @@ rebuild) — it doesn't exist in the repo yet at the point this runbook was
 written, only generated locally in step 4 above.
 
 Once confirmed everything survived (network, niri/noctalia, kitty,
-AstroNvim, tmux resurrect), delete `nergnezor/machine-backup` — its job is
+Neovim, tmux resurrect), delete `nergnezor/machine-backup` — its job is
 done.

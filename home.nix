@@ -97,7 +97,7 @@ in
     cargo
     rust-analyzer
     unzip
-    wget          # Mason's cpptools downloader shells out to wget
+    wget
     nodejs_22
     pnpm
     cmake
