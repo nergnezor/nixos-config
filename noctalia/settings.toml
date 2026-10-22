@@ -549,7 +549,6 @@ enabled = [
     "tordex/nvtop",
     "davemhammer/tailscale",
     "dunarand/tmux-provider",
-    "nzlov/daily-wallpaper",
     "erik/stlink"
 ]
 
@@ -587,31 +586,6 @@ screen_time_enabled = true
     [shell.screenshot]
     directory = "/home/erik/Pictures/Screenshots"
 
-    [[shell.session.actions]]
-    action = "command"
-    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock; else noctalia msg session lock; fi"
-    label = "Lock"
-    shortcut = "1"
-
-    [[shell.session.actions]]
-    action = "logout"
-    shortcut = "2"
-
-    [[shell.session.actions]]
-    action = "command"
-    command = "if [ -f /etc/pam.d/sandlock ]; then sandlock -f && systemctl suspend; else noctalia msg session lock-and-suspend; fi"
-    label = "Lock & Suspend"
-    shortcut = "3"
-
-    [[shell.session.actions]]
-    action = "reboot"
-    shortcut = "4"
-
-    [[shell.session.actions]]
-    action = "shutdown"
-    shortcut = "5"
-    variant = "destructive"
-
     [shell.shadow]
     alpha = 0.78999998234212399
     direction = "down_left"
@@ -631,18 +605,23 @@ wallpaper_scheme = "m3-content"
 fill_mode = "center"
 
     [wallpaper.default]
+    path = "/home/erik/Pictures/wallpapers/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.last]
+    path = "/home/erik/Pictures/wallpapers/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-1]
+    path = "/home/erik/Pictures/wallpapers/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-2]
+    path = "/home/erik/Pictures/wallpapers/hyperlink-dimension-al-7680x4320.jpg"
 
     [wallpaper.monitors.DP-3]
 
     [wallpaper.monitors.DP-4]
 
     [wallpaper.monitors.HDMI-A-1]
+    path = "/home/erik/Pictures/wallpapers/hyperlink-dimension-al-7680x4320.jpg"
 
 [widget.bar]
 type = "raycursive/niri-displays:bar"

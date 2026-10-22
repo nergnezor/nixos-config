@@ -203,6 +203,14 @@ in
   # runners (see the workflow's "Resolve JAVA_HOME" step comment).
   home.file."jdk17".source = pkgs.jdk17;
 
+  # Fixed wallpaper. noctalia/settings.toml points every output at this path,
+  # so it has to exist on both machines before `noctalia/sync.sh push`.
+  # force: the first copy was placed by hand on nitro.
+  home.file."Pictures/wallpapers/hyperlink-dimension-al-7680x4320.jpg" = {
+    source = ./wallpapers/hyperlink-dimension-al-7680x4320.jpg;
+    force = true;
+  };
+
   # programs.git stays undeclared: ~/.gitconfig came back from the rescue
   # and is the working copy. Same reasoning as the niri config had before
   # this commit — adopt it into the repo deliberately if you want it

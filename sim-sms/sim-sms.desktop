@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=SIM-meddelanden
+Comment=Läs SMS från ett SIM-kort i en USB-läsare
+Exec=sim-sms
+Icon=phone
+Terminal=false
+Type=Application
+Categories=Utility;

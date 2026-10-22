@@ -58,7 +58,11 @@ case "${1:-}" in
     git -C "$(dirname "$repo_file")" diff --stat -- "$repo_file"
     ;;
   push)
-    if pgrep -x noctalia-shell >/dev/null || pgrep -f 'quickshell.*noctalia' >/dev/null; then
+    if grep -q '^<<<<<<< \|^>>>>>>> ' "$repo_file"; then
+      echo "$repo_file has conflict markers -- resolve them first" >&2
+      exit 1
+    fi
+    if pgrep -x noctalia >/dev/null || pgrep -x noctalia-shell >/dev/null || pgrep -f 'quickshell.*noctalia' >/dev/null; then
       echo "noctalia is running -- stop it first (systemctl --user stop noctalia)," >&2
       echo "otherwise it will write its in-memory settings back over the restore." >&2
       exit 1

@@ -56,7 +56,23 @@ for file in home/bashrc home/profile noctalia/settings.toml niri/noctalia.kdl; d
   fi
 done
 
-git pull --ff-only --autostash
+pull_ok=1
+git pull --ff-only --autostash || pull_ok=0
+
+# A conflicting autostash pop doesn't fail the pull -- it leaves conflict
+# markers in the working tree and the stash in place. Everything below would
+# then copy those markers around (into noctalia's live settings.toml, which
+# noctalia can't parse and resets to defaults) or choke on them (flake.lock).
+# Stop here instead; nothing has touched the live files yet.
+unmerged="$(git diff --name-only --diff-filter=U)"
+if [ -n "$unmerged" ]; then
+  echo "!!  git pull left unmerged files -- resolve them before rebuilding:" >&2
+  printf '      %s\n' $unmerged >&2
+  echo "    your local version is still in 'git stash list' (autostash)." >&2
+  echo "    e.g. git checkout --ours|--theirs -- <file> && git reset -q, then git stash drop" >&2
+  exit 1
+fi
+[ "$pull_ok" = 1 ] || { echo "!!  git pull failed" >&2; exit 1; }
 
 # Check for conflicts: both remote and local changed
 detect_and_handle_conflicts() {
@@ -84,7 +100,10 @@ detect_and_handle_conflicts() {
         read -rp "Keep [l]ocal, use [r]emote, [v]iew full diff, or [s]kip? " choice
         case "$choice" in
           l) echo "→ Keeping local version"; return 0 ;;
-          r) cp "$repo_file" "$live_file"; echo "→ Using remote version"; return 0 ;;
+          r) if grep -q '^<<<<<<< \|^>>>>>>> ' "$repo_file"; then
+               echo "!!  $repo_file has conflict markers -- not copying it to $live_file" >&2; exit 1
+             fi
+             cp "$repo_file" "$live_file"; echo "→ Using remote version"; return 0 ;;
           v) diff -u "$repo_file" "$live_file" | ${PAGER:-less}; continue ;;
           s) echo "→ Skipping (will not sync)"; return 1 ;;
           *) echo "Invalid choice (l/r/v/s)"; continue ;;

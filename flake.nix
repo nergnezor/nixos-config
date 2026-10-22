@@ -98,6 +98,10 @@
       nixosConfigurations.nixos-eval = mkHost {
         hostModule = ./hosts/hp-envy.nix;
       };
+      # Alias under the real hostname: system.autoUpgrade (configuration.nix)
+      # builds "<flake>#<hostname>", which failed with "does not provide
+      # attribute ... nixos-hp" while only nixos-eval existed.
+      nixosConfigurations.nixos-hp = self.nixosConfigurations.nixos-eval;
       # The Nitro, whole-disk (2026-09-07) -- Ubuntu replaced entirely, see
       # disko-nitro.nix. Named after hosts/nitro.nix's own hostName, unlike
       # hp-envy's nixos-eval/nixos-hp mismatch above.

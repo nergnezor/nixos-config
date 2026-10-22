@@ -284,11 +284,15 @@ cursor {
     hide-when-typing
 }
 
-// Order of the Sinking Star (gamescope/Proton often has unset app-id).
+// Order of the Sinking Star. gamescope leaves app-id unset and copies the
+// game title onto its own window, so the title match is what applies.
+// One size from the start: resizing this window later runs gamescope out
+// of VRAM on the 3060 Ti.
 window-rule {
     match title=r#"(?i)order of the sinking star"#
     match app-id=r#"sinking_star\.exe"#
     open-on-output "DP-2"
+    open-focused true
     open-maximized true
     open-maximized-to-edges true
 }
@@ -331,10 +335,11 @@ include "noctalia/binds.kdl"
 include "noctalia/outputs.kdl"
 include "noctalia/cursor.kdl"
 
-include "noctalia.kdl"
 
 // Matches noctalia panels: radiusXl 12 * corner_radius_scale 2.0 (noctalia/settings.toml)
 window-rule {
     geometry-corner-radius 24
     clip-to-geometry true
 }
+
+include "noctalia.kdl"
