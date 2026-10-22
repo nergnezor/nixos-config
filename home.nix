@@ -190,6 +190,11 @@ in
   xdg.configFile."niri".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/niri";
 
+  # Global Claude Code instructions, linked into the working tree like niri so edits land in git.
+  # Move a real ~/.claude/CLAUDE.md aside before the first rebuild, or activation aborts.
+  home.file.".claude/CLAUDE.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/claude/CLAUDE.md";
+
   # AngelBeach's build-android.yml resolves JAVA_HOME by trying the repo
   # variable, then /usr/lib/jvm/java-17-openjdk-amd64, then $HOME/jdk17 --
   # none of which exist on a fresh NixOS runner. This symlink satisfies the
