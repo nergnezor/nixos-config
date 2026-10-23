@@ -31,7 +31,7 @@ end = [
 ]
 position = "bottom"
 radius = 10
-start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink" ]
+start = [ "launcher", "wallpaper", "workspaces", "active_window", "widget", "nix-monitor", "status", "stlink", "pulse" ]
 thickness = 20
 
     [bar.default.monitor.DP-1]
@@ -540,10 +540,7 @@ update_command = "nrbu"
 
 [plugins]
 enabled = [
-    "noctalia/bongocat",
-    "alexander/game-launcher",
     "lowcache/claude-companion",
-    "yocraft/desktop-launcher",
     "tphilippot/git_companion",
     "avivbintangaringga/nix-monitor",
     "tordex/nvtop",
@@ -592,8 +589,7 @@ screen_time_enabled = true
 
 [theme]
 builtin = "Nord"
-community_palette = "Nord Aurora"
-mode = "dark"
+community_palette = "Rose Pine Moon"
 source = "community"
 wallpaper_scheme = "m3-content"
 
@@ -636,6 +632,9 @@ visualization = "graph"
 
 [widget.nix-monitor]
 type = "avivbintangaringga/nix-monitor:nix-monitor"
+
+[widget.pulse]
+type = "lowcache/claude-companion:pulse"
 
 [widget.ram]
 visualization = "graph"
