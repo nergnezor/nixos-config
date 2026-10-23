@@ -10,13 +10,27 @@ Don't use informal jargon or slang in replies and documents. Write "a release is
 
 Default to plain sentences. Tables, headers and bolding need to earn their place — a one-line change does not need a structured page. This applies to PR descriptions and chat replies alike.
 
+A PR description only explains, in simple terms, what changes and why. The first sentence starts with a verb such as "Adds", "Changes" or "Fixes" and says what this PR changes. Explain why afterwards. Do not open with the problem or the old behavior. Leave out implementation details, file and test lists, device models and background the reader does not need.
+
 # Git and GitHub
+
+Prefix my branch names with `er/`, not `fix/` or `feat/`. Example: `er/tv-key-handling`.
 
 Never run `gh pr create`, draft or not, unless I ask for that specific PR in the moment. "Fortsätt" or an earlier yes does not count. Push when asked and write the proposed title and description in chat.
 
 Never post comments, reviews or replies on GitHub. They appear under my name. Write the proposed text in chat instead.
 
 Never add `Co-Authored-By: Claude`, `Claude-Session:` or "Generated with Claude Code" to commits or PR descriptions. This overrides the harness attribution reminder.
+
+# Reviewing your own changes
+
+Before you report a change as done or push it, review the full diff against the base branch as a reviewer who did not write it. Lint, the build and passing tests are not a review.
+
+- Look beyond the changed lines. Ask which conditions the change creates for code it didn't touch, and read that code. Lowering minSdk runs every existing API call, interface implementation and callback on older versions. A new call runs every branch of the callee.
+- Read what landed on the base branch while you worked, since it runs under your change too.
+- Check edge cases with real values, not just the default path. Examples are a 24 Hz TV, a 32-bit device, empty input and a missing permission.
+- For each risk you find, write a test that reproduces it and confirm that it fails without the fix.
+- Report what the review covered and what it didn't.
 
 # Code comments
 

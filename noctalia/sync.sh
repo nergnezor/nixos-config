@@ -11,6 +11,7 @@
 #
 #   ./noctalia/sync.sh pull   live -> repo   (after changing things in the GUI)
 #   ./noctalia/sync.sh push   repo -> live   (restoring on a new machine)
+#   ./noctalia/sync.sh merge  repo -> live, keeping this machine's scrubbed lines
 #   ./noctalia/sync.sh diff   what differs
 #
 # `push` backs the live file up first and refuses while noctalia is running,
@@ -35,20 +36,58 @@ live_file="${XDG_STATE_HOME:-$HOME/.local/state}/noctalia/settings.toml"
 # followed by a push (or a later pull-and-commit) on the other silently
 # overwrote its setting with the other machine's. Same deal as the calendar
 # account: set these again in Noctalia's settings panel after a push.
+# With a second argument of 1, prints only the machine-local lines instead,
+# each group under its table header, so `merge` can put them back.
 scrub() {
-  awk '
+  awk -v local_only="${2:-0}" '
     /^[[:space:]]*\[/ {
+      hdr     = $0
+      shown   = 0
       skip    = ($0 ~ /^[[:space:]]*\[calendar\.account\./)
       in_idle = ($0 ~ /^[[:space:]]*\[idle\.behavior\./)
     }
-    skip && /^[[:space:]]*$/                        { next }
-    skip                                             { next }
-    in_idle && /^[[:space:]]*timeout[[:space:]]*=/   { next }
-    in_idle && /^[[:space:]]*enabled[[:space:]]*=/   { next }
-    # The daily-wallpaper plugin rewrites these paths every day.
-    /^[[:space:]]*path[[:space:]]*=.*\/daily-wallpaper\//  { next }
-    { print }
+    {
+      machine_local = skip || (in_idle && /^[[:space:]]*(timeout|enabled)[[:space:]]*=/)
+      # The daily-wallpaper plugin rewrites its paths every day, so they are
+      # dropped but never put back.
+      drop = machine_local || /^[[:space:]]*path[[:space:]]*=.*\/daily-wallpaper\//
+    }
+    !local_only && !drop { print; next }
+    local_only && machine_local && !/^[[:space:]]*$/ {
+      if (!shown && $0 != hdr) print hdr
+      shown = 1
+      print
+    }
   ' "$1"
+}
+
+# Prints the repo file with the live file's scrubbed lines put back at the end
+# of their tables. A key the repo table already has wins. Tables the repo
+# lacks, like [calendar.account.*], go at the end of the file.
+merge() {
+  awk '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    function key(s) { sub(/=.*/, "", s); return trim(s) }
+    function flush(   n, i, ls) {
+      if (!(cur in body) || (cur in used)) return
+      n = split(body[cur], ls, "\n")
+      for (i = 1; i < n; i++) if (!(key(ls[i]) in seen)) print ls[i]
+      used[cur] = 1
+    }
+    NR == FNR {
+      if (/^[[:space:]]*\[/) { h = trim($0); order[++n] = h; head[h] = $0 }
+      else body[h] = body[h] $0 "\n"
+      next
+    }
+    /^[[:space:]]*\[/ { flush(); cur = trim($0); split("", seen); print; next }
+    /=/ { seen[key($0)] = 1 }
+    { print }
+    END {
+      flush()
+      for (i = 1; i <= n; i++)
+        if (!(order[i] in used)) printf "\n%s\n%s", head[order[i]], body[order[i]]
+    }
+  ' <(scrub "$live_file" 1) "$repo_file"
 }
 
 case "${1:-}" in
@@ -77,8 +116,17 @@ case "${1:-}" in
   diff)
     diff -u "$repo_file" <(scrub "$live_file") && echo "identical"
     ;;
+  scrubbed)
+    scrub "$live_file"
+    ;;
+  merge)
+    merged="$(merge)"
+    [ -e "$live_file" ] && cp "$live_file" "$live_file.bak-$(date +%Y%m%d%H%M%S)"
+    printf '%s\n' "$merged" > "$live_file"
+    echo "merged  $repo_file -> $live_file (kept this machine's idle and calendar lines)"
+    ;;
   *)
-    echo "usage: ${0##*/} {pull|push|diff}" >&2
+    echo "usage: ${0##*/} {pull|push|merge|diff|scrubbed}" >&2
     exit 2
     ;;
 esac

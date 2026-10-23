@@ -77,6 +77,14 @@ fi
 # Check for conflicts: both remote and local changed
 detect_and_handle_conflicts() {
   local repo_file="$1" live_file="$2" before_hash="$3"
+  # noctalia's tracked copy is scrubbed of machine-local lines (noctalia/sync.sh),
+  # so compare against the scrubbed live file and keep those lines on [r].
+  local cmp_file="$live_file" noctalia=0
+  if [ "$repo_file" = "$repo/noctalia/settings.toml" ] && [ -f "$live_file" ]; then
+    noctalia=1
+    cmp_file="$(mktemp)"
+    ./noctalia/sync.sh scrubbed > "$cmp_file"
+  fi
 
   if [ ! -f "$repo_file" ]; then return 0; fi
 
@@ -86,14 +94,14 @@ detect_and_handle_conflicts() {
   # Remote changed in git pull
   if [ "$before_hash" != "$after_hash" ]; then
     # Local also changed?
-    if [ -f "$live_file" ] && ! diff -q "$repo_file" "$live_file" >/dev/null 2>&1; then
+    if [ -f "$live_file" ] && ! diff -q "$repo_file" "$cmp_file" >/dev/null 2>&1; then
       echo ""
       echo "⚠️  CONFLICT: $(basename "$repo_file") changed both remotely and locally"
       echo ""
       echo "--- Remote (from git)"
       echo "+++ Local (live)"
-      diff -u --color=always "$repo_file" "$live_file" | head -20
-      [ $(diff "$repo_file" "$live_file" | wc -l) -gt 20 ] && echo "... (more changes)"
+      diff -u --color=always "$repo_file" "$cmp_file" | head -20
+      [ $(diff "$repo_file" "$cmp_file" | wc -l) -gt 20 ] && echo "... (more changes)"
       echo ""
 
       while true; do
@@ -103,8 +111,9 @@ detect_and_handle_conflicts() {
           r) if grep -q '^<<<<<<< \|^>>>>>>> ' "$repo_file"; then
                echo "!!  $repo_file has conflict markers -- not copying it to $live_file" >&2; exit 1
              fi
-             cp "$repo_file" "$live_file"; echo "→ Using remote version"; return 0 ;;
-          v) diff -u "$repo_file" "$live_file" | ${PAGER:-less}; continue ;;
+             if [ "$noctalia" = 1 ]; then ./noctalia/sync.sh merge; else cp "$repo_file" "$live_file"; fi
+             echo "→ Using remote version"; return 0 ;;
+          v) diff -u "$repo_file" "$cmp_file" | ${PAGER:-less}; continue ;;
           s) echo "→ Skipping (will not sync)"; return 1 ;;
           *) echo "Invalid choice (l/r/v/s)"; continue ;;
         esac
