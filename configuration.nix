@@ -64,7 +64,13 @@ in
   };
 
   boot.loader.systemd-boot.enable = true;
-  boot.loader.efi.canTouchEfiVariables = true;
+  # When a rebuild brings a new systemd, NixOS updates systemd-boot through
+  # bootctl's Varlink Install call. That call creates "Linux Boot Manager" and
+  # "Fallback Linux Boot Manager" EFI entries with a zeroed partition GUID
+  # and puts them first in BootOrder. The firmware cannot boot them. The
+  # working entries already exist, so bootctl does not need to touch EFI
+  # variables at all.
+  boot.loader.efi.canTouchEfiVariables = false;
   # The ESP is 512MiB and each generation puts a kernel plus an initrd on it,
   # roughly 100MiB a time. Without a cap `nixos-rebuild` eventually fills it
   # and fails partway through a switch, which is a bad moment to discover a
