@@ -50,7 +50,7 @@ echo "==> git pull"
 
 # Capture hashes of synced files before pull to detect remote changes
 declare -A before_hashes
-for file in home/bashrc home/profile noctalia/settings.toml niri/noctalia.kdl; do
+for file in home/bashrc home/profile home/mouseless/config.yaml noctalia/settings.toml niri/noctalia.kdl; do
   if [ -f "$repo/$file" ]; then
     before_hashes["$file"]=$(sha256sum "$repo/$file" | cut -d' ' -f1)
   fi
@@ -137,6 +137,15 @@ for file in bashrc profile; do
     fi
   fi
 done
+
+repo_file="$repo/home/mouseless/config.yaml"
+live_file="$HOME/.var/app/net.sonuscape.mouseless/data/mouseless/configs/config.yaml"
+if [ -f "$live_file" ]; then
+  if detect_and_handle_conflicts "$repo_file" "$live_file" "${before_hashes[home/mouseless/config.yaml]:-}"; then
+    cp "$live_file" "$repo_file"
+    echo "pulled  $live_file"
+  fi
+fi
 
 # Sync noctalia with conflict detection
 repo_file="$repo/noctalia/settings.toml"

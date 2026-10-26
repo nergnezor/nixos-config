@@ -38,6 +38,7 @@ files=(
   "profile:$HOME/.profile"
   "$gitconfig_rel:$HOME/.gitconfig"
   "kitty/kitty.conf:$cfg/kitty/kitty.conf"
+  "mouseless/config.yaml:$HOME/.var/app/net.sonuscape.mouseless/data/mouseless/configs/config.yaml"
 )
 # Deliberately NOT synced:
 #   ~/.ssh/*                     keys, and config names a real host:port --
