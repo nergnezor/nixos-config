@@ -114,6 +114,7 @@ in
     qdirstat      # disk usage treemap, GUI
     sweethome3d   # wrapped; see the let binding above
     gdu           # disk usage, terminal TUI
+    remmina       # RDP client for the Windows machine
     # tmux moved to programs.tmux below -- that module installs the package
     # itself, and the resurrect/continuum plugins have to be declared next
     # to it anyway.
