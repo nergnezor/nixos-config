@@ -8,7 +8,6 @@ binds {
     Mod+Shift+N hotkey-overlay-title="Notepad" { spawn "noctalia" "msg" "panel-toggle" "notepad"; }
     Mod+Space hotkey-overlay-title="Application Launcher" { spawn "noctalia" "msg" "panel-toggle" "launcher"; }
     Mod+V hotkey-overlay-title="Clipboard Manager" { spawn "noctalia" "msg" "panel-toggle" "clipboard"; }
-    Mod+Y hotkey-overlay-title="Browse Wallpapers" { spawn "noctalia" "msg" "wallpaper-random"; }
     Super+X hotkey-overlay-title="Power Menu: Toggle" { spawn "noctalia" "msg" "panel-toggle" "session"; }
     XF86AudioLowerVolume allow-when-locked=true { spawn "noctalia" "msg" "volume-down" "3"; }
     XF86AudioMicMute allow-when-locked=true { spawn "noctalia" "msg" "mic-mute"; }
