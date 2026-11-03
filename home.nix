@@ -53,10 +53,15 @@ let
         sed -i 's|^Exec=.*|Exec=sweethome3d %f|' "$out/share/applications/sweethome3d.desktop"
       '';
     };
+  # Under Wayland, Chromium copies software-decoded video frames into NV12 GPU memory
+  # buffers (dmabufs). With the NVIDIA driver those frames render black, so a video shows
+  # only subtitles and controls. This flag makes Chromium upload the frames as ordinary
+  # textures.
+  videoFrameFix = "--disable-gpu-memory-buffer-video-frames";
   # Arrow keys move between links and controls. The mobile UA, touch, and
   # viewport flags used to live on this same override; they stay off.
   chromium = pkgs.chromium.override {
-    commandLineArgs = "--enable-spatial-navigation";
+    commandLineArgs = "--enable-spatial-navigation ${videoFrameFix}";
   };
 in
 {
@@ -83,8 +88,16 @@ in
     # fuzzel
     # grim
     # slurp
-    vivaldi       # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$"
+    # config.kdl has an output-placement rule keyed on app-id="^vivaldi-stable$".
+    # Video sites like SVT Play need H.264/AAC and Widevine. Without these flags Vivaldi
+    # downloads them into ~/.local/lib/vivaldi at runtime, which does not work reliably on NixOS.
+    (vivaldi.override {
+      proprietaryCodecs = true;
+      enableWidevine = true;
+      commandLineArgs = videoFrameFix;
+    })
     chromium      # arrow-key spatial navigation, see the let binding
+    (brave.override { commandLineArgs = videoFrameFix; })
     vscode
     bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
     # Neovim itself comes from programs.nixvim in nvim.nix.

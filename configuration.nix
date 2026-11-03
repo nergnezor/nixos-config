@@ -230,10 +230,10 @@ in
   # layout everywhere. That is not cosmetic: the root/erik passwords were
   # typed on a Swedish layout during `nixos-install` (run from the Ubuntu
   # session, see PARTITION-RUNBOOK.md), so every non-alphanumeric character
-  # in them lands on a different key at the greetd/tuigreet prompt and the
+  # in them lands on a different key at the login prompt and the
   # login simply fails, with no hint as to why.
   #
-  # console.keyMap covers the VTs and tuigreet. useXkbConfig is deliberately
+  # console.keyMap covers the VTs. useXkbConfig is deliberately
   # NOT used to derive it -- that would make the console depend on the X11
   # settings, and this machine has no X server.
   console.keyMap = "sv-latin1";
@@ -243,8 +243,8 @@ in
   # gives the Wayland session a Swedish layout too.
   services.xserver.xkb.layout = "se";
 
-  # tuigreet draws its frame with Unicode box-drawing glyphs, which the
-  # kernel's built-in 8x16 console font does not have.
+  # The kernel's built-in 8x16 console font lacks the Unicode glyphs that
+  # VT programs draw with.
   #
   # Name the kbd font, do NOT point at a .psf.gz in the store, and do NOT
   # turn on earlySetup. Tried that first and it made things worse rather
@@ -293,38 +293,24 @@ in
   # Nautilus needs gvfs for trash, USB/MTP mounts and network locations.
   services.gvfs.enable = true;
 
+  # noctalia-greeter runs its own small wlroots compositor as the greetd
+  # greeter and shows Noctalia's login screen. It finds niri through
+  # /run/current-system/sw/share/wayland-sessions. `noctalia msg
+  # greeter-sync` copies the wallpaper, colors and monitor layout from the
+  # running shell into /var/lib/noctalia-greeter.
+  #
+  # The greeter compositor does not read locale1, so without
+  # XKB_DEFAULT_LAYOUT the password would be typed on a US layout.
   services.greetd = {
     enable = true;
     settings.default_session = {
-      # pkgs.tuigreet, not pkgs.greetd.tuigreet -- it moved out of the greetd
-      # attribute set into a top-level package in newer nixpkgs.
-      #
-      # --sessions instead of --cmd, deliberately. --cmd hardcodes one
-      # command as the default session, but tuigreet ALSO scans for
-      # wayland-sessions/*.desktop and lists what it finds, so niri showed
-      # up twice in the F3 session menu -- once as the raw store path from
-      # --cmd, once as "Niri" from niri.desktop -- and the two are not
-      # equivalent: the --cmd form runs the binary with none of the
-      # desktop entry's DesktopNames=niri, so XDG_CURRENT_DESKTOP is unset
-      # in that session and the portal/xdg bits that key off it misbehave.
-      # Pointing --sessions at the NixOS session directory leaves exactly
-      # one niri entry, the desktop-file one, which is the correct one.
-      #
-      # The scan is not optional: without --sessions tuigreet falls back to
-      # $XDG_DATA_DIRS, and greetd.service has a bare environment (PATH,
-      # LOCALE_ARCHIVE, TZDIR only) so that is unset and it would look in
-      # /usr/local/share:/usr/share -- neither of which exists on NixOS.
-      #
-      # No --xsessions: /run/current-system/sw/share/xsessions does not
-      # exist on this machine (no X server; Plasma is registered only for
-      # xrdp, which gets its session from xrdp.defaultWindowManager).
-      #
-      # --remember-session keeps the last choice preselected, which is what
-      # --cmd was really providing.
-      command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --remember-session --sessions /run/current-system/sw/share/wayland-sessions";
+      command = "${pkgs.coreutils}/bin/env XKB_DEFAULT_LAYOUT=se ${pkgs.noctalia-greeter}/bin/noctalia-greeter-session";
       user = "greeter";
     };
   };
+  # Puts the polkit action for greeter-sync in /run/current-system/sw.
+  environment.systemPackages = [ pkgs.noctalia-greeter ];
+  systemd.tmpfiles.packages = [ pkgs.noctalia-greeter ];
 
   security.polkit.enable = true;
   services.pipewire = {
