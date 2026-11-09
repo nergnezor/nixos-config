@@ -313,6 +313,8 @@ in
   systemd.tmpfiles.packages = [ pkgs.noctalia-greeter ];
 
   security.polkit.enable = true;
+  # `noctalia msg greeter-sync` runs noctalia-greeter-apply-appearance through pkexec.
+  security.polkit.enablePkexecWrapper = true;
   services.pipewire = {
     enable = true;
     alsa.enable = true;

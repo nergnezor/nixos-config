@@ -63,6 +63,29 @@ let
   chromium = pkgs.chromium.override {
     commandLineArgs = "--enable-spatial-navigation ${videoFrameFix}";
   };
+  # The cargo setup hook in this nixpkgs forces *-sys crates to link system libraries.
+  # codex lacks build inputs for several of them (aws-lc, zstd), so the build panics.
+  # shortcut: drop this override once nixpkgs fixes codex's build inputs.
+  codex = pkgs.codex.overrideAttrs { dontCargoUseSystemLibs = true; };
+  # Not in nixpkgs. The AppImage's built-in updater cannot replace a store path, so bump version and hash here.
+  chimaera =
+    let
+      pname = "chimaera";
+      version = "0.76.0";
+      src = pkgs.fetchurl {
+        url = "https://github.com/martinappberg/chimaera/releases/download/v${version}/chimaera_${version}_amd64.AppImage";
+        hash = "sha256-3M8hW7FAjYrjaCTCo9hNYqSLZiaz9Y5ftnM4y9fuXA0=";
+      };
+      contents = pkgs.appimageTools.extract { inherit pname version src; };
+    in
+    pkgs.appimageTools.wrapType2 {
+      inherit pname version src;
+      extraPkgs = pkgs: [ pkgs.libgpg-error ];
+      extraInstallCommands = ''
+        install -Dm444 ${contents}/*.desktop -t $out/share/applications
+        cp -r ${contents}/usr/share/icons $out/share/
+      '';
+    };
 in
 {
   imports = [ ./nvim.nix ];
@@ -97,7 +120,7 @@ in
       commandLineArgs = videoFrameFix;
     })
     chromium      # arrow-key spatial navigation, see the let binding
-    (brave.override { commandLineArgs = videoFrameFix; })
+    chimaera
     vscode
     bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
     # Neovim itself comes from programs.nixvim in nvim.nix.
@@ -147,6 +170,7 @@ in
     # claude-code: confirmed via `nix eval` that it exists as a real
     # package on nixos-25.05 (previously flagged unverified, now checked).
     claude-code
+    codex         # OpenAI Codex CLI, see the let binding
     cursor-cli    # ships the `cursor-agent` binary, not `cursor` -- confirmed
                   # via a direct `nix build` + `--version` check (unfree,
                   # already allowed by nixpkgs.config.allowUnfree above)
@@ -155,11 +179,17 @@ in
                        # Use the nixpkgs package instead (provides `copilot`).
     antigravity-ide    # Google Antigravity (`antigravity-ide`); replaces
                        # Gemini CLI. Unfree; allowUnfree already set.
-    opencode           # Single terminal coding agent that talks to many
-                       # model providers (Anthropic, OpenAI, Google, local,
-                       # ...) through one CLI/TUI, configured per-provider --
-                       # unlike the entries above, which are each locked to
-                       # one vendor's own CLI.
+    # Single terminal coding agent that talks to many model providers
+    # (Anthropic, OpenAI, Google, local, ...) through one CLI/TUI, configured
+    # per-provider -- unlike the entries above, which are each locked to one
+    # vendor's own CLI.
+    # shortcut: the node_modules outputHash in nixpkgs 1d06008 does not match
+    # what bun install fetches. Remove the override once nixpkgs fixes it.
+    (opencode.overrideAttrs (old: {
+      node_modules = old.node_modules.overrideAttrs {
+        outputHash = "sha256-prx9dX7kUvs/E3zopkaPk5LXh3xJAy5sZeum/W8L7cA=";
+      };
+    }))
   ]);
 
   # --hold keeps the window open so the "connected to" line or the error can be read.
@@ -207,6 +237,11 @@ in
   # Global Claude Code instructions, linked into the working tree like niri so edits land in git.
   # Move a real ~/.claude/CLAUDE.md aside before the first rebuild, or activation aborts.
   home.file.".claude/CLAUDE.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/claude/CLAUDE.md";
+  # The same instructions for Codex and Copilot CLI, so another agent follows the same rules.
+  home.file.".codex/AGENTS.md".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/claude/CLAUDE.md";
+  home.file.".copilot/copilot-instructions.md".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos-config/claude/CLAUDE.md";
 
   # AngelBeach's build-android.yml resolves JAVA_HOME by trying the repo

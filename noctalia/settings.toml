@@ -379,7 +379,7 @@ behavior_order = [ "screen-off", "lock-and-suspend", "idle-behavior" ]
 auto_locate = true
 
 [lockscreen]
-blur_intensity = 0.21999999508261681
+blur_intensity = 0.11999999731779099
 blurred_desktop = true
 enabled = true
 lock_before_suspend = true
