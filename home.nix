@@ -122,6 +122,7 @@ in
     chromium      # arrow-key spatial navigation, see the let binding
     chimaera
     vscode
+    guvcview      # USB camera viewer with v4l2 controls
     bottom        # Task Manager binds in niri/noctalia/binds.kdl run btm in kitty
     # Neovim itself comes from programs.nixvim in nvim.nix.
     neovide
