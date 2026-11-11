@@ -1,19 +1,4 @@
-{ pkgs, lib, ... }:
-let
-  # How much bigger everything gets in the RDP/Plasma session. An RDP client
-  # on a phone hands over the handset's own resolution, which is physically
-  # tiny, so unscaled Plasma renders at phone-pixel size and is unusable by
-  # touch. Bump/lower this one number to retune it. niri's scaling is
-  # per-output in niri/noctalia/outputs.kdl and is unaffected -- these
-  # variables are exported inside the xrdp session wrapper below, so they
-  # only ever exist in the Xorg xrdp spins up per connection; greetd/niri
-  # never sources them.
-  rdpScale = 2.5;
-  # GTK's scale is integer-only, so it takes the next whole step up and
-  # GDK_DPI_SCALE divides text back down to the same effective factor. Qt
-  # (Plasma itself and every KDE app) takes the fraction directly.
-  gdkScale = builtins.ceil rdpScale;
-in
+{ pkgs, ... }:
 {
   nixpkgs.config.allowUnfree = true; # vivaldi, vscode, claude-code
   # So `nix-build` / androidenv compositions can fetch the SDK without an
@@ -140,22 +125,6 @@ in
   # just the network path in, not a replacement for that auth.
   services.tailscale.enable = true;
 
-  # A separate, log-in-able remote desktop -- NOT a mirror of the running
-  # niri session. niri is Wayland-only and xrdp's xorgxrdp backend only
-  # ever drives its own private Xorg, spun up fresh per RDP connection, so
-  # the two can't be the same desktop; Plasma (X11 session) is what runs
-  # inside that private X session. (Mirroring the actual niri screen
-  # instead would be wayvnc, not xrdp -- different tool, not configured
-  # here.)
-  #
-  # desktopManager.plasma6.enable, not services.xserver.enable: this only
-  # registers the Plasma session package, it does not turn Plasma (or any
-  # X server) into the local display manager -- greetd/niri keeps that.
-  # Chosen over Xfce for RDP use because Plasma 6 auto-switches to a
-  # touch-friendly layout (larger hit targets, "Tablet Mode") when it
-  # detects a touchscreen -- relevant since this session gets used from a
-  # phone RDP client, not just a desktop one.
-  services.desktopManager.plasma6.enable = true;
   # Login shells (SSH, bash -l) do not source hm-session-vars.sh on their own:
   # programs.bash is deliberately off because it would overwrite ~/.bashrc and
   # abort activation. Graphical terminals get the same variables from
@@ -165,57 +134,6 @@ in
       . "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
     fi
   '';
-  # Plasma is only here as the xrdp session, so drop its bundled apps.
-  # Left in: kwin-x11 (the X11 session), plasma-keyboard/qtvirtualkeyboard
-  # (touch input from the phone) and the qttools/kconfig/qtbase helpers.
-  environment.plasma6.excludePackages = with pkgs.kdePackages; [
-    ark
-    aurorae
-    baloo-widgets
-    discover
-    dolphin
-    dolphin-plugins
-    elisa
-    ffmpegthumbs
-    gwenview
-    kate
-    khelpcenter
-    konsole
-    krdp
-    ktexteditor
-    okular
-    plasma-browser-integration
-    plasma-workspace-wallpapers
-    qrca
-    spectacle
-    union
-  ];
-  services.xrdp = {
-    enable = true;
-    # A wrapper rather than startplasma-x11 straight, purely so the scaling
-    # environment above is set for the session and nothing else on the
-    # machine. Xft.dpi is deliberately left alone: GTK reads it too, and
-    # combined with GDK_SCALE it would scale text twice.
-    defaultWindowManager = "${pkgs.writeShellScript "xrdp-plasma-session" ''
-      export QT_SCALE_FACTOR=${toString rdpScale}
-      export GDK_SCALE=${toString gdkScale}
-      export GDK_DPI_SCALE=${toString (rdpScale / gdkScale)}
-      export XCURSOR_SIZE=${toString (builtins.floor (24 * rdpScale))}
-      exec ${pkgs.kdePackages.plasma-workspace}/bin/startplasma-x11
-    ''}";
-  };
-  # plasma6.nix and niri.nix both set services.displayManager.defaultSession
-  # at the same priority, which is an eval error. Neither module's setting
-  # is actually consulted, though: greetd execs niri-session directly (see
-  # its settings.default_session.command below) rather than reading this
-  # option, and xrdp gets its session from defaultWindowManager above. Force
-  # it to niri just to break the tie.
-  services.displayManager.defaultSession = lib.mkForce "niri";
-  # Port 3389 is only reachable over the Tailscale mesh, never the LAN/WAN
-  # -- RDP is a common scanning target and password auth is off everywhere
-  # else on this machine for the same reason. tailscale0 exists thanks to
-  # services.tailscale.enable above.
-  networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 3389 ];
   # RemotePointer (phone as touchpad/laser pointer): the phone connects in on
   # TCP 4444 from the LAN; the server's UDP 4445 discovery broadcast is
   # outbound and needs no rule. Access is gated by the pairing code it shows.

@@ -19,7 +19,7 @@ user unit is declared in `configuration.nix`.
 | File | What it carries |
 |---|---|
 | `flake.nix`, `flake.lock` | The pins: an exact nixpkgs revision (**unstable**, not a release branch — the reasoning is in `flake.nix` and it matters), home-manager `master`, noctalia-shell on its own nixpkgs, disko |
-| `configuration.nix` | The system: niri, greetd/tuigreet, noctalia, pipewire, steam, xrdp+Plasma over Tailscale, sshd, flatpak, xwayland-satellite, mouseless's unit and udev/tmpfiles rules, `erik` as 1000:1000, Swedish layout |
+| `configuration.nix` | The system: niri, greetd/tuigreet, noctalia, pipewire, steam, sshd, flatpak, xwayland-satellite, mouseless's unit and udev/tmpfiles rules, `erik` as 1000:1000, Swedish layout |
 | `hosts/hp-envy.nix`, `hosts/nitro.nix` | Everything machine-specific: hostname, GPU driver, how `/home` is provided |
 | `hardware-configuration-hp-envy.nix`, `hardware-configuration-nitro.nix` | Per-host, by UUID — imported from the matching `hosts/*.nix`, not a shared filename (see below) |
 | `home.nix` | The user's packages, and the `mkOutOfStoreSymlink` that makes `~/.config/niri` this repo's `niri/` |
